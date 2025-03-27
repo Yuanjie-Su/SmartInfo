@@ -1,0 +1,51 @@
+[
+  {
+    "name": "机器之心",
+    "url": "https://www.jiqizhixin.com/rss",
+    "type": "RSS",
+    "category": "新闻",
+    "active": 1
+  },
+  {
+    "name": "雷锋网AI频道",
+    "url": "https://www.leiphone.com/feed",
+    "type": "RSS",
+    "category": "新闻",
+    "active": 1
+  },
+  {
+    "name": "arXiv CS.AI",
+    "url": "http://arxiv.org/rss/cs.AI",
+    "type": "RSS",
+    "category": "学术",
+    "active": 1
+  },
+  {
+    "name": "PapersWithCode",
+    "url": "https://paperswithcode.com/latest",
+    "type": "Webpage",
+    "category": "学术",
+    "active": 1
+  },
+  {
+    "name": "MIT Technology Review",
+    "url": "https://www.technologyreview.com/topic/artificial-intelligence/feed",
+    "type": "RSS",
+    "category": "新闻",
+    "active": 1
+  },
+  {
+    "name": "The Verge",
+    "url": "https://www.theverge.com/rss/index.xml",
+    "type": "RSS",
+    "category": "新闻",
+    "active": 1
+  },
+  {
+    "name": "36氪AI频道",
+    "url": "https://36kr.com/information/AI",
+    "type": "Webpage",
+    "category": "新闻",
+    "active": 1
+  }
+]
