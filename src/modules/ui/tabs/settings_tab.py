@@ -15,8 +15,12 @@ from PySide6.QtWidgets import (
     QHeaderView, QFormLayout, QComboBox, QMessageBox,
     QFileDialog, QCheckBox
 )
-from PySide6.QtCore import Qt, QSortFilterProxyModel
+from PySide6.QtCore import Qt, QSortFilterProxyModel, QTimer
 from PySide6.QtGui import QStandardItemModel, QStandardItem
+
+# 导入API客户端
+from src.utils.api_client import api_client
+from src.utils.api_manager import api_manager
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +30,7 @@ class SettingsTab(QWidget):
     def __init__(self):
         super().__init__()
         self._setup_ui()
+        self._load_settings()  # 加载已保存的设置
     
     def _setup_ui(self):
         """设置用户界面"""
@@ -302,13 +307,116 @@ class SettingsTab(QWidget):
     
     def _test_api_connection(self, api_name):
         """测试API连接"""
-        # 待实现
-        QMessageBox.information(self, "提示", f"{api_name} API连接测试功能开发中")
+        try:
+            if api_name == "deepseek":
+                api_key = self.deepseek_api_key.text().strip()
+                if not api_key:
+                    QMessageBox.warning(self, "警告", "请先输入DeepSeek API Key")
+                    return
+                
+                # 创建状态标签，作为临时状态显示
+                status_label = QLabel("正在测试API连接，请稍候...", self)
+                status_label.setStyleSheet("background-color: #f0f0f0; padding: 10px; border-radius: 5px;")
+                status_label.setAlignment(Qt.AlignCenter)
+                
+                # 获取窗口中心位置
+                pos = self.mapToGlobal(self.rect().center()) - status_label.rect().center()
+                status_label.move(self.mapFromGlobal(pos))
+                status_label.show()
+                
+                # 设置测试按钮状态
+                test_button = self.sender()
+                if test_button:
+                    original_text = test_button.text()
+                    test_button.setEnabled(False)
+                    test_button.setText("测试中...")
+                
+                # 创建一个定时器，刷新UI
+                QTimer.singleShot(100, lambda: self._process_api_test(api_name, api_key, status_label, test_button, original_text if test_button else "测试连接"))
+            else:
+                QMessageBox.warning(self, "错误", f"不支持的API类型: {api_name}")
+                
+        except Exception as e:
+            logger.error(f"API连接测试失败: {str(e)}", exc_info=True)
+            QMessageBox.critical(self, "错误", f"API连接测试失败: {str(e)}")
+    
+    def _process_api_test(self, api_name, api_key, status_label, test_button, original_button_text):
+        """处理API测试过程"""
+        try:
+            # 调用API客户端进行测试
+            result = api_client.test_api_connection(api_name, api_key)
+            
+            # 删除状态标签
+            if status_label:
+                status_label.hide()
+                status_label.deleteLater()
+            
+            # 恢复按钮状态
+            if test_button:
+                test_button.setEnabled(True)
+                test_button.setText(original_button_text)
+            
+            if result["success"]:
+                # 测试成功 - 使用非阻塞消息框显示
+                success_message = (
+                    f"DeepSeek API连接测试成功!\n\n"
+                    f"模型: {result.get('model', 'deepseek-chat')}\n"
+                    f"响应: {result.get('response', '').strip()[:100] + '...' if len(result.get('response', '')) > 100 else result.get('response', '')}\n"
+                    f"延迟: {result.get('latency', 0)}秒"
+                )
+                success_box = QMessageBox(QMessageBox.Information, "成功", success_message, QMessageBox.Ok, self)
+                success_box.setModal(False)
+                success_box.show()
+            else:
+                # 测试失败 - 使用非阻塞消息框显示
+                error_message = f"API连接测试失败: {result.get('error', '未知错误')}"
+                error_box = QMessageBox(QMessageBox.Critical, "错误", error_message, QMessageBox.Ok, self)
+                error_box.setModal(False)
+                error_box.show()
+        except Exception as e:
+            # 恢复按钮状态
+            if test_button:
+                test_button.setEnabled(True)
+                test_button.setText(original_button_text)
+                
+            # 删除状态标签
+            if status_label:
+                status_label.hide()
+                status_label.deleteLater()
+                
+            logger.error(f"处理API测试结果失败: {str(e)}", exc_info=True)
+            error_box = QMessageBox(QMessageBox.Critical, "错误", f"处理API测试结果失败: {str(e)}", QMessageBox.Ok, self)
+            error_box.setModal(False)
+            error_box.show()
+    
+    def _load_settings(self):
+        """从数据库加载设置"""
+        try:
+            # 加载API密钥
+            deepseek_api_key = api_manager.get_api_key("deepseek")
+            if deepseek_api_key:
+                self.deepseek_api_key.setText(deepseek_api_key)
+            
+            # TODO: 加载其他设置
+            
+        except Exception as e:
+            logger.error(f"加载设置失败: {str(e)}", exc_info=True)
+            QMessageBox.warning(self, "警告", f"加载设置失败: {str(e)}")
     
     def _save_settings(self):
         """保存所有设置"""
-        # 待实现
-        QMessageBox.information(self, "提示", "设置已保存")
+        try:
+            # 保存API密钥
+            deepseek_api_key = self.deepseek_api_key.text().strip()
+            if deepseek_api_key:
+                api_manager.save_api_key("deepseek", deepseek_api_key)
+            
+            # TODO: 保存其他设置
+            
+            QMessageBox.information(self, "成功", "设置已保存")
+        except Exception as e:
+            logger.error(f"保存设置失败: {str(e)}", exc_info=True)
+            QMessageBox.critical(self, "错误", f"保存设置失败: {str(e)}")
     
     def _reset_settings(self):
         """重置为默认设置"""
