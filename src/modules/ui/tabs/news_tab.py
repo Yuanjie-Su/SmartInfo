@@ -9,6 +9,7 @@
 import logging
 import os
 import sqlite3
+import asyncio
 from datetime import datetime
 from PySide6.QtWidgets import (
     QWidget,
@@ -24,14 +25,63 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QMessageBox,
     QProgressDialog,
+    QApplication,
 )
-from PySide6.QtCore import Qt, QSortFilterProxyModel, Signal, Slot
+from PySide6.QtCore import (
+    Qt,
+    QSortFilterProxyModel,
+    Signal,
+    Slot,
+    QRunnable,
+    QThreadPool,
+    QObject,
+)
 from PySide6.QtGui import QStandardItemModel, QStandardItem
 
 from ....config.config import get_config
-from ....modules.news_fetch.news_fetcher import NewsFetcher
+from ....modules.news_fetch.news_fetcher import fetch_and_save_all
 
 logger = logging.getLogger(__name__)
+
+
+# 用于在后台线程中运行异步任务的类
+class AsyncTaskRunner(QRunnable):
+    """在QThreadPool中运行异步任务的类"""
+
+    class Signals(QObject):
+        """用于发送信号的嵌套类"""
+
+        finished = Signal(object)  # 任务完成信号，携带结果
+        error = Signal(Exception)  # 任务出错信号，携带异常
+
+    def __init__(self, coro):
+        """初始化异步任务运行器
+
+        Args:
+            coro: 要运行的协程对象
+        """
+        super().__init__()
+        self.coro = coro
+        self.signals = self.Signals()
+
+    def run(self):
+        """运行协程"""
+        # 创建新的事件循环
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        try:
+            # 运行协程并获取结果
+            result = loop.run_until_complete(self.coro)
+            # 发送完成信号
+            self.signals.finished.emit(result)
+        except Exception as e:
+            # 发送错误信号
+            logger.error(f"异步任务执行失败: {str(e)}", exc_info=True)
+            self.signals.error.emit(e)
+        finally:
+            # 关闭事件循环
+            loop.close()
 
 
 class NewsTab(QWidget):
@@ -63,7 +113,6 @@ class NewsTab(QWidget):
                 source TEXT NOT NULL,
                 category TEXT NOT NULL,
                 publish_date TEXT,
-                content TEXT,
                 analyzed INTEGER DEFAULT 0
             )
             """
@@ -206,54 +255,119 @@ class NewsTab(QWidget):
     def _fetch_news(self):
         """获取资讯"""
         try:
+            # 禁用获取按钮，防止重复点击
+            self.fetch_button.setEnabled(False)
+
             # 获取选中的分类
             selected_category = self.category_filter.currentText()
-            categories = None
+            selected_sources = None
 
             if selected_category != "全部":
-                categories = [selected_category]
+                # 获取指定分类的资讯源信息
+                try:
+                    conn = sqlite3.connect(self.db_path)
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "SELECT name, url, category FROM news_sources WHERE category = ?",
+                        (selected_category,),
+                    )
+                    selected_sources = cursor.fetchall()
+                    conn.close()
+                except Exception as e:
+                    logger.error(f"获取指定分类资讯源失败: {str(e)}", exc_info=True)
+                    selected_sources = None
             else:
                 # 从数据库获取全部分类
                 try:
                     conn = sqlite3.connect(self.db_path)
                     cursor = conn.cursor()
-                    cursor.execute("SELECT DISTINCT category FROM news_sources")
-                    categories = [row[0] for row in cursor.fetchall()]
+                    cursor.execute("SELECT name, url, category FROM news_sources")
+                    selected_sources = cursor.fetchall()
 
-                    if not categories:  # 如果没有任何分类，不进行过滤
-                        categories = None
+                    if not selected_sources:  # 如果没有任何分类，不进行过滤
+                        selected_sources = None
 
                     conn.close()
                 except Exception as e:
-                    logger.error(f"获取活跃分类失败: {str(e)}", exc_info=True)
-                    categories = None  # 出错时不进行分类过滤
+                    logger.error(f"获取资讯源失败: {str(e)}", exc_info=True)
+                    selected_sources = None  # 出错时不进行分类过滤
+
+            if selected_sources is None:
+                QMessageBox.critical(self, "错误", "没有可用的资讯源")
+                return
+
+            selected_sources = [
+                {"name": name, "url": url, "category": category}
+                for name, url, category in selected_sources
+            ]
 
             # 创建进度对话框
-            progress = QProgressDialog("正在获取资讯...", "取消", 0, 100, self)
-            progress.setWindowTitle("资讯获取")
-            progress.setWindowModality(Qt.WindowModal)
-            progress.show()
+            self.progress = QProgressDialog("正在获取资讯...", "取消", 0, 100, self)
+            self.progress.setWindowTitle("资讯获取")
+            self.progress.setWindowModality(Qt.WindowModal)
+            self.progress.setValue(10)
+            self.progress.show()
+            QApplication.processEvents()  # 确保UI更新
 
-            # 初始化资讯获取器
-            fetcher = NewsFetcher(self.db_path)
+            # 使用异步任务运行器执行异步获取操作
+            runner = AsyncTaskRunner(fetch_and_save_all(selected_sources))
 
-            # 获取资讯
-            progress.setValue(10)
-            fetched_count = fetcher.fetch_all(categories)
-            progress.setValue(100)
+            # 连接信号
+            runner.signals.finished.connect(self._on_fetch_completed)
+            runner.signals.error.connect(self._on_fetch_error)
 
-            # 重新加载资讯和过滤器
-            self._load_news()
-            self._load_filters()
-
-            # 显示结果
-            QMessageBox.information(
-                self, "获取完成", f"成功获取了 {fetched_count} 条资讯"
-            )
+            # 启动任务
+            QThreadPool.globalInstance().start(runner)
 
         except Exception as e:
-            logger.error(f"获取资讯失败: {str(e)}", exc_info=True)
+            # 恢复按钮状态
+            self.fetch_button.setEnabled(True)
+
+            # 关闭进度对话框
+            if hasattr(self, "progress") and self.progress:
+                self.progress.close()
+
+            # 显示错误消息
+            logger.error(f"获取资讯初始化失败: {str(e)}", exc_info=True)
             QMessageBox.critical(self, "错误", f"获取资讯失败: {str(e)}")
+
+    def _on_fetch_completed(self, result):
+        """异步获取完成的回调函数
+
+        Args:
+            result: 获取结果，保存的资讯数量
+        """
+        # 更新进度条
+        if hasattr(self, "progress") and self.progress:
+            self.progress.setValue(100)
+            self.progress.close()
+
+        # 重新加载资讯和过滤器
+        self._load_news()
+        self._load_filters()
+
+        # 恢复按钮状态
+        self.fetch_button.setEnabled(True)
+
+        # 显示结果
+        QMessageBox.information(self, "获取完成", f"成功获取了 {result} 条资讯")
+
+    def _on_fetch_error(self, error):
+        """异步获取出错的回调函数
+
+        Args:
+            error: 捕获的异常
+        """
+        # 更新进度条
+        if hasattr(self, "progress") and self.progress:
+            self.progress.close()
+
+        # 恢复按钮状态
+        self.fetch_button.setEnabled(True)
+
+        # 显示错误消息
+        logger.error(f"获取资讯失败: {str(error)}", exc_info=True)
+        QMessageBox.critical(self, "错误", f"获取资讯失败: {str(error)}")
 
     def _load_news(self):
         """从数据库加载资讯"""
@@ -267,7 +381,7 @@ class NewsTab(QWidget):
 
             # 查询资讯数据
             cursor.execute(
-                "SELECT id, title, source, category, publish_date, analyzed, url, content "
+                "SELECT id, title, source, category, publish_date, analyzed, link, content "
                 "FROM news ORDER BY publish_date DESC"
             )
 
@@ -283,7 +397,7 @@ class NewsTab(QWidget):
                     category,
                     publish_date,
                     analyzed,
-                    url,
+                    link,
                     content,
                 ) = row
 
@@ -295,7 +409,7 @@ class NewsTab(QWidget):
                     "category": category,
                     "publish_date": publish_date,
                     "analyzed": bool(analyzed),
-                    "url": url,
+                    "url": link,  # 保持前端代码兼容性，仍使用url作为键名
                     "content": content,
                 }
 

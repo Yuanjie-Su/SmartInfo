@@ -2,129 +2,78 @@
 # -*- coding: utf-8 -*-
 
 """
-资讯获取模块
-负责从各类资讯源获取资讯内容
+资讯获取模块 (Refactored)
+负责协调资讯源的获取和保存
 """
 
 import logging
-import sqlite3
-import time
-from typing import List, Dict, Any, Optional
+import asyncio
+from typing import List, Dict, Optional
+import urllib.parse
+
+# Import refactored components
+from src.core.config import DEFAULT_DB_PATH
+from src.database.operations import load_news_sources, save_news_item
+from src.core.crawler import crawl_article
 
 logger = logging.getLogger(__name__)
 
 
-class NewsFetcher:
-    """资讯获取器类"""
+async def fetch_and_save_all(sources: List[Dict]) -> int:
+    """
+    获取指定资讯源列表的内容并保存到数据库
 
-    def __init__(self, db_path: str):
-        """
-        初始化资讯获取器
+    Args:
+        sources: 包含资讯源信息的字典列表。
+                    每个字典应包含 'name', 'url', 'category'。
 
-        Args:
-            db_path: SQLite数据库路径
-        """
-        self.db_path = db_path
-        self.sources = []
-        self._load_sources()
+    Returns:
+        成功保存的新资讯数量
+    """
+    if len(sources) == 0:
+        logger.warning("No sources provided to fetch_and_save_all.")
+        return 0
 
-    def _load_sources(self) -> None:
-        """从数据库加载资讯源配置"""
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
+    urls = [source["url"] for source in sources]
+    results = await crawl_article(urls)
+    # 处理results
+    saved_items_count = 0
+    for result in results:
+        url = result["url"]
+        articles = result["articles"]
+        if len(articles) > 0:
+            for article in articles:
+                if save_news_item(
+                    db_path=DEFAULT_DB_PATH,
+                    title=str(article["title"]),
+                    url=urllib.parse.urljoin(url, article["link"]),
+                    source_name=next(s["name"] for s in sources if s["url"] == url),
+                    category=next(s["category"] for s in sources if s["url"] == url),
+                    publish_date=str(article["date"]) if article["date"] else None,
+                    summary=str(article["summary"]),
+                    content=str(article.get("content", "")),
+                ):
+                    saved_items_count += 1
 
-            # 更新查询，适应新的表结构
-            cursor.execute("SELECT id, name, url, category FROM news_sources")
-            sources = cursor.fetchall()
 
-            self.sources = [
-                {"id": src[0], "name": src[1], "url": src[2], "category": src[3]}
-                for src in sources
-            ]
+# Example usage (for testing - requires manual source list)
+async def main():
+    logging.basicConfig(level=logging.INFO)
+    # Example sources - replace with actual sources needed for testing
+    test_sources = [
+        {
+            "name": "机器之心 Test",
+            "url": "https://www.jiqizhixin.com/rss",
+            "category": "Tech",
+        },
+        # Add more test sources if needed
+    ]
+    print(f"Fetching from {len(test_sources)} sources...")
+    saved_count = await fetch_and_save_all(test_sources)
+    print(f"Total new news items saved: {saved_count}")
 
-            conn.close()
-            logger.info(f"已加载 {len(self.sources)} 个资讯源")
-        except Exception as e:
-            logger.error(f"加载资讯源失败: {str(e)}", exc_info=True)
-            # 如果数据库为空或出错，使用硬编码的默认资讯源
-            self.sources = [
-                {
-                    "id": 1,
-                    "name": "机器之心",
-                    "url": "https://www.jiqizhixin.com/rss",
-                    "category": "技术新闻",
-                },
-                {
-                    "id": 2,
-                    "name": "雷锋网AI频道",
-                    "url": "https://www.leiphone.com/feed",
-                    "category": "技术新闻",
-                },
-            ]
-            logger.info("使用默认资讯源")
 
-    def fetch_all(self, categories: Optional[List[str]] = None) -> int:
-        """
-        获取所有资讯源的内容
-
-        Args:
-            categories: 可选的分类过滤，None表示获取全部分类
-
-        Returns:
-            获取的资讯数量
-        """
-        total_fetched = 0
-
-        for source in self.sources:
-            # 如果指定了分类过滤，且当前源不在过滤范围内，则跳过
-            if categories and source["category"] not in categories:
-                continue
-
-            logger.info(f"正在处理资讯源: {source['name']} ({source['url']})")
-
-            # TODO: 添加资讯源的解析逻辑
-
-        return total_fetched
-
-    def _save_news(self, title, url, source, category, publish_date, content):
-        """
-        保存资讯到数据库
-
-        Args:
-            title: 资讯标题
-            url: 资讯URL
-            source: 资讯来源
-            category: 资讯分类
-            publish_date: 资讯发布日期
-            content: 资讯内容
-
-        Returns:
-            是否保存成功
-        """
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-
-            # 检查资讯是否已存在
-            cursor.execute("SELECT COUNT(*) FROM news WHERE url = ?", (url,))
-            result = cursor.fetchone()
-
-            if result[0] > 0:
-                logger.info(f"资讯 {url} 已存在，跳过保存")
-                return False
-
-            # 保存资讯
-            cursor.execute(
-                """
-            INSERT INTO news (title, url, source, category, publish_date, content)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-                (title, url, source, category, publish_date, content),
-            )
-            conn.commit()
-            logger.info(f"保存资讯 {url} 成功")
-            return True
-        except Exception as e:
-            logger.error(f"保存资讯失败: {str(e)}", exc_info=True)
-            return False
+if __name__ == "__main__":
+    # Ensure you have an event loop running if testing directly
+    # asyncio.run(main())
+    pass

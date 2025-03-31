@@ -88,11 +88,11 @@ class LLMAPIClient:
 
         return {"success": False, "error": "未知错误"}
 
-    def call_deepseek(
+    def get_content_from_markdown(
         self,
-        messages: list,
-        model: str = "deepseek-chat",
-        temperature: float = 0.7,
+        markdown_content: str,
+        model: str = "deepseek/deepseek-chat-v3-0324:free",
+        temperature: float = 0,
         max_tokens: int = 1024,
         stream: bool = False,
     ) -> Dict[str, Any]:
@@ -100,7 +100,7 @@ class LLMAPIClient:
         调用DeepSeek API
 
         Args:
-            messages: 消息列表
+            markdown_content: markdown内容
             model: 模型名称
             temperature: 采样温度
             max_tokens: 最大生成token数
@@ -116,10 +116,13 @@ class LLMAPIClient:
                 "error": "未找到DeepSeek API密钥，请在设置页面配置",
             }
 
-        url = "https://api.deepseek.com/chat/completions"
+        url = "https://openrouter.ai/api/v1"
         payload = json.dumps(
             {
-                "messages": messages,
+                "messages": [
+                    {"role": "system", "content": "You are a helpful assistant."},
+                    {"role": "user", "content": markdown_content},
+                ],
                 "model": model,
                 "temperature": temperature,
                 "stream": stream,

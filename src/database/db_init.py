@@ -44,10 +44,11 @@ def init_sqlite_db(db_path=None):
         CREATE TABLE IF NOT EXISTS news (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
-            url TEXT NOT NULL UNIQUE,
+            link TEXT NOT NULL UNIQUE,
             source TEXT NOT NULL,
             category TEXT NOT NULL,
             publish_date TEXT,
+            summary TEXT,
             content TEXT,
             analyzed BOOLEAN DEFAULT 0
         )
@@ -166,7 +167,12 @@ def init_chroma_db(chroma_db_path=None):
         os.makedirs(chroma_db_path, exist_ok=True)
 
         # 初始化ChromaDB客户端
-        client = chromadb.PersistentClient(path=chroma_db_path)
+        client = chromadb.PersistentClient(
+            path=chroma_db_path,
+            settings=Settings(
+                anonymized_telemetry=False,  # 禁用遥测
+            ),
+        )
 
         # 创建或获取资讯集合
         news_collection = client.get_or_create_collection(

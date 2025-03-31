@@ -355,7 +355,7 @@ class SettingsTab(QWidget):
             category_input.setCurrentIndex(index)
         else:
             category_input.setCurrentText(category)
-        form_layout.addRow("分类:", category_input)
+            form_layout.addRow("分类:", category_input)
 
         # 添加按钮
         button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
