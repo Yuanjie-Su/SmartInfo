@@ -61,8 +61,7 @@ def init_sqlite_db(db_path=None):
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
             url TEXT NOT NULL UNIQUE,
-            category TEXT NOT NULL,
-            parser_code TEXT
+            category TEXT NOT NULL
         )
         """
         )

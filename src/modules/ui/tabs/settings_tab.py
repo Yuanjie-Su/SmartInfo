@@ -259,10 +259,13 @@ class SettingsTab(QWidget):
             # 如果没有可用分类，添加默认分类
             default_categories = [
                 "学术动态",
-                "AI工具应用",
                 "前沿技术",
                 "市场应用",
-                "技术",
+                "产业动态",
+                "政策法规",
+                "行业资讯",
+                "研究报告",
+                "技术创新",
             ]
             category_input.addItems(default_categories)
         form_layout.addRow("分类:", category_input)
@@ -290,7 +293,7 @@ class SettingsTab(QWidget):
                 return
 
             # 添加到数据库
-            self._save_news_source(None, name, url, category, True)
+            self._save_news_source(None, name, url, category)
 
     def _edit_news_source(self, index):
         """编辑资讯源"""
@@ -376,84 +379,36 @@ class SettingsTab(QWidget):
                 QMessageBox.warning(self, "警告", "URL必须以http://或https://开头")
                 return
 
-            # 如果URL改变，需要重新分析
-            url_changed = url != new_url
-
             # 更新数据库
-            self._save_news_source(
-                source_id, new_name, new_url, new_category, url_changed
-            )
+            self._save_news_source(source_id, new_name, new_url, new_category)
 
-    def _save_news_source(self, source_id, name, url, category, url_changed=False):
-        """解析url并保存资讯源到数据库"""
+    def _save_news_source(self, source_id, name, url, category):
+        """保存资讯源"""
         try:
             import sqlite3
             from src.database.db_init import DEFAULT_SQLITE_DB_PATH
-            from datetime import datetime
-            from PySide6.QtWidgets import QApplication
-
-            parser_code = None
-            if url_changed:
-                from src.utils.url_analyzer import url_analyzer
-
-                # 获取URL内容
-                result = url_analyzer.analyze_url(url)
-                if not result["success"]:
-                    QMessageBox.warning(
-                        self, "警告", f"解析资讯源失败: {result['parser_code']}"
-                    )
-                    return False
-                parser_code = result["parser_code"]
 
             # 连接数据库
             conn = sqlite3.connect(DEFAULT_SQLITE_DB_PATH)
             cursor = conn.cursor()
 
-            # 如果是编辑现有资讯源
-            if source_id is not None:
-                if parser_code:
-                    cursor.execute(
-                        "UPDATE news_sources SET name = ?, url = ?, category = ?, parser_code = ? WHERE id = ?",
-                        (name, url, category, parser_code, source_id),
-                    )
-                else:
-                    cursor.execute(
-                        "UPDATE news_sources SET name = ?, url = ?, category = ?, parser_code = ? WHERE id = ?",
-                        (name, url, category, parser_code, source_id),
-                    )
+            if source_id:
+                cursor.execute(
+                    "UPDATE news_sources SET name = ?, url = ?, category = ? WHERE id = ?",
+                    (name, url, category, source_id),
+                )
             else:
-                if parser_code:
-                    cursor.execute(
-                        "INSERT INTO news_sources (name, url, category, parser_code) VALUES (?, ?, ?, ?)",
-                        (name, url, category, parser_code),
-                    )
-                else:
-                    cursor.execute(
-                        "INSERT INTO news_sources (name, url, category, parser_code) VALUES (?, ?, ?, ?)",
-                        (name, url, category, parser_code),
-                    )
-                # 获取新插入的ID
-                cursor.execute("SELECT last_insert_rowid()")
-                source_id = cursor.fetchone()[0]
+                cursor.execute(
+                    "INSERT INTO news_sources (name, url, category) VALUES (?, ?, ?)",
+                    (name, url, category),
+                )
 
+            # 提交事务
             conn.commit()
             conn.close()
-
-            # 重新加载资讯源数据
-            self._load_news_sources()
-
-            # 关闭编辑对话框
-            if self.edit_dialog and self.edit_dialog.isVisible():
-                self.edit_dialog.accept()
-
-            # 更新分类列表
-            self._load_categories()
-
-            return True
         except Exception as e:
             logger.error(f"保存资讯源失败: {str(e)}", exc_info=True)
             QMessageBox.critical(self, "错误", f"保存资讯源失败: {str(e)}")
-            return False
 
     def _delete_news_source(self):
         """删除所选资讯源"""

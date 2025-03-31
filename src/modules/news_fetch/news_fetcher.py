@@ -7,14 +7,9 @@
 """
 
 import logging
-import requests
-import feedparser
-from datetime import datetime
 import sqlite3
 import time
 from typing import List, Dict, Any, Optional
-
-from src.modules.news_parser.dynamic_parser import dynamic_parser
 
 logger = logging.getLogger(__name__)
 
@@ -88,69 +83,9 @@ class NewsFetcher:
 
             logger.info(f"正在处理资讯源: {source['name']} ({source['url']})")
 
-            fetched = self._fetch_with_dynamic_parser(source)
-
-            total_fetched += fetched
-            # 添加短暂延迟，避免频繁请求被封
-            time.sleep(1)
+            # TODO: 添加资讯源的解析逻辑
 
         return total_fetched
-
-    def _fetch_with_dynamic_parser(self, source: Dict[str, Any]) -> int:
-        """
-        使用动态解析器获取资讯
-
-        Args:
-            source: 资讯源配置
-
-        Returns:
-            获取的资讯数量
-        """
-        try:
-            logger.info(f"正在使用动态解析器获取资讯源 {source['url']} 的内容")
-
-            # 使用动态解析器解析内容
-            parsed_items = dynamic_parser.parse_source(source["id"])
-
-            if not parsed_items:
-                logger.warning(f"资讯源 {source['name']} 未解析到内容")
-                return 0
-
-            # 保存解析结果
-            count = 0
-            for item in parsed_items:
-                try:
-                    # 确保必要字段存在
-                    title = item.get("title", "无标题")
-                    url = item.get("url", "")
-                    content = item.get("content", "无内容")
-                    publish_date = item.get(
-                        "publish_date", datetime.now().strftime("%Y-%m-%d")
-                    )
-
-                    # 跳过没有URL的项目
-                    if not url:
-                        continue
-
-                    # 保存到数据库
-                    if self._save_news(
-                        title,
-                        url,
-                        source["name"],
-                        source["category"],
-                        publish_date,
-                        content,
-                    ):
-                        count += 1
-                except Exception as e:
-                    logger.error(f"保存解析项目失败: {str(e)}", exc_info=True)
-                    continue
-
-            logger.info(f"从资讯源 {source['name']} 更新了 {count} 条资讯")
-            return count
-        except Exception as e:
-            logger.error(f"使用动态解析器获取资讯失败: {str(e)}", exc_info=True)
-            return 0
 
     def _save_news(self, title, url, source, category, publish_date, content):
         """
