@@ -8,7 +8,6 @@
 
 import logging
 import os
-import sqlite3
 import asyncio
 from datetime import datetime
 from PySide6.QtWidgets import (
@@ -40,6 +39,7 @@ from PySide6.QtGui import QStandardItemModel, QStandardItem
 
 from ....config.config import get_config
 from ....modules.news_fetch.news_fetcher import fetch_and_save_all
+from ....database.database import db  # 导入数据库单例实例
 
 logger = logging.getLogger(__name__)
 
@@ -90,51 +90,9 @@ class NewsTab(QWidget):
     def __init__(self):
         super().__init__()
         self.config = get_config()
-        self.db_path = os.path.join(self.config.get("data_dir"), "smartinfo.db")
-        self._ensure_db_table()
         self._setup_ui()
         self._load_news()
         self._load_filters()
-
-    def _ensure_db_table(self):
-        """确保数据库表存在"""
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-
-            # 创建资讯表
-            cursor.execute(
-                """
-            CREATE TABLE IF NOT EXISTS news (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                title TEXT NOT NULL,
-                url TEXT NOT NULL UNIQUE,
-                source TEXT NOT NULL,
-                category TEXT NOT NULL,
-                publish_date TEXT,
-                analyzed INTEGER DEFAULT 0
-            )
-            """
-            )
-
-            # 创建资讯源表
-            cursor.execute(
-                """
-            CREATE TABLE IF NOT EXISTS news_sources (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
-                url TEXT NOT NULL UNIQUE,
-                category TEXT NOT NULL,
-                parser_code TEXT
-            )
-            """
-            )
-
-            conn.commit()
-            conn.close()
-        except Exception as e:
-            logger.error(f"确保数据库表存在失败: {str(e)}", exc_info=True)
 
     def _setup_ui(self):
         """设置用户界面"""
@@ -265,29 +223,25 @@ class NewsTab(QWidget):
             if selected_category != "全部":
                 # 获取指定分类的资讯源信息
                 try:
-                    conn = sqlite3.connect(self.db_path)
-                    cursor = conn.cursor()
-                    cursor.execute(
+                    result = db.execute_query(
                         "SELECT name, url, category FROM news_sources WHERE category = ?",
                         (selected_category,),
+                        fetch_all=True,
                     )
-                    selected_sources = cursor.fetchall()
-                    conn.close()
+                    selected_sources = result
                 except Exception as e:
                     logger.error(f"获取指定分类资讯源失败: {str(e)}", exc_info=True)
                     selected_sources = None
             else:
                 # 从数据库获取全部分类
                 try:
-                    conn = sqlite3.connect(self.db_path)
-                    cursor = conn.cursor()
-                    cursor.execute("SELECT name, url, category FROM news_sources")
-                    selected_sources = cursor.fetchall()
+                    result = db.execute_query(
+                        "SELECT name, url, category FROM news_sources", fetch_all=True
+                    )
+                    selected_sources = result
 
                     if not selected_sources:  # 如果没有任何分类，不进行过滤
                         selected_sources = None
-
-                    conn.close()
                 except Exception as e:
                     logger.error(f"获取资讯源失败: {str(e)}", exc_info=True)
                     selected_sources = None  # 出错时不进行分类过滤
@@ -296,10 +250,10 @@ class NewsTab(QWidget):
                 QMessageBox.critical(self, "错误", "没有可用的资讯源")
                 return
 
-            selected_sources = [
-                {"name": name, "url": url, "category": category}
+            selected_sources = {
+                url: {"name": name, "category": category}
                 for name, url, category in selected_sources
-            ]
+            }
 
             # 创建进度对话框
             self.progress = QProgressDialog("正在获取资讯...", "取消", 0, 100, self)
@@ -309,8 +263,25 @@ class NewsTab(QWidget):
             self.progress.show()
             QApplication.processEvents()  # 确保UI更新
 
-            # 使用异步任务运行器执行异步获取操作
-            runner = AsyncTaskRunner(fetch_and_save_all(selected_sources))
+            # 定义刷新UI的回调函数
+            def refresh_ui_callback():
+                # 增加进度条值（避免直接到100）
+                if (
+                    hasattr(self, "progress")
+                    and self.progress
+                    and self.progress.value() < 95
+                ):
+                    new_value = min(self.progress.value() + 2, 95)
+                    self.progress.setValue(new_value)
+
+                # 重新加载数据但保持过滤器状态
+                self._load_news()
+                QApplication.processEvents()  # 确保UI更新
+
+            # 使用异步任务运行器执行异步获取操作，传递刷新回调
+            runner = AsyncTaskRunner(
+                fetch_and_save_all(selected_sources, on_item_saved=refresh_ui_callback)
+            )
 
             # 连接信号
             runner.signals.finished.connect(self._on_fetch_completed)
@@ -375,17 +346,13 @@ class NewsTab(QWidget):
             # 清空现有数据
             self.model.removeRows(0, self.model.rowCount())
 
-            # 打开数据库连接
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-
             # 查询资讯数据
-            cursor.execute(
+            rows = db.execute_query(
                 "SELECT id, title, source, category, publish_date, analyzed, link, content "
-                "FROM news ORDER BY publish_date DESC"
+                "FROM news ORDER BY publish_date DESC",
+                fetch_all=True,
             )
 
-            rows = cursor.fetchall()
             self.news_data = {}  # 存储ID到完整数据的映射
 
             # 填充表格
@@ -428,8 +395,6 @@ class NewsTab(QWidget):
 
                 self.model.appendRow(row_items)
 
-            conn.close()
-
             logger.info(f"已加载 {len(rows)} 条资讯")
         except Exception as e:
             logger.error(f"加载资讯失败: {str(e)}", exc_info=True)
@@ -437,21 +402,21 @@ class NewsTab(QWidget):
     def _load_filters(self):
         """加载过滤器选项"""
         try:
-            # 打开数据库连接
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-
             # 保存当前选择的分类和来源
             current_category = self.category_filter.currentText()
             current_source = self.source_filter.currentText()
 
             # 查询所有分类
-            cursor.execute("SELECT DISTINCT category FROM news ORDER BY category")
-            categories = [row[0] for row in cursor.fetchall()]
+            categories_result = db.execute_query(
+                "SELECT DISTINCT category FROM news ORDER BY category", fetch_all=True
+            )
+            categories = [row[0] for row in categories_result]
 
             # 查询所有来源
-            cursor.execute("SELECT DISTINCT source FROM news ORDER BY source")
-            sources = [row[0] for row in cursor.fetchall()]
+            sources_result = db.execute_query(
+                "SELECT DISTINCT source FROM news ORDER BY source", fetch_all=True
+            )
+            sources = [row[0] for row in sources_result]
 
             # 更新分类过滤器
             self.category_filter.clear()
@@ -472,7 +437,6 @@ class NewsTab(QWidget):
             if src_index >= 0:
                 self.source_filter.setCurrentIndex(src_index)
 
-            conn.close()
         except Exception as e:
             logger.error(f"加载过滤器选项失败: {str(e)}", exc_info=True)
 
@@ -517,11 +481,7 @@ class NewsTab(QWidget):
 
         try:
             # 删除资讯
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM news WHERE id = ?", (news_id,))
-            conn.commit()
-            conn.close()
+            db.execute_query("DELETE FROM news WHERE id = ?", (news_id,), commit=True)
 
             # 重新加载数据
             self._load_news()

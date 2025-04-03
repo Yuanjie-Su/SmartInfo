@@ -1,34 +1,30 @@
-import sqlite3
 import logging
 from typing import List, Dict, Optional
+from .database import db  # 导入单例数据库实例
 
 logger = logging.getLogger(__name__)
 
 
-def load_news_sources(db_path: str) -> List[Dict]:
+def load_news_sources() -> List[Dict]:
     """从数据库加载资讯源配置"""
     sources_list = []
     try:
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-        cursor.execute("SELECT id, name, url, category FROM news_sources")
-        sources_data = cursor.fetchall()
+        # 使用单例数据库实例执行查询
+        result = db.execute_query(
+            "SELECT id, name, url, category FROM news_sources", fetch_all=True
+        )
         sources_list = [
             {"id": src[0], "name": src[1], "url": src[2], "category": src[3]}
-            for src in sources_data
+            for src in result
         ]
-        conn.close()
-        logger.info(f"Loaded {len(sources_list)} news sources from {db_path}")
+        logger.info(f"加载了 {len(sources_list)} 个资讯源")
     except Exception as e:
-        logger.error(
-            f"Failed to load news sources from {db_path}: {str(e)}", exc_info=True
-        )
-        # Optionally return default sources or raise the exception
+        logger.error(f"加载资讯源失败: {str(e)}", exc_info=True)
+        # 可选返回默认来源或引发异常
     return sources_list
 
 
 def save_news_item(
-    db_path: str,
     title: str,
     url: str,
     source_name: str,
@@ -41,7 +37,6 @@ def save_news_item(
     保存单条资讯到数据库，如果链接已存在则跳过。
 
     Args:
-        db_path: 数据库路径
         title: 资讯标题
         url: 资讯链接 (用于检查重复)
         source_name: 资讯来源名称
@@ -53,36 +48,26 @@ def save_news_item(
         True 如果成功保存, False 如果已存在或保存失败.
     """
     try:
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
-
         # 检查资讯是否已存在
-        cursor.execute("SELECT COUNT(*) FROM news WHERE link = ?", (url,))
-        result = cursor.fetchone()
+        result = db.execute_query("SELECT COUNT(*) FROM news WHERE link = ?", (url,))
 
         if result[0] > 0:
-            logger.debug(f"News item with link {url} already exists. Skipping.")
-            conn.close()
+            logger.debug(f"链接为 {url} 的资讯已存在，跳过。")
             return False
 
         # 保存资讯
-        cursor.execute(
+        db.execute_query(
             """
             INSERT INTO news (title, link, source, category, publish_date, summary, content)
             VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (title, url, source_name, category, publish_date, summary, content),
+            commit=True,
         )
-        conn.commit()
-        conn.close()
         return True
     except Exception as e:
-        logger.error(f"Failed to save news item {url}: {str(e)}", exc_info=True)
-        # Rollback in case of error might be needed if not auto-committed
-        if "conn" in locals() and conn:
-            conn.rollback()  # Ensure rollback on error
-            conn.close()
+        logger.error(f"保存资讯项 {url} 失败: {str(e)}", exc_info=True)
         return False
 
 
-# Add other database operations as needed (e.g., update, delete)
+# 根据需要添加其他数据库操作 (例如，更新，删除)

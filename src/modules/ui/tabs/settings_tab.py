@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QFileDialog,
     QCheckBox,
+    QInputDialog,
 )
 from PySide6.QtCore import Qt, QSortFilterProxyModel, QTimer
 from PySide6.QtGui import QStandardItemModel, QStandardItem
@@ -32,6 +33,7 @@ from PySide6.QtGui import QStandardItemModel, QStandardItem
 # 导入API客户端
 from src.utils.api_client import api_client
 from src.utils.api_manager import api_manager
+from src.database.database import db  # 导入数据库单例实例
 
 logger = logging.getLogger(__name__)
 
@@ -187,19 +189,14 @@ class SettingsTab(QWidget):
     def _load_news_sources(self):
         """从数据库加载资讯源数据"""
         try:
-            import sqlite3
-            from src.database.db_init import DEFAULT_SQLITE_DB_PATH
-
             # 清空现有数据
             self.sources_model.removeRows(0, self.sources_model.rowCount())
 
-            # 连接数据库
-            conn = sqlite3.connect(DEFAULT_SQLITE_DB_PATH)
-            cursor = conn.cursor()
-
             # 查询所有资讯源
-            cursor.execute("SELECT id, name, url, category FROM news_sources")
-            sources = cursor.fetchall()
+            sources = db.execute_query(
+                "SELECT id, name, url, category FROM news_sources",
+                fetch_all=True
+            )
 
             # 添加到表格
             for source_id, name, url, category in sources:
@@ -210,8 +207,6 @@ class SettingsTab(QWidget):
                 self.sources_model.item(self.sources_model.rowCount() - 1, 0).setData(
                     source_id, Qt.UserRole
                 )
-
-            conn.close()
 
             logger.info(f"已加载 {len(sources)} 个资讯源")
         except Exception as e:
@@ -385,27 +380,19 @@ class SettingsTab(QWidget):
     def _save_news_source(self, source_id, name, url, category):
         """保存资讯源"""
         try:
-            import sqlite3
-            from src.database.db_init import DEFAULT_SQLITE_DB_PATH
-
-            # 连接数据库
-            conn = sqlite3.connect(DEFAULT_SQLITE_DB_PATH)
-            cursor = conn.cursor()
-
             if source_id:
-                cursor.execute(
+                db.execute_query(
                     "UPDATE news_sources SET name = ?, url = ?, category = ? WHERE id = ?",
                     (name, url, category, source_id),
+                    commit=True
                 )
             else:
-                cursor.execute(
+                db.execute_query(
                     "INSERT INTO news_sources (name, url, category) VALUES (?, ?, ?)",
                     (name, url, category),
+                    commit=True
                 )
 
-            # 提交事务
-            conn.commit()
-            conn.close()
         except Exception as e:
             logger.error(f"保存资讯源失败: {str(e)}", exc_info=True)
             QMessageBox.critical(self, "错误", f"保存资讯源失败: {str(e)}")
@@ -432,26 +419,12 @@ class SettingsTab(QWidget):
             return
 
         try:
-            import sqlite3
-            from src.database.db_init import DEFAULT_SQLITE_DB_PATH
-
             # 获取选中行的ID
             row = self.sources_proxy_model.mapToSource(indexes[0]).row()
             source_id = self.sources_model.item(row, 0).data(Qt.UserRole)
 
-            # 连接数据库
-            conn = sqlite3.connect(DEFAULT_SQLITE_DB_PATH)
-            cursor = conn.cursor()
-
             # 删除资讯源
-            cursor.execute("DELETE FROM news_sources WHERE id = ?", (source_id,))
-
-            # 提交事务
-            conn.commit()
-            conn.close()
-
-            # 重新加载资讯源数据
-            self._load_news_sources()
+            self._save_news_source(source_id, None, None, None)
 
             QMessageBox.information(self, "成功", "资讯源已删除")
         except Exception as e:
@@ -467,23 +440,16 @@ class SettingsTab(QWidget):
             return
 
         try:
-            import sqlite3
-            from src.database.db_init import DEFAULT_SQLITE_DB_PATH
-
             # 获取选中行的ID
             row = self.sources_proxy_model.mapToSource(indexes[0]).row()
             source_id = self.sources_model.item(row, 0).data(Qt.UserRole)
 
-            # 连接数据库
-            conn = sqlite3.connect(DEFAULT_SQLITE_DB_PATH)
-            cursor = conn.cursor()
-
             # 查询资讯源
-            cursor.execute(
+            source = db.execute_query(
                 "SELECT name, url, parser_code FROM news_sources WHERE id = ?",
                 (source_id,),
+                fetch_one=True
             )
-            source = cursor.fetchone()
 
             if not source:
                 QMessageBox.warning(self, "警告", "未找到所选资讯源")
@@ -648,26 +614,19 @@ class SettingsTab(QWidget):
     def _load_categories(self):
         """从数据库加载分类数据"""
         try:
-            import sqlite3
-            from src.database.db_init import DEFAULT_SQLITE_DB_PATH
-
             # 清空现有数据
             self.categories_model.removeRows(0, self.categories_model.rowCount())
 
-            # 连接数据库
-            conn = sqlite3.connect(DEFAULT_SQLITE_DB_PATH)
-            cursor = conn.cursor()
-
             # 查询所有分类及其对应的资讯源数量
-            cursor.execute(
+            categories = db.execute_query(
                 """
                 SELECT category, COUNT(id) 
                 FROM news_sources 
                 GROUP BY category 
                 ORDER BY category
-                """
+                """,
+                fetch_all=True
             )
-            categories = cursor.fetchall()
 
             # 添加到表格
             for category, source_count in categories:
@@ -678,98 +637,44 @@ class SettingsTab(QWidget):
                     ]
                 )
 
-            conn.close()
-
             logger.info(f"已加载 {len(categories)} 个分类")
         except Exception as e:
             logger.error(f"加载分类失败: {str(e)}", exc_info=True)
             QMessageBox.warning(self, "警告", f"加载分类失败: {str(e)}")
 
     def _add_category(self):
-        """添加新的分类"""
-        from PySide6.QtWidgets import (
-            QDialog,
-            QVBoxLayout,
-            QFormLayout,
-            QDialogButtonBox,
-        )
+        """添加资讯分类"""
+        # 获取分类名称
+        category, ok = QInputDialog.getText(self, "添加分类", "请输入分类名称:")
 
-        # 创建对话框
-        dialog = QDialog(self)
-        self.edit_dialog = dialog  # 保存对话框引用以便能在保存后关闭
-        dialog.setWindowTitle("添加分类")
-        dialog.setMinimumWidth(300)
+        if not ok or not category:
+            return
 
-        layout = QVBoxLayout(dialog)
+        try:
+            # 这里我们不直接插入分类，而是在用户添加资讯源时自动创建
+            # 但可以添加一个空的资讯源作为占位符
+            db.execute_query(
+                """
+                INSERT INTO news_sources (name, url, category, type)
+                VALUES ('分类占位符', 'https://example.com', ?, 'rss')
+                """,
+                (category,),
+                commit=True
+            )
 
-        # 创建表单
-        form_layout = QFormLayout()
-        layout.addLayout(form_layout)
+            # 重新加载分类数据
+            self._load_categories()
 
-        # 添加输入字段
-        category_input = QLineEdit()
-        category_input.setPlaceholderText("请输入分类名称")
-        form_layout.addRow("分类名称:", category_input)
+            # 重新加载资讯源分类下拉列表
+            self._update_source_category_combobox()
 
-        # 添加按钮
-        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        button_box.accepted.connect(dialog.accept)
-        button_box.rejected.connect(dialog.reject)
-        layout.addWidget(button_box)
-
-        # 显示对话框
-        if dialog.exec() == QDialog.Accepted:
-            category = category_input.text().strip()
-
-            # 验证输入
-            if not category:
-                QMessageBox.warning(self, "警告", "分类名称不能为空")
-                return
-
-            # 检查分类是否已存在
-            import sqlite3
-            from src.database.db_init import DEFAULT_SQLITE_DB_PATH
-
-            try:
-                conn = sqlite3.connect(DEFAULT_SQLITE_DB_PATH)
-                cursor = conn.cursor()
-
-                # 查询分类是否存在
-                cursor.execute(
-                    "SELECT COUNT(*) FROM news_sources WHERE category = ?", (category,)
-                )
-                count = cursor.fetchone()[0]
-
-                if count > 0:
-                    QMessageBox.warning(self, "警告", f"分类 '{category}' 已存在")
-                    return
-
-                # 这里我们不直接插入分类，而是在用户添加资讯源时自动创建
-                # 但可以添加一个空的资讯源作为占位符
-                cursor.execute(
-                    """
-                    INSERT INTO news_sources (name, url, category, type)
-                    VALUES ('分类占位符', 'https://example.com', ?, 'rss')
-                    """,
-                    (category,),
-                )
-
-                conn.commit()
-                conn.close()
-
-                # 重新加载分类数据
-                self._load_categories()
-
-                # 重新加载资讯源分类下拉列表
-                self._update_source_category_combobox()
-
-                QMessageBox.information(self, "成功", f"已添加分类 '{category}'")
-            except Exception as e:
-                logger.error(f"添加分类失败: {str(e)}", exc_info=True)
-                QMessageBox.critical(self, "错误", f"添加分类失败: {str(e)}")
+            QMessageBox.information(self, "成功", f"已添加分类 '{category}'")
+        except Exception as e:
+            logger.error(f"添加分类失败: {str(e)}", exc_info=True)
+            QMessageBox.critical(self, "错误", f"添加分类失败: {str(e)}")
 
     def _edit_category(self, index=None):
-        """编辑分类"""
+        """编辑资讯分类"""
         # 获取选中行
         if not index:
             indexes = self.categories_table.selectionModel().selectedRows()
@@ -826,73 +731,45 @@ class SettingsTab(QWidget):
                 return
 
             # 更新数据库中的分类
-            import sqlite3
-            from src.database.db_init import DEFAULT_SQLITE_DB_PATH
+            db.execute_query(
+                "UPDATE news_sources SET category = ? WHERE category = ?",
+                (new_category, old_category),
+                commit=True
+            )
 
-            try:
-                conn = sqlite3.connect(DEFAULT_SQLITE_DB_PATH)
-                cursor = conn.cursor()
+            # 重新加载分类数据
+            self._load_categories()
 
-                # 检查新分类名是否已存在
-                if new_category != old_category:
-                    cursor.execute(
-                        "SELECT COUNT(*) FROM news_sources WHERE category = ?",
-                        (new_category,),
-                    )
-                    count = cursor.fetchone()[0]
-                    if count > 0:
-                        QMessageBox.warning(
-                            self, "警告", f"分类 '{new_category}' 已存在"
-                        )
-                        return
+            # 重新加载资讯源列表
+            self._load_news_sources()
 
-                # 更新资讯源表中的分类
-                cursor.execute(
-                    "UPDATE news_sources SET category = ? WHERE category = ?",
-                    (new_category, old_category),
-                )
+            # 更新资讯源分类下拉列表
+            self._update_source_category_combobox()
 
-                conn.commit()
-                conn.close()
-
-                # 重新加载分类数据
-                self._load_categories()
-
-                # 重新加载资讯源列表
-                self._load_news_sources()
-
-                # 更新资讯源分类下拉列表
-                self._update_source_category_combobox()
-
-                QMessageBox.information(
-                    self, "成功", f"已将分类 '{old_category}' 更新为 '{new_category}'"
-                )
-            except Exception as e:
-                logger.error(f"编辑分类失败: {str(e)}", exc_info=True)
-                QMessageBox.critical(self, "错误", f"编辑分类失败: {str(e)}")
+            QMessageBox.information(
+                self, "成功", f"已将分类 '{old_category}' 更新为 '{new_category}'"
+            )
+        except Exception as e:
+            logger.error(f"编辑分类失败: {str(e)}", exc_info=True)
+            QMessageBox.critical(self, "错误", f"编辑分类失败: {str(e)}")
 
     def _delete_category(self):
         """删除分类"""
         # 获取选中行
-        indexes = self.categories_table.selectionModel().selectedRows()
+        indexes = self.categories_table.selectionModel().selectedIndexes()
         if not indexes:
-            QMessageBox.warning(self, "警告", "请先选择要删除的分类")
+            QMessageBox.warning(self, "警告", "请先选择一个分类")
             return
 
         # 获取分类名称
         row = self.categories_proxy_model.mapToSource(indexes[0]).row()
         category = self.categories_model.item(row, 0).text()
-        source_count = int(self.categories_model.item(row, 1).text())
 
         # 确认删除
-        message = f"确定要删除分类 '{category}' 吗？"
-        if source_count > 0:
-            message += f"\n\n该分类下有 {source_count} 个资讯源，删除分类将同时删除这些资讯源。"
-
         reply = QMessageBox.question(
             self,
             "确认删除",
-            message,
+            f"确定要删除分类 '{category}' 吗？\n\n注意：这将同时删除该分类下的所有资讯源！",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
@@ -900,19 +777,13 @@ class SettingsTab(QWidget):
         if reply != QMessageBox.Yes:
             return
 
-        # 删除分类及其下的所有资讯源
-        import sqlite3
-        from src.database.db_init import DEFAULT_SQLITE_DB_PATH
-
         try:
-            conn = sqlite3.connect(DEFAULT_SQLITE_DB_PATH)
-            cursor = conn.cursor()
-
             # 删除该分类下的所有资讯源
-            cursor.execute("DELETE FROM news_sources WHERE category = ?", (category,))
-
-            conn.commit()
-            conn.close()
+            db.execute_query(
+                "DELETE FROM news_sources WHERE category = ?",
+                (category,),
+                commit=True
+            )
 
             # 重新加载分类数据
             self._load_categories()
@@ -933,22 +804,16 @@ class SettingsTab(QWidget):
     def _update_source_category_combobox(self):
         """更新添加/编辑资讯源对话框中的分类下拉框"""
         try:
-            import sqlite3
-            from src.database.db_init import DEFAULT_SQLITE_DB_PATH
-
             # 获取所有分类
-            conn = sqlite3.connect(DEFAULT_SQLITE_DB_PATH)
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT DISTINCT category FROM news_sources ORDER BY category"
+            categories = db.execute_query(
+                "SELECT DISTINCT category FROM news_sources ORDER BY category",
+                fetch_all=True
             )
-            categories = [row[0] for row in cursor.fetchall()]
-            conn.close()
 
             # 存储分类列表供添加/编辑资讯源时使用
-            self.available_categories = categories
+            self.available_categories = [row[0] for row in categories]
 
-            logger.info(f"已更新资讯源分类列表，共 {len(categories)} 个分类")
+            logger.info(f"已更新资讯源分类列表，共 {len(self.available_categories)} 个分类")
         except Exception as e:
             logger.error(f"更新资讯源分类列表失败: {str(e)}", exc_info=True)
 
@@ -1127,18 +992,13 @@ class SettingsTab(QWidget):
                 self.deepseek_api_key.setText(deepseek_api_key)
 
             # 加载系统配置
-            from src.database.db_init import DEFAULT_SQLITE_DB_PATH
-            import sqlite3
-
-            logger.info(f"加载系统配置: {DEFAULT_SQLITE_DB_PATH}")
-            conn = sqlite3.connect(DEFAULT_SQLITE_DB_PATH)
-            cursor = conn.cursor()
+            logger.info(f"加载系统配置: {db.conn.database}")
 
             # 查询嵌入模型配置
-            cursor.execute(
-                "SELECT config_value FROM system_config WHERE config_key = 'embedding_model'"
+            result = db.execute_query(
+                "SELECT config_value FROM system_config WHERE config_key = 'embedding_model'",
+                fetch_one=True
             )
-            result = cursor.fetchone()
             if result:
                 embedding_model = result[0]
                 index = self.embedding_model.findText(embedding_model)
@@ -1146,10 +1006,10 @@ class SettingsTab(QWidget):
                     self.embedding_model.setCurrentIndex(index)
 
             # 查询获取频率配置
-            cursor.execute(
-                "SELECT config_value FROM system_config WHERE config_key = 'fetch_frequency'"
+            result = db.execute_query(
+                "SELECT config_value FROM system_config WHERE config_key = 'fetch_frequency'",
+                fetch_one=True
             )
-            result = cursor.fetchone()
             if result:
                 fetch_frequency = result[0]
                 index = self.fetch_frequency.findText(fetch_frequency)
@@ -1157,15 +1017,13 @@ class SettingsTab(QWidget):
                     self.fetch_frequency.setCurrentIndex(index)
 
             # 查询数据目录配置
-            cursor.execute(
-                "SELECT config_value FROM system_config WHERE config_key = 'data_dir'"
+            result = db.execute_query(
+                "SELECT config_value FROM system_config WHERE config_key = 'data_dir'",
+                fetch_one=True
             )
-            result = cursor.fetchone()
             if result:
                 data_dir = result[0]
                 self.data_dir.setText(data_dir)
-
-            conn.close()
 
         except Exception as e:
             logger.error(f"加载设置失败: {str(e)}", exc_info=True)
@@ -1180,37 +1038,31 @@ class SettingsTab(QWidget):
                 api_manager.save_api_key("deepseek", deepseek_api_key)
 
             # 保存其他设置
-            from src.database.db_init import DEFAULT_SQLITE_DB_PATH
-            import sqlite3
             from datetime import datetime
 
             # 当前时间
             now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-            conn = sqlite3.connect(DEFAULT_SQLITE_DB_PATH)
-            cursor = conn.cursor()
-
             # 保存嵌入模型配置
             embedding_model = self.embedding_model.currentText()
             self._save_system_config(
-                cursor, "embedding_model", embedding_model, "嵌入模型设置", now
+                db.cursor, "embedding_model", embedding_model, "嵌入模型设置", now
             )
 
             # 保存获取频率配置
             fetch_frequency = self.fetch_frequency.currentText()
             self._save_system_config(
-                cursor, "fetch_frequency", fetch_frequency, "资讯获取频率设置", now
+                db.cursor, "fetch_frequency", fetch_frequency, "资讯获取频率设置", now
             )
 
             # 保存数据目录配置
             data_dir = self.data_dir.text().strip()
             if data_dir:
                 self._save_system_config(
-                    cursor, "data_dir", data_dir, "数据存储路径", now
+                    db.cursor, "data_dir", data_dir, "数据存储路径", now
                 )
 
-            conn.commit()
-            conn.close()
+            db.conn.commit()
 
             QMessageBox.information(self, "成功", "设置已保存")
         except Exception as e:
@@ -1264,18 +1116,8 @@ class SettingsTab(QWidget):
             self.deepseek_api_key.clear()
 
             # 重置其他设置
-            from src.database.db_init import DEFAULT_SQLITE_DB_PATH
-            import sqlite3
-
-            conn = sqlite3.connect(DEFAULT_SQLITE_DB_PATH)
-            cursor = conn.cursor()
-
-            # 删除所有系统配置
-            cursor.execute("DELETE FROM system_config")
-            cursor.execute("DELETE FROM sqlite_sequence WHERE name='system_config'")
-
-            conn.commit()
-            conn.close()
+            db.execute_query("DELETE FROM system_config")
+            db.execute_query("DELETE FROM sqlite_sequence WHERE name='system_config'")
 
             # 重置界面上的设置
             self.embedding_model.setCurrentIndex(0)

@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Dict, Any, Optional, List, Tuple
 
 # 导入数据库配置
-from src.database.db_init import DEFAULT_SQLITE_DB_PATH
+from src.database.database import DEFAULT_SQLITE_DB_PATH
 
 logger = logging.getLogger(__name__)
 

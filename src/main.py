@@ -18,7 +18,7 @@ sys.path.insert(0, project_root)
 
 from PySide6.QtWidgets import QApplication
 from src.modules.ui.main_window import MainWindow
-from src.database.db_init import init_databases
+from src.database.database import init_databases
 from src.config.config import init_config, get_config
 
 # 配置日志
@@ -62,7 +62,7 @@ def main():
 
         # 如果指定了重置整个数据库参数，则重置整个数据库
         if args.reset_database:
-            from src.database.db_init import reset_database
+            from src.database.database import reset_database
 
             logger.info("正在重置数据库...")
             if reset_database(db_path, chroma_path):
@@ -75,7 +75,7 @@ def main():
 
         # 如果指定了重置资讯源参数，则重置资讯源
         if args.reset_sources:
-            from src.database.db_init import reset_news_sources
+            from src.database.database import reset_news_sources
 
             logger.info("正在重置资讯源...")
             reset_news_sources(db_path)
@@ -83,7 +83,7 @@ def main():
 
         # 如果指定了清除资讯数据参数，则清除资讯数据
         if args.clear_news:
-            from src.database.db_init import clear_news_data, clear_chroma_data
+            from src.database.database import clear_news_data, clear_chroma_data
 
             logger.info("正在清除资讯数据...")
             if clear_news_data(db_path):
