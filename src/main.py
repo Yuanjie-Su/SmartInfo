@@ -18,7 +18,7 @@ sys.path.insert(0, project_root)
 
 from PySide6.QtWidgets import QApplication
 from src.modules.ui.main_window import MainWindow
-from src.database.database import init_databases
+from src.database.database import Database, db  # 导入Database类和db单例
 from src.config.config import init_config, get_config
 
 # 配置日志
@@ -56,39 +56,34 @@ def main():
         # 确保数据目录存在
         os.makedirs(config.get("data_dir"), exist_ok=True)
 
-        # 初始化数据库
+        # 确定数据库路径
         db_path = os.path.join(config.get("data_dir"), "smartinfo.db")
         chroma_path = os.path.join(config.get("data_dir"), "chromadb")
 
         # 如果指定了重置整个数据库参数，则重置整个数据库
         if args.reset_database:
-            from src.database.database import reset_database
-
             logger.info("正在重置数据库...")
-            if reset_database(db_path, chroma_path):
+            if db.reset_database():
                 logger.info("数据库重置成功")
             else:
                 logger.error("数据库重置失败")
 
-        # 初始化数据库 (如果刚刚重置，也需要确保表结构正确)
-        init_databases(db_path, chroma_path)
+        # 初始化数据库 - 通过Database单例自动完成
+        logger.info("使用单例模式初始化数据库")
+        # 数据库已在导入时自动初始化，不需要显式调用init_databases
 
         # 如果指定了重置资讯源参数，则重置资讯源
         if args.reset_sources:
-            from src.database.database import reset_news_sources
-
             logger.info("正在重置资讯源...")
-            reset_news_sources(db_path)
+            db.reset_news_sources()
             logger.info("资讯源重置完成")
 
         # 如果指定了清除资讯数据参数，则清除资讯数据
         if args.clear_news:
-            from src.database.database import clear_news_data, clear_chroma_data
-
             logger.info("正在清除资讯数据...")
-            if clear_news_data(db_path):
+            if db.clear_news_data():
                 logger.info("SQLite资讯数据清除成功")
-            if clear_chroma_data(chroma_path):
+            if db.clear_chroma_data():
                 logger.info("向量数据库资讯数据清除成功")
 
         # 创建Qt应用

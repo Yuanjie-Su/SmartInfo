@@ -194,8 +194,7 @@ class SettingsTab(QWidget):
 
             # 查询所有资讯源
             sources = db.execute_query(
-                "SELECT id, name, url, category FROM news_sources",
-                fetch_all=True
+                "SELECT id, name, url, category FROM news_sources", fetch_all=True
             )
 
             # 添加到表格
@@ -384,13 +383,13 @@ class SettingsTab(QWidget):
                 db.execute_query(
                     "UPDATE news_sources SET name = ?, url = ?, category = ? WHERE id = ?",
                     (name, url, category, source_id),
-                    commit=True
+                    commit=True,
                 )
             else:
                 db.execute_query(
                     "INSERT INTO news_sources (name, url, category) VALUES (?, ?, ?)",
                     (name, url, category),
-                    commit=True
+                    commit=True,
                 )
 
         except Exception as e:
@@ -448,7 +447,6 @@ class SettingsTab(QWidget):
             source = db.execute_query(
                 "SELECT name, url, parser_code FROM news_sources WHERE id = ?",
                 (source_id,),
-                fetch_one=True
             )
 
             if not source:
@@ -625,7 +623,7 @@ class SettingsTab(QWidget):
                 GROUP BY category 
                 ORDER BY category
                 """,
-                fetch_all=True
+                fetch_all=True,
             )
 
             # 添加到表格
@@ -659,7 +657,7 @@ class SettingsTab(QWidget):
                 VALUES ('分类占位符', 'https://example.com', ?, 'rss')
                 """,
                 (category,),
-                commit=True
+                commit=True,
             )
 
             # 重新加载分类数据
@@ -730,28 +728,29 @@ class SettingsTab(QWidget):
             if new_category == old_category:
                 return
 
-            # 更新数据库中的分类
-            db.execute_query(
-                "UPDATE news_sources SET category = ? WHERE category = ?",
-                (new_category, old_category),
-                commit=True
-            )
+            try:
+                # 更新数据库中的分类
+                db.execute_query(
+                    "UPDATE news_sources SET category = ? WHERE category = ?",
+                    (new_category, old_category),
+                    commit=True,
+                )
 
-            # 重新加载分类数据
-            self._load_categories()
+                # 重新加载分类数据
+                self._load_categories()
 
-            # 重新加载资讯源列表
-            self._load_news_sources()
+                # 重新加载资讯源列表
+                self._load_news_sources()
 
-            # 更新资讯源分类下拉列表
-            self._update_source_category_combobox()
+                # 更新资讯源分类下拉列表
+                self._update_source_category_combobox()
 
-            QMessageBox.information(
-                self, "成功", f"已将分类 '{old_category}' 更新为 '{new_category}'"
-            )
-        except Exception as e:
-            logger.error(f"编辑分类失败: {str(e)}", exc_info=True)
-            QMessageBox.critical(self, "错误", f"编辑分类失败: {str(e)}")
+                QMessageBox.information(
+                    self, "成功", f"已将分类 '{old_category}' 更新为 '{new_category}'"
+                )
+            except Exception as e:
+                logger.error(f"编辑分类失败: {str(e)}", exc_info=True)
+                QMessageBox.critical(self, "错误", f"编辑分类失败: {str(e)}")
 
     def _delete_category(self):
         """删除分类"""
@@ -780,9 +779,7 @@ class SettingsTab(QWidget):
         try:
             # 删除该分类下的所有资讯源
             db.execute_query(
-                "DELETE FROM news_sources WHERE category = ?",
-                (category,),
-                commit=True
+                "DELETE FROM news_sources WHERE category = ?", (category,), commit=True
             )
 
             # 重新加载分类数据
@@ -807,13 +804,15 @@ class SettingsTab(QWidget):
             # 获取所有分类
             categories = db.execute_query(
                 "SELECT DISTINCT category FROM news_sources ORDER BY category",
-                fetch_all=True
+                fetch_all=True,
             )
 
             # 存储分类列表供添加/编辑资讯源时使用
             self.available_categories = [row[0] for row in categories]
 
-            logger.info(f"已更新资讯源分类列表，共 {len(self.available_categories)} 个分类")
+            logger.info(
+                f"已更新资讯源分类列表，共 {len(self.available_categories)} 个分类"
+            )
         except Exception as e:
             logger.error(f"更新资讯源分类列表失败: {str(e)}", exc_info=True)
 
@@ -984,20 +983,14 @@ class SettingsTab(QWidget):
             error_box.show()
 
     def _load_settings(self):
-        """从数据库加载设置"""
+        """加载系统设置"""
         try:
-            # 加载API密钥
-            deepseek_api_key = api_manager.get_api_key("deepseek")
-            if deepseek_api_key:
-                self.deepseek_api_key.setText(deepseek_api_key)
-
             # 加载系统配置
-            logger.info(f"加载系统配置: {db.conn.database}")
+            logger.info(f"加载系统配置")
 
             # 查询嵌入模型配置
             result = db.execute_query(
-                "SELECT config_value FROM system_config WHERE config_key = 'embedding_model'",
-                fetch_one=True
+                "SELECT config_value FROM system_config WHERE config_key = 'embedding_model'"
             )
             if result:
                 embedding_model = result[0]
@@ -1007,8 +1000,7 @@ class SettingsTab(QWidget):
 
             # 查询获取频率配置
             result = db.execute_query(
-                "SELECT config_value FROM system_config WHERE config_key = 'fetch_frequency'",
-                fetch_one=True
+                "SELECT config_value FROM system_config WHERE config_key = 'fetch_frequency'"
             )
             if result:
                 fetch_frequency = result[0]
@@ -1018,8 +1010,7 @@ class SettingsTab(QWidget):
 
             # 查询数据目录配置
             result = db.execute_query(
-                "SELECT config_value FROM system_config WHERE config_key = 'data_dir'",
-                fetch_one=True
+                "SELECT config_value FROM system_config WHERE config_key = 'data_dir'"
             )
             if result:
                 data_dir = result[0]
@@ -1030,12 +1021,12 @@ class SettingsTab(QWidget):
             QMessageBox.warning(self, "警告", f"加载设置失败: {str(e)}")
 
     def _save_settings(self):
-        """保存所有设置"""
+        """保存设置"""
         try:
-            # 保存API密钥
-            deepseek_api_key = self.deepseek_api_key.text().strip()
-            if deepseek_api_key:
-                api_manager.save_api_key("deepseek", deepseek_api_key)
+            # 保存DeepSeek API Key到数据库
+            api_key = self.deepseek_api_key.text().strip()
+            if api_key:
+                api_manager.save_api_key("deepseek", api_key)
 
             # 保存其他设置
             from datetime import datetime
@@ -1046,56 +1037,38 @@ class SettingsTab(QWidget):
             # 保存嵌入模型配置
             embedding_model = self.embedding_model.currentText()
             self._save_system_config(
-                db.cursor, "embedding_model", embedding_model, "嵌入模型设置", now
+                "embedding_model", embedding_model, "嵌入模型设置", now
             )
 
             # 保存获取频率配置
             fetch_frequency = self.fetch_frequency.currentText()
             self._save_system_config(
-                db.cursor, "fetch_frequency", fetch_frequency, "资讯获取频率设置", now
+                "fetch_frequency", fetch_frequency, "资讯获取频率设置", now
             )
 
-            # 保存数据目录配置
+            # 保存数据目录设置
             data_dir = self.data_dir.text().strip()
             if data_dir:
-                self._save_system_config(
-                    db.cursor, "data_dir", data_dir, "数据存储路径", now
-                )
+                self._save_system_config("data_dir", data_dir, "数据存储路径", now)
 
-            db.conn.commit()
+            # 提交更改到数据库
+            db.execute_query("SELECT 1", commit=True)  # 执行一个空操作来提交变更
 
             QMessageBox.information(self, "成功", "设置已保存")
         except Exception as e:
             logger.error(f"保存设置失败: {str(e)}", exc_info=True)
             QMessageBox.critical(self, "错误", f"保存设置失败: {str(e)}")
 
-    def _save_system_config(self, cursor, key, value, description, timestamp):
-        """
-        保存系统配置
-
-        Args:
-            cursor: 数据库游标
-            key: 配置键
-            value: 配置值
-            description: 描述
-            timestamp: 时间戳
-        """
-        # 检查是否已存在配置
-        cursor.execute("SELECT id FROM system_config WHERE config_key = ?", (key,))
-        result = cursor.fetchone()
-
-        if result:
-            # 更新现有配置
-            cursor.execute(
-                "UPDATE system_config SET config_value = ?, description = ?, modified_date = ? WHERE config_key = ?",
-                (value, description, timestamp, key),
-            )
-        else:
-            # 插入新配置
-            cursor.execute(
-                "INSERT INTO system_config (config_key, config_value, description, modified_date) VALUES (?, ?, ?, ?)",
-                (key, value, description, timestamp),
-            )
+    def _save_system_config(self, config_key, config_value, description, timestamp):
+        """保存系统配置项"""
+        db.execute_query(
+            """
+            INSERT OR REPLACE INTO system_config (config_key, config_value, description)
+            VALUES (?, ?, ?)
+            """,
+            (config_key, config_value, description),
+            commit=True,
+        )
 
     def _reset_settings(self):
         """重置为默认设置"""
