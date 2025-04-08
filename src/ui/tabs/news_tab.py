@@ -59,23 +59,23 @@ class NewsTab(QWidget):
         toolbar_layout = QHBoxLayout()
         main_layout.addLayout(toolbar_layout)
 
-        self.fetch_button = QPushButton("获取资讯")
+        self.fetch_button = QPushButton("Fetch News")
         self.fetch_button.clicked.connect(self._fetch_news)
         toolbar_layout.addWidget(self.fetch_button)
 
-        toolbar_layout.addWidget(QLabel("分类:"))
+        toolbar_layout.addWidget(QLabel("Category:"))
         self.category_filter = QComboBox()
-        self.category_filter.addItem("全部", -1)  # UserData -1 for "All"
+        self.category_filter.addItem("All", -1)  # UserData -1 for "All"
         toolbar_layout.addWidget(self.category_filter)
 
-        toolbar_layout.addWidget(QLabel("来源:"))
+        toolbar_layout.addWidget(QLabel("Source:"))
         self.source_filter = QComboBox()
-        self.source_filter.addItem("全部", -1)  # UserData -1 for "All"
+        self.source_filter.addItem("All", -1)  # UserData -1 for "All"
         toolbar_layout.addWidget(self.source_filter)
 
-        toolbar_layout.addWidget(QLabel("搜索:"))
+        toolbar_layout.addWidget(QLabel("Search:"))
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("输入关键词搜索标题、来源、摘要...")
+        self.search_input.setPlaceholderText("Search title, source, summary...")
         toolbar_layout.addWidget(self.search_input)
 
         # --- Splitter ---
@@ -97,7 +97,7 @@ class NewsTab(QWidget):
         preview_widget = QWidget()
         preview_layout = QVBoxLayout(preview_widget)
         preview_layout.setContentsMargins(0, 5, 0, 0)
-        preview_layout.addWidget(QLabel("资讯预览:"))
+        preview_layout.addWidget(QLabel("News Preview:"))
         self.preview_text = QTextEdit()
         self.preview_text.setReadOnly(True)
         preview_layout.addWidget(self.preview_text)
@@ -111,29 +111,29 @@ class NewsTab(QWidget):
         bottom_toolbar = QHBoxLayout()
         main_layout.addLayout(bottom_toolbar)
 
-        self.edit_button = QPushButton("编辑")
+        self.edit_button = QPushButton("Edit")
         self.edit_button.clicked.connect(self._edit_news)
         self.edit_button.setEnabled(False)  # TODO: Enable when implemented
         bottom_toolbar.addWidget(self.edit_button)
 
-        self.delete_button = QPushButton("删除")
+        self.delete_button = QPushButton("Delete")
         self.delete_button.clicked.connect(self._delete_news)
         bottom_toolbar.addWidget(self.delete_button)
 
         # TODO: Implement Send to Analysis
-        self.analyze_button = QPushButton("发送到分析")
+        self.analyze_button = QPushButton("Send to Analysis")
         self.analyze_button.clicked.connect(self._send_to_analysis)
         self.analyze_button.setEnabled(False)  # Disable until implemented
         bottom_toolbar.addWidget(self.analyze_button)
 
         bottom_toolbar.addStretch()
 
-        self.export_button = QPushButton("导出")
+        self.export_button = QPushButton("Export")
         self.export_button.clicked.connect(self._export_news)
         self.export_button.setEnabled(False)  # Disable until implemented
         bottom_toolbar.addWidget(self.export_button)
 
-        self.refresh_button = QPushButton("刷新列表")
+        self.refresh_button = QPushButton("Refresh List")
         self.refresh_button.clicked.connect(self._refresh_all)
         bottom_toolbar.addWidget(self.refresh_button)
 
@@ -152,7 +152,7 @@ class NewsTab(QWidget):
         self.model = QStandardItemModel(0, 5, self)  # 5 columns
         # Use user-friendly headers
         self.model.setHorizontalHeaderLabels(
-            ["标题", "来源", "分类", "发布日期", "已分析"]
+            ["Title", "Source", "Category", "Published Date", "Analyzed"]
         )
 
         self.proxy_model = QSortFilterProxyModel(self)
@@ -202,7 +202,7 @@ class NewsTab(QWidget):
                 category_item.setEditable(False)
                 date_item = QStandardItem(news.get("published_date", "N/A"))
                 date_item.setEditable(False)
-                analyzed_item = QStandardItem("是" if news.get("analyzed") else "否")
+                analyzed_item = QStandardItem("Yes" if news.get("analyzed") else "No")
                 analyzed_item.setEditable(False)
 
                 # Store the news ID in the first item for easy retrieval
@@ -219,7 +219,7 @@ class NewsTab(QWidget):
 
         except Exception as e:
             logger.error(f"Failed to load news: {e}", exc_info=True)
-            QMessageBox.critical(self, "错误", f"加载资讯列表失败: {str(e)}")
+            QMessageBox.critical(self, "Error", f"Failed to load news list: {str(e)}")
 
     def _load_filters(self):
         """Load filter options"""
@@ -229,7 +229,7 @@ class NewsTab(QWidget):
             current_category_id = self.category_filter.currentData()
             self.category_filter.blockSignals(True)
             self.category_filter.clear()
-            self.category_filter.addItem("全部", -1)
+            self.category_filter.addItem("All", -1)
 
             self.categories_cache = self._news_service.get_all_categories()
             restored_cat_index = 0
@@ -248,7 +248,7 @@ class NewsTab(QWidget):
 
         except Exception as e:
             logger.error(f"Failed to load filters: {e}", exc_info=True)
-            QMessageBox.warning(self, "警告", f"加载过滤器选项失败: {str(e)}")
+            QMessageBox.warning(self, "Warning", f"Failed to load filter options: {str(e)}")
         finally:
             # Ensure signals are unblocked even if errors occur
             self.category_filter.blockSignals(False)
@@ -269,7 +269,7 @@ class NewsTab(QWidget):
 
             self.source_filter.blockSignals(True)
             self.source_filter.clear()
-            self.source_filter.addItem("全部", -1)
+            self.source_filter.addItem("All", -1)
 
             # Get sources from the service
             if category_id == -1:  # "All" categories selected
@@ -302,7 +302,7 @@ class NewsTab(QWidget):
 
         except Exception as e:
             logger.error(f"Failed to update source filter: {e}", exc_info=True)
-            QMessageBox.warning(self, "警告", f"更新来源过滤器失败: {str(e)}")
+            QMessageBox.warning(self, "Warning", f"Failed to update source filter: {str(e)}")
         finally:
             self.source_filter.blockSignals(False)
 
@@ -326,7 +326,7 @@ class NewsTab(QWidget):
                     s for s in all_sources if s["category_id"] == selected_category_id
                 ]
                 if (
-                    selected_source_name != "全部"
+                    selected_source_name != "All"
                 ):  # Specific source in specific category
                     source_ids_to_fetch = [
                         s["id"]
@@ -336,7 +336,7 @@ class NewsTab(QWidget):
                 else:  # All sources in specific category
                     source_ids_to_fetch = [s["id"] for s in filtered_by_cat]
             elif (
-                selected_source_name != "全部"
+                selected_source_name != "All"
             ):  # Specific source across all categories
                 source_ids_to_fetch = [
                     s["id"] for s in all_sources if s["name"] == selected_source_name
@@ -345,7 +345,7 @@ class NewsTab(QWidget):
 
             if source_ids_to_fetch is not None and not source_ids_to_fetch:
                 QMessageBox.information(
-                    self, "提示", "根据当前筛选条件，没有找到需要获取的资讯源。"
+                    self, "Notice", "No news sources found based on current filters."
                 )
                 return
 
@@ -353,87 +353,105 @@ class NewsTab(QWidget):
                 f"Starting fetch for source IDs: {source_ids_to_fetch if source_ids_to_fetch else 'All'}"
             )
 
-            # --- Setup Progress Dialog and Async Runner ---
             self.fetch_button.setEnabled(False)
-            self.progress = QProgressDialog("正在获取资讯...", "取消", 0, 100, self)
-            self.progress.setWindowTitle("获取资讯")
+            # --- Progress Bar Setup ---
+            self.progress = QProgressDialog("Fetching news...", "Cancel", 0, 0, self)
+            self.progress.setWindowTitle("Fetching News")
             self.progress.setWindowModality(Qt.WindowModality.WindowModal)
-            self.progress.setMinimumDuration(0)  # Show immediately
+            self.progress.setMinimumDuration(0)
             self.progress.setValue(0)
+            self.progress.setLabelText("Fetching news... Saved 0 items")
+            self._saved_item_count_during_fetch = 0
 
-            # Create the coroutine object to run
             fetch_coro = self._news_service.fetch_news_from_sources
             fetch_args = ()
             fetch_kwargs = {
                 "source_ids": source_ids_to_fetch,
-                "on_item_extracted": self._update_progress_ui,  # Callback when an item is *extracted*
-                "on_fetch_complete": None,  # We handle completion via runner signal
+                # --- Modify callback parameter names and processing functions ---
+                "on_item_saved": self._on_item_saved_ui, # Callback when an item is *saved*
+                "on_fetch_complete": None, # Completion handled by runner signal
             }
 
             self.runner = AsyncTaskRunner(fetch_coro, *fetch_args, **fetch_kwargs)
-            self.runner.setAutoDelete(True)  # Auto delete runner when done
+            self.runner.setAutoDelete(True)
 
-            # Connect signals from the runner
             self.runner.signals.finished.connect(self._on_fetch_runner_finished)
             self.runner.signals.error.connect(self._on_fetch_error)
-            # Connect progress dialog's cancel signal to runner's cancel
-            self.progress.canceled.connect(self.runner.cancel)  # Connect cancel signal
+            self.progress.canceled.connect(self.runner.cancel)
 
-            # Start the task
             QThreadPool.globalInstance().start(self.runner)
-            self.progress.show()  # Show the dialog
+            self.progress.show()
 
         except Exception as e:
+            # ... (error handling) ...
             logger.error(f"Failed to initiate news fetch: {e}", exc_info=True)
-            self.fetch_button.setEnabled(True)  # Re-enable button on error
+            self.fetch_button.setEnabled(True)
             if hasattr(self, "progress") and self.progress:
                 self.progress.close()
-            QMessageBox.critical(self, "错误", f"启动获取资讯失败: {str(e)}")
+            QMessageBox.critical(self, "Error", f"Failed to initiate news fetch: {str(e)}")
 
     @Slot(object)
-    def _update_progress_ui(self, extracted_item: Dict = None):
-        """Callback to update UI during fetch (e.g., progress bar)."""
-        # This callback might be called frequently.
-        # For simplicity, just increment progress slightly.
-        # A more sophisticated approach could count items or estimate progress.
+    def _on_item_saved_ui(self, item_data: Dict):
+        """Callback triggered AFTER an item is saved by the service."""
         if (
             hasattr(self, "progress")
             and self.progress
             and not self.progress.wasCanceled()
         ):
-            current_val = self.progress.value()
-            # Increment slowly, don't assume it corresponds to percentage
-            if current_val < 95:  # Don't reach 100 until finished
-                self.progress.setValue(current_val + 1)
-            QApplication.processEvents()  # Keep UI responsive
+            # --- Update progress label and count ---
+            self._saved_item_count_during_fetch += 1
+            self.progress.setLabelText(f"Fetching news... Saved {self._saved_item_count_during_fetch} items")
+
+            # --- Add new item to table model ---
+            try:
+                news_id = item_data.get("id")
+                if news_id is None:
+                    logger.warning("Received saved item callback but ID is missing.")
+                    return
+
+                # Add to internal cache if needed (or rely on full refresh later)
+                self.news_data[news_id] = item_data
+
+                # Create QStandardItem objects for the new row
+                title_item = QStandardItem(item_data.get("title", "N/A"))
+                source_item = QStandardItem(item_data.get("source_name", "N/A"))
+                category_item = QStandardItem(item_data.get("category_name", "N/A"))
+                date_item = QStandardItem(item_data.get("published_date", "N/A"))
+                analyzed_item = QStandardItem("Yes" if item_data.get("analyzed") else "No")
+
+                title_item.setData(news_id, Qt.ItemDataRole.UserRole)
+                for item in [title_item, source_item, category_item, date_item, analyzed_item]:
+                    item.setEditable(False)
+
+                # Append the row to the model
+                self.model.appendRow([title_item, source_item, category_item, date_item, analyzed_item])
+
+            except Exception as ui_update_err:
+                 logger.error(f"Error updating UI for saved item {item_data.get('id')}: {ui_update_err}", exc_info=True)
+
+            QApplication.processEvents()
 
     @Slot(object)
     def _on_fetch_runner_finished(self, result):
-        """Callback for async fetch completion
-
-        Args:
-            result: Fetch result, number of news items saved
-        """
+        """Callback for async fetch completion"""
         if hasattr(self, "progress") and self.progress:
             if self.progress.wasCanceled():
                 logger.info("Fetch task cancelled by user.")
                 self.fetch_button.setEnabled(True)
-                return  # Don't process result if cancelled
-            self.progress.setValue(100)
+                return
+            # Set progress to 'complete' state if using determinate range
+            # self.progress.setValue(self.progress.maximum())
             self.progress.close()
 
-        total_saved_count = result if isinstance(result, int) else 0
-        logger.info(
-            f"Async fetch task completed. Total items saved: {total_saved_count}"
-        )
+        total_saved_count = self._saved_item_count_during_fetch # Use the counter updated by the callback
+        # result from gather might be different now (sum of counts per task)
+        logger.info(f"Async fetch task completed. Total items saved via callbacks: {total_saved_count}")
 
-        # Refresh news list and filters
-        self._load_filters()
-        self._load_news()
+        self._apply_filters() # Just ensure filtering is up-to-date
 
         self.fetch_button.setEnabled(True)
         QMessageBox.information(
-            self, "获取完成", f"成功保存了 {total_saved_count} 条新资讯。"
+            self, "Fetch Complete", f"Fetch process completed. Saved {total_saved_count} new items."
         )
 
     @Slot(Exception)
@@ -454,7 +472,7 @@ class NewsTab(QWidget):
 
         logger.error(f"News fetch task failed: {error}", exc_info=error)
         self.fetch_button.setEnabled(True)
-        QMessageBox.critical(self, "获取错误", f"获取资讯过程中发生错误:\n{str(error)}")
+        QMessageBox.critical(self, "Fetch Error", f"Error occurred during news fetch:\n{str(error)}")
         # Optionally refresh list even on error?
         # self._load_news()
 
@@ -462,7 +480,7 @@ class NewsTab(QWidget):
         """Delete news"""
         selected_indexes = self.news_table.selectionModel().selectedRows()
         if not selected_indexes:
-            QMessageBox.warning(self, "提示", "请先选择要删除的资讯。")
+            QMessageBox.warning(self, "Notice", "Please select news to delete first.")
             return
 
         # Get news ID from the model data
@@ -475,13 +493,13 @@ class NewsTab(QWidget):
         ).text()  # For confirmation message
 
         if news_id is None:
-            QMessageBox.critical(self, "错误", "无法获取所选资讯的ID。")
+            QMessageBox.critical(self, "Error", "Cannot get ID of selected news.")
             return
 
         reply = QMessageBox.question(
             self,
-            "确认删除",
-            f"确定要删除资讯吗？\n\n标题: {news_title}",
+            "Confirm Delete",
+            f"Are you sure you want to delete this news?\n\nTitle: {news_title}",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -490,22 +508,22 @@ class NewsTab(QWidget):
             try:
                 if self._news_service.delete_news(news_id):
                     logger.info(f"Successfully deleted news ID: {news_id}")
-                    QMessageBox.information(self, "成功", "资讯已删除。")
+                    QMessageBox.information(self, "Success", "News deleted.")
                     self._load_news()  # Refresh the list
                     self._load_filters()  # Might affect counts if sources become unused
                 else:
                     logger.error(
                         f"Service reported failure deleting news ID: {news_id}"
                     )
-                    QMessageBox.warning(self, "失败", "删除资讯失败，请查看日志。")
+                    QMessageBox.warning(self, "Failed", "Failed to delete news. Check logs.")
             except Exception as e:
                 logger.error(f"Error calling delete_news service: {e}", exc_info=True)
-                QMessageBox.critical(self, "错误", f"删除资讯时发生错误: {str(e)}")
+                QMessageBox.critical(self, "Error", f"Error deleting news: {str(e)}")
 
     def _edit_news(self):
         """Edit news"""
         # TODO: Implement edit functionality using service layer
-        QMessageBox.information(self, "提示", "编辑功能尚未实现。")
+        QMessageBox.information(self, "Notice", "Edit functionality not yet implemented.")
 
     def _send_to_analysis(self):
         """Send to analysis tab"""
@@ -513,7 +531,7 @@ class NewsTab(QWidget):
         # This might involve signals/slots or accessing the parent tab widget.
         selected_indexes = self.news_table.selectionModel().selectedRows()
         if not selected_indexes:
-            QMessageBox.warning(self, "提示", "请先选择要发送到分析的资讯。")
+            QMessageBox.warning(self, "Notice", "Please select news to analyze first.")
             return
         source_index = self.proxy_model.mapToSource(selected_indexes[0])
         news_id = self.model.item(source_index.row(), 0).data(Qt.ItemDataRole.UserRole)
@@ -530,20 +548,20 @@ class NewsTab(QWidget):
                     if hasattr(main_window, "tabs"):
                         main_window.tabs.setCurrentWidget(main_window.analysis_tab)
                     QMessageBox.information(
-                        self, "提示", f"已将资讯 '{news_title}' 发送到分析选项卡。"
+                        self, "Notice", f"News '{news_title}' sent to Analysis tab."
                     )
                 else:
-                    QMessageBox.warning(self, "错误", "无法访问分析选项卡。")
+                    QMessageBox.warning(self, "Error", "Cannot access Analysis tab.")
             except Exception as e:
                 logger.error(f"Error sending news to analysis tab: {e}", exc_info=True)
-                QMessageBox.critical(self, "错误", f"发送到分析失败: {e}")
+                QMessageBox.critical(self, "Error", f"Failed to send to analysis: {e}")
         else:
-            QMessageBox.warning(self, "错误", "无法获取所选资讯的ID。")
+            QMessageBox.warning(self, "Error", "Cannot get ID of selected news.")
 
     def _export_news(self):
         """Export news"""
         # TODO: Implement export functionality using service layer
-        QMessageBox.information(self, "提示", "导出功能尚未实现。")
+        QMessageBox.information(self, "Notice", "Export functionality not yet implemented.")
 
     def _on_selection_changed(self, selected, deselected):
         """Handle selection change event"""
@@ -560,30 +578,30 @@ class NewsTab(QWidget):
             news = self.news_data[news_id]
             # Format the preview text
             preview_html = f"<h3>{news.get('title', 'N/A')}</h3>"
-            preview_html += f"<p><b>来源:</b> {news.get('source_name', 'N/A')}<br>"
-            preview_html += f"<b>分类:</b> {news.get('category_name', 'N/A')}<br>"
+            preview_html += f"<p><b>Source:</b> {news.get('source_name', 'N/A')}<br>"
+            preview_html += f"<b>Category:</b> {news.get('category_name', 'N/A')}<br>"
             date_str = (
                 news.get("published_date")
                 or news.get("date")
                 or news.get("fetched_date", "")
             )
-            preview_html += f"<b>日期:</b> {date_str[:19] if date_str else 'N/A'}<br>"  # Show time if available
+            preview_html += f"<b>Date:</b> {date_str[:19] if date_str else 'N/A'}<br>"  # Show time if available
             link = news.get("link", "#")
-            preview_html += f"<b>链接:</b> <a href='{link}'>{link}</a><br>"
+            preview_html += f"<b>Link:</b> <a href='{link}'>{link}</a><br>"
             preview_html += (
-                f"<b>已分析:</b> {'是' if news.get('analyzed') else '否'}</p>"
+                f"<b>Analyzed:</b> {'Yes' if news.get('analyzed') else 'No'}</p>"
             )
             preview_html += "<hr>"
-            preview_html += f"<b>摘要:</b><p>{news.get('summary', '无摘要')}</p>"  # Use summary if available
+            preview_html += f"<b>Summary:</b><p>{news.get('summary', 'No summary')}</p>"  # Use summary if available
             # Optionally show full content or LLM analysis
             llm_analysis = news.get("llm_analysis")
             if llm_analysis:
                 preview_html += "<hr>"
-                preview_html += f"<p><b>AI分析:</b></p><p>{llm_analysis}</p>"  # Display LLM analysis
+                preview_html += f"<p><b>AI Analysis:</b></p><p>{llm_analysis}</p>"  # Display LLM analysis
 
             self.preview_text.setHtml(preview_html)
         else:
-            self.preview_text.setText(f"无法加载预览 (ID: {news_id})")
+            self.preview_text.setText(f"Cannot load preview (ID: {news_id})")
 
     def _apply_filters(self):
         """Apply the current category, source, and search filters to the proxy model."""
@@ -603,11 +621,11 @@ class NewsTab(QWidget):
         source_model = self.proxy_model.sourceModel()  # Get the QStandardItemModel
         for row in range(source_model.rowCount()):
             category_matches = (
-                selected_category_text == "全部"
+                selected_category_text == "All"
                 or source_model.item(row, 2).text() == selected_category_text
             )
             source_matches = (
-                selected_source_text == "全部"
+                selected_source_text == "All"
                 or source_model.item(row, 1).text() == selected_source_text
             )
 

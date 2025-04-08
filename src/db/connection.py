@@ -206,6 +206,9 @@ class DatabaseConnectionManager:
                 "CREATE INDEX IF NOT EXISTS idx_qa_history_created_date ON qa_history (created_date)"
             )
 
+            # Set journal mode to WAL for better concurrency
+            cursor.execute("PRAGMA journal_mode=WAL;")
+
             self._sqlite_conn.commit()
             logger.info("SQLite tables verified/created successfully.")
 
