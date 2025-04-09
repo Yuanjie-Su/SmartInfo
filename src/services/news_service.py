@@ -9,7 +9,9 @@ Responsible for the acquisition, storage, retrieval, and management of news
 import json
 import logging
 import asyncio
+import re
 import threading
+# Added Callable for the new callback type
 from typing import List, Dict, Optional, Tuple, Callable, AsyncGenerator, Any
 from datetime import datetime
 
@@ -25,7 +27,10 @@ from src.utils.token_utils import get_token_size
 logger = logging.getLogger(__name__)
 
 # Default LLM model for extraction
-DEFAULT_EXTRACTION_MODEL = "deepseek-chat"
+DEFAULT_EXTRACTION_MODEL = "deepseek-v3-250324"
+MAX_MARKDOWN_TOKENS = 20480 # 20k
+MAX_OUTPUT_TOKENS = 16384 # 16k
+# MAX_CONTEXT_TOKENS = 131072 # 128k
 
 
 class NewsService:
@@ -48,26 +53,22 @@ class NewsService:
     async def fetch_news_from_sources(
         self,
         source_ids: Optional[List[int]] = None,
-        on_item_saved: Optional[Callable[[Dict], None]] = None,
-        on_fetch_complete: Optional[Callable[[int], None]] = None,
+        on_url_status_update: Optional[Callable[[str, str, str], None]] = None,
     ) -> int:
         """
-        Fetch, extract, and save news from specified source IDs.
-        If no source_ids are provided, fetch all configured news sources.
+        Fetch, extract, and save news from specified source IDs using non-streaming LLM.
+        Reports progress per URL via on_url_status_update callback.
 
         Args:
             source_ids: List of source IDs to fetch. None means fetch all.
-            on_item_saved: Callback function called after successfully saving an item to the DB.
-            on_fetch_complete: Callback function called after all sources have been processed, passing the total number of successfully saved items.
+            on_url_status_update: Callback receiving (url, status, details).
 
         Returns:
             Total number of news entries successfully saved to the database.
         """
         sources_to_fetch = []
         if source_ids:
-            all_sources = (
-                self._source_repo.get_all()
-            )  # Gets tuple: (id, name, url, cat_id, cat_name)
+            all_sources = self._source_repo.get_all()
             source_map = {s[0]: s for s in all_sources}
             for src_id in source_ids:
                 if src_id in source_map:
@@ -79,12 +80,8 @@ class NewsService:
 
         if not sources_to_fetch:
             logger.warning("No valid news sources found to fetch.")
-            if on_fetch_complete:
-                on_fetch_complete(0)
             return 0
 
-        # Prepare data for crawler and LLM extraction
-        # Map URL to source info for easy lookup after crawling
         url_to_source_info: Dict[str, Dict[str, Any]] = {
             src[2]: {
                 "id": src[0],
@@ -97,217 +94,211 @@ class NewsService:
         }
         urls_to_crawl = list(url_to_source_info.keys())
 
-        logger.info(f"Starting fetch process for {len(urls_to_crawl)} URLs...")
-
         total_saved_count = 0
         processed_url_count = 0
-        all_extraction_tasks = [] # Store tasks to wait for completion
+        all_extraction_tasks = []
 
-        # --- Pipeline Processing ---
-        # 1. Crawl each URL in a loop
+        # Report initial status (optional, UI can handle this)
+        # if on_url_status_update:
+        #     for url in urls_to_crawl:
+        #         on_url_status_update(url, "Pending", "")
+
+        logger.info(f"Crawling {len(urls_to_crawl)} sources...")
+
         try:
             async for crawl_result in get_markdown_by_url(urls_to_crawl):
                 processed_url_count += 1
                 url = crawl_result["url"]
                 markdown = crawl_result.get("markdown")
+                source_info = url_to_source_info.get(url)
 
-                if markdown and url in url_to_source_info:
+                if not source_info:
+                     logger.warning(f"Received crawl result for unknown URL: {url}")
+                     continue
+
+                if on_url_status_update:
+                    status = "Crawled - Success" if markdown else "Crawled - Failed (No Markdown)"
+                    on_url_status_update(url, status, "")
+
+                if markdown:
                     logger.info(f"Successfully crawled markdown for: {url}")
-                    source_info = url_to_source_info[url]
-                    # 2. Immediately create extraction and saving tasks for this URL
                     task = asyncio.create_task(
                         self._extract_and_save_items_sequentially(
-                            url, markdown, source_info, on_item_saved
+                            url,
+                            markdown,
+                            source_info,
+                            on_url_status_update, # Pass new callback
                         )
                     )
                     all_extraction_tasks.append(task)
                 else:
-                    logger.warning(f"Failed to get markdown or URL not found for: {url}")
-                # Can add simple progress updates here, e.g. number of URLs processed
+                    logger.warning(f"Failed to get markdown for: {url}")
+                    # Report error via callback if desired, or just log
+                    if on_url_status_update:
+                         on_url_status_update(url, "Error", "Failed to crawl markdown")
+
 
         except Exception as crawl_error:
             logger.error(f"Error during crawling phase: {crawl_error}", exc_info=True)
+            # Report error for all pending URLs? Difficult to track which failed here.
 
-        logger.info(
-            f"Crawling phase potentially finished (or error occurred). Processed URLs: {processed_url_count}. Waiting for extraction tasks..."
-        )
+        logger.info(f"Crawling phase finished. Processed URLs: {processed_url_count}. Waiting for extraction tasks...")
 
-        # 3. Wait for all started extraction tasks to complete and collect results
         if all_extraction_tasks:
             results = await asyncio.gather(*all_extraction_tasks, return_exceptions=True)
             for i, result in enumerate(results):
-                 # Note: result here is return value from _extract_and_save_items_sequentially (int)
+                task_url = f"Task {i}" # Placeholder
+                saved_count = 0
+                task_exception = None
+
                 if isinstance(result, Exception):
-                     logger.error(f"Error during extraction/saving task {i}: {result}", exc_info=result)
-                elif isinstance(result, int):
-                    total_saved_count += result # Add count of saved items from each task
+                    task_exception = result
+                    # Need to associate exception back to a URL if possible (tricky here)
+                    # Maybe the task itself should catch and return (url, error)?
+                elif isinstance(result, tuple) and len(result) == 2:
+                    task_url, saved_count_or_error = result
+                    if isinstance(saved_count_or_error, int):
+                        saved_count = saved_count_or_error
+                    else:
+                        task_exception = saved_count_or_error # Assume error obj/string
+                        # Report error for this specific URL
+                        if on_url_status_update:
+                            on_url_status_update(task_url, "Error", str(task_exception))
+
+                if task_exception:
+                    logger.error(f"Error during extraction/saving task for {task_url}: {task_exception}", exc_info=isinstance(task_exception, Exception))
                 else:
-                    logger.warning(f"Unexpected result type from extraction task {i}: {type(result)}")
+                    total_saved_count += saved_count
+
         else:
              logger.info("No extraction tasks were started.")
 
-
-        logger.info(
-            f"News fetching process completed. Total items saved across all URLs: {total_saved_count}"
-        )
-        if on_fetch_complete:
-            on_fetch_complete(total_saved_count)
-
+        logger.info(f"News fetching process completed. Total items saved across all sources: {total_saved_count}")
         return total_saved_count
-    
-    def _save_item_and_callback_sync(
-        self, item_data: Dict, on_item_saved: Optional[Callable[[Dict], None]]
-    ) -> Optional[int]:
-        """
-        Synchronous helper function to save an item to the database
-        and invoke the callback. Designed to be run in a background thread.
 
-        Args:
-            item_data: The dictionary containing news item data.
-            on_item_saved: The callback function to call after successful save.
-
-        Returns:
-            The saved item's ID if successful, otherwise None.
-        """
-        thread_id = threading.get_ident() # Get current thread ID for logging
-        logger.debug(f"[Thread:{thread_id}] Attempting DB save for: {item_data.get('link')}")
-        saved_id = None
-        try:
-            # --- Database Operation ---
-            saved_id = self._news_repo.add(item_data)
-            # --- End Database Operation ---
-
-            if saved_id:
-                logger.info(f"[Thread:{thread_id}] Item saved (ID: {saved_id}): {item_data.get('link')}")
-                # --- Callback Invocation ---
-                if on_item_saved:
-                    try:
-                        item_data_with_id = item_data.copy()
-                        item_data_with_id['id'] = saved_id # Add ID for the callback
-                        # Call the callback directly from this background thread.
-                        # The callback *must* handle marshalling to the GUI thread if necessary.
-                        on_item_saved(item_data_with_id)
-                        logger.debug(f"[Thread:{thread_id}] on_item_saved callback invoked for ID {saved_id}.")
-                    except Exception as cb_err:
-                        # Log error in callback but don't necessarily fail the save
-                        logger.error(f"[Thread:{thread_id}] Error in on_item_saved callback for ID {saved_id}: {cb_err}", exc_info=True)
-                # --- End Callback Invocation ---
-                return saved_id
-            else:
-                # Add method might have logged duplicate/error internally
-                logger.debug(f"[Thread:{thread_id}] Item not saved by repo (duplicate/error): {item_data.get('link')}")
-                return None
-        except Exception as db_err:
-            logger.error(f"[Thread:{thread_id}] Exception during DB save for {item_data.get('link')}: {db_err}", exc_info=True)
-            return None # Indicate failure
-    
     async def _extract_and_save_items_sequentially(
         self,
         url: str,
         markdown: str,
         source_info: Dict[str, Any],
-        on_item_saved: Optional[Callable[[Dict], None]],
-    ) -> int:
+        on_url_status_update: Optional[Callable[[str, str, str], None]],
+    ) -> Tuple[str, Any]: # Return URL and (count or error)
         """
-        Helper coroutine: Extracts items from markdown, saves each one individually,
-        and calls the callback after each successful save.
+        Helper coroutine: Extracts items from markdown using non-streaming LLM,
+        collects them, and saves them in a single batch. Reports status updates.
+
+        Args:
+            url: The source URL being processed.
+            markdown: The crawled markdown content.
+            source_info: Dictionary containing info about the source.
+            on_url_status_update: Callback for status updates.
 
         Returns:
-            Number of items successfully saved for this URL.
+            Tuple of (URL, Number of saved items OR Error object/string).
         """
-        items_saved_count = 0
-        if not markdown:
-            return 0
+        items_to_save_batch: List[Dict[str, Any]] = []
+        total_saved_for_url = 0
+        total_skipped_for_url = 0
 
-        # --- Chunking Logic ---
-        token_size = get_token_size(markdown)
-        MAX_MARKDOWN_TOKENS = 9216
-        num_chunks = 1
-        markdown_chunks = [markdown]
-        if token_size > MAX_MARKDOWN_TOKENS:
-            ratio = token_size // MAX_MARKDOWN_TOKENS
-            num_chunks = ratio + 1
-            try:
-                markdown_chunks = self._get_chunks(markdown, num_chunks)
-                logger.info(f"Splitting markdown for {url} into {len(markdown_chunks)} chunks ({token_size} tokens).")
-            except Exception as e:
-                logger.error(f"Error splitting markdown for {url}: {e}. Processing as single chunk.", exc_info=True)
-                markdown_chunks = [markdown]
-                num_chunks = 1
+        try: # Wrap the whole process for better error reporting per URL
+            if not markdown:
+                if on_url_status_update: on_url_status_update(url, "Skipped", "No markdown content")
+                return url, 0 # Return 0 saved
 
-        # --- End Chunking Logic ---
-        for i, chunk in enumerate(markdown_chunks):
-            logger.info(f"Processing chunk {i+1}/{num_chunks} for {url} with LLM stream...")
-            chunk_prompt = self._get_prompt_extract_info_from_markdown(chunk)
-            stream_iterator = await self._llm_client.stream_completion_content(
-                model=DEFAULT_EXTRACTION_MODEL,
-                messages=[{"role": "user", "content": chunk_prompt}],
-                max_tokens=8192,
-            )
+            if on_url_status_update:
+                on_url_status_update(url, "Processing", "Checking token size")
 
-            if not stream_iterator:
-                logger.error(f"Failed to start LLM stream for chunk {i+1}/{num_chunks} ({url}).")
-                continue
+            # --- Chunking Logic (Still relevant for large markdown) ---
+            token_size = get_token_size(markdown)
+            markdown_chunks = [markdown]
+            num_chunks = 1
 
-            # --- Stream Parsing and Individual Saving ---
-            buffer = ""
-            processed_len = 0
-            decoder = json.JSONDecoder()
-            try:
-                async for text_chunk in stream_iterator:
-                    if not text_chunk: continue
-                    buffer += text_chunk
-                    while True:
-                        buffer_trimmed = buffer[processed_len:].lstrip()
-                        if not buffer_trimmed: break
-                        current_start_index = len(buffer) - len(buffer_trimmed)
-                        try:
-                            obj, end_index_rel = decoder.raw_decode(buffer_trimmed)
-                            end_index_abs = current_start_index + end_index_rel
-                            processed_len = end_index_abs # Move pointer
+            if token_size > MAX_MARKDOWN_TOKENS:
+                num_chunks = (token_size // MAX_MARKDOWN_TOKENS) + 1
+                try:
+                    markdown_chunks = self._get_chunks(markdown, num_chunks)
+                    log_msg = f"Splitting markdown for {url} into {len(markdown_chunks)} chunks ({token_size} tokens)."
+                    logger.info(log_msg)
+                    if on_url_status_update: on_url_status_update(url, "Processing", f"Splitting into {len(markdown_chunks)} chunks")
+                except Exception as e:
+                    log_msg = f"Error splitting markdown for {url}: {e}. Processing as single chunk."
+                    logger.error(log_msg, exc_info=True)
+                    markdown_chunks = [markdown]
+                    num_chunks = 1
+                    if on_url_status_update: on_url_status_update(url, "Processing", "Split failed, using single chunk")
+            # --- End Chunking Logic ---
 
-                            # Validate and prepare data for saving
-                            if isinstance(obj, dict) and obj.get("title") and obj.get("link"):
-                                item_data = {
-                                    "title": obj.get("title"), "link": obj.get("link"),
-                                    "summary": obj.get("summary"), "published_date": obj.get("date"),
-                                    "source_name": source_info["name"], "category_name": source_info["category_name"],
-                                    "source_id": source_info["id"], "category_id": source_info["category_id"],
-                                    "content": None, "llm_analysis": None, "embedded": False,
-                                }
+            # --- Process Chunks ---
+            for i, chunk in enumerate(markdown_chunks):
+                if not chunk or not chunk.strip():
+                    logger.debug(f"Skipping empty chunk {i+1}/{num_chunks} for {url}")
+                    continue
 
-                                # --- Execute save and callback in background thread ---
-                                try:
-                                    # Use asyncio.to_thread to run the sync helper function
-                                    saved_id = await asyncio.to_thread(
-                                        self._save_item_and_callback_sync,
-                                        item_data, # Pass current item data
-                                        on_item_saved # Pass the original callback
-                                    )
-                                    if saved_id:
-                                        items_saved_count += 1
-                                        # Callback is handled within _save_item_and_callback_sync
-                                except Exception as thread_exec_err:
-                                    logger.error(f"Error executing save task in background thread for {url} (item: {item_data.get('link')}): {thread_exec_err}", exc_info=True)
-                                # --- End Background Execution ---
+                chunk_status_prefix = f"Chunk {i+1}/{num_chunks}"
+                if on_url_status_update: on_url_status_update(url, "Extracting (LLM)", f"{chunk_status_prefix} Sending request...")
+                logger.info(f"Processing chunk {i+1}/{num_chunks} for {url} with non-streaming LLM...")
+
+                chunk_prompt = self._get_prompt_extract_info_from_markdown(chunk)
+
+                # --- Call Non-Streaming LLM ---
+                llm_result = await self._llm_client.get_completion_content(
+                    model=DEFAULT_EXTRACTION_MODEL,
+                    messages=[{"role": "user", "content": chunk_prompt}],
+                    max_tokens=MAX_OUTPUT_TOKENS, # Might need adjustment based on expected output size
+                    temperature=0.1
+                )
+                # --- End LLM Call ---
+
+                if llm_result:
+                    logger.info(f"LLM extraction successful for chunk {i+1}/{num_chunks} ({url}).")
+                    if on_url_status_update: on_url_status_update(url, "Extracting (LLM)", f"{chunk_status_prefix} Received response")
+                    # Process and save the extracted items
+                    try:
+                        print(llm_result)
+                        items_extracted = json.loads(llm_result)
+                        if isinstance(items_extracted, list) and items_extracted and isinstance(items_extracted[0], dict):
+                            # Enrich items with source information before saving
+                            enriched_items = []
+                            for item in items_extracted:
+                                if isinstance(item, dict) and item.get('link') and item.get('title'): # Basic validation
+                                    item['source_id'] = source_info.get('id')
+                                    item['source_name'] = source_info.get('name')
+                                    item['category_id'] = source_info.get('category_id')
+                                    item['category_name'] = source_info.get('category_name')
+                                    enriched_items.append(item)
+                                else:
+                                    logger.warning(f"Skipping invalid item structure in LLM result for {url}: {item}")
+
+                            if enriched_items:
+                                logger.info(f"Saving {len(enriched_items)} enriched items from LLM result for {url}...")
+                                success_count, skipped_count = self._news_repo.add_batch(enriched_items)
+                                total_saved_for_url += success_count
+                                total_skipped_for_url += skipped_count
+                                logger.info(f"Saved: {success_count}, Skipped (duplicates): {skipped_count} for chunk {i+1}/{num_chunks} ({url}).")
+                                if on_url_status_update: on_url_status_update(url, "Saving", f"{chunk_status_prefix} Saved {success_count}, Skipped {skipped_count}")
                             else:
-                                logger.warning(f"Skipping invalid/incomplete object from LLM stream for {url} (chunk {i+1}): {str(obj)[:100]}")
+                                logger.info(f"No valid items to save after enrichment for chunk {i+1}/{num_chunks} ({url}).")
 
-                        except json.JSONDecodeError:
-                            break # Wait for more data
-                        except Exception as inner_e:
-                            logger.error(f"Error decoding object in stream for {url} (chunk {i+1}): {inner_e}", exc_info=True)
-                            index = buffer_trimmed.find("{")
-                            if index != -1: processed_len = current_start_index + index
-                            else: processed_len = len(buffer)
-                            break # Skip error section
+                        elif isinstance(items_extracted, list) and not items_extracted:
+                             logger.info(f"LLM returned an empty list for chunk {i+1}/{num_chunks} ({url}).")
+                        else:
+                            logger.warning(f"Invalid LLM result format for {url}. Expected non-empty list of dictionaries, got: {type(items_extracted)}")
+                            if on_url_status_update: on_url_status_update(url, "Error", "Invalid result format")
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Error parsing LLM JSON result for {url}: {e}", exc_info=True)
+                        if on_url_status_update: on_url_status_update(url, "Error", f"JSON Parsing Failed: {e}")
+                    except Exception as e: # Catch other potential errors during enrichment/saving
+                        logger.error(f"Error processing/saving LLM result for {url}: {e}", exc_info=True)
+                        if on_url_status_update: on_url_status_update(url, "Error", f"Processing Failed: {e}")
+                else:
+                    logger.warning(f"LLM returned empty result for chunk {i+1}/{num_chunks} ({url}).")
+                    if on_url_status_update: on_url_status_update(url, "Extracting (LLM)", f"{chunk_status_prefix} Failed (No response)")
 
-            except Exception as stream_proc_err:
-                 logger.error(f"Error processing LLM stream for {url} (chunk {i+1}): {stream_proc_err}", exc_info=True)
-            # --- End Stream Parsing and Individual Saving ---
+        except Exception as e:
+             logger.error(f"Critical error processing URL {url}: {e}", exc_info=True)
+             if on_url_status_update: on_url_status_update(url, "Error", f"Processing Failed: {e}")
+             return url, e # Return error
 
-        logger.info(f"Finished processing all chunks for {url}. Total items saved for this URL: {items_saved_count}")
-        return items_saved_count
 
     def _get_chunks(self, text: str, num_chunks: int) -> List[str]:
         """Splits text into roughly equal chunks based on lines."""
@@ -315,51 +306,82 @@ class NewsService:
         if not lines:
             return []
         total_lines = len(lines)
+        # Ensure lines_per_chunk is at least 1
         lines_per_chunk = max(1, total_lines // num_chunks)
 
         chunks = []
+        start_line = 0
         for i in range(num_chunks):
-            start = i * lines_per_chunk
-            # For the last chunk, take all remaining lines
-            end = (i + 1) * lines_per_chunk if i < num_chunks - 1 else total_lines
-            chunks.append("\n".join(lines[start:end]))
+            # Calculate end line, ensuring the last chunk takes all remaining lines
+            end_line = start_line + lines_per_chunk if i < num_chunks - 1 else total_lines
+            # Ensure end_line doesn't exceed total_lines (can happen with integer division)
+            end_line = min(end_line, total_lines)
+            # Add chunk if start_line is less than end_line
+            if start_line < end_line:
+                chunks.append("\n".join(lines[start_line:end_line]))
+            # Update start_line for the next chunk
+            start_line = end_line
+            # Break if we've processed all lines
+            if start_line >= total_lines:
+                break
 
-        return [chunk for chunk in chunks if chunk]  # Remove empty chunks
+        return [chunk for chunk in chunks if chunk and chunk.strip()] # Remove empty chunks
+
 
     def _get_prompt_extract_info_from_markdown(self, markdown: str) -> str:
         """Generates the prompt for LLM extraction."""
-        # (Keep the original prompt structure - it seems well-defined)
+        # (Keep the original prompt structure)
         current_date = datetime.now().strftime("%Y-%m-%d")
         prompt = f"""You are an information extraction assistant. Given a markdown-formatted text, please extract valid information according to the following strict rules:
 1. Extract only valid content with links. Filter out irrelevant content such as navigation menus, login information, advertisements, feature introductions, UI elements, personal information, and any links that do not lead to substantial informational content (e.g., links to search pages, landing pages with little content, or unrelated promotional links).
 2. For each valid content, extract only the following four fields:
-   - title (the text title corresponding to the link, must not be empty)
-   - link (the URL address of the link, must be a valid URL)
-   - summary (the description or summary text associated with the link; leave empty "" if none exists)
-   - date (the date when the content was published, deduced from the context or surrounding text; if no specific date can be deduced, leave it empty "". Use YYYY-MM-DD format if possible. Current date is {current_date})
-3. The summary and date fields are optional; only populate them if clearly available. Title and link are mandatory.
-4. Ensure the 'link' field contains a complete and valid URL (starting with http:// or https://). Resolve relative URLs if possible based on the context, otherwise skip the item.
-5. The output format MUST be one valid JSON object per line. Do NOT wrap the output in a list (square brackets `[]`). Do not add commas between the JSON objects. Each line must start with `{{` and end with `}}`.
+   - "title": the text title corresponding to the link, must not be empty
+   - "link": the URL address of the link, must be a valid URL starting with http:// or https://
+   - "summary": the description or summary text associated with the link. If no summary exists, set it to "". If the summary exists and exceeds 100 words, summarize and reduce it to approximately 80 words. If the summary is already less than 80 words, leave it as-is.
+   - "date": the date when the content was published, deduced from the context or surrounding text. If no specific date can be deduced, set it to "". Use YYYY-MM-DD format if possible. Current date is {current_date}
+3. The "summary" and "date" fields are optional; only populate them if clearly available. The "title" and "link" fields are mandatory.
+4. Ensure the "link" field contains a complete and valid URL. Resolve relative URLs if possible based on the context; otherwise skip the item.
+5. The output MUST be a valid JSON array beginning with [ and ending with ]. Each item must be a JSON object. **Do not include markdown code block syntax like json``` and ```.**
 
 <ExampleInput>
 [Windows running on smartwatches amazes netizens: This time it's true Windows on Arm](https://blog.csdn.net/csdnnews/article/details/146969048) Published on 2025-04-01. [After 25 years of coding, a veteran programmer discovers: AI assistants might still be "half-baked"!](https://blog.csdn.net/csdnnews/article/details/146967618) [A sip of alanchanchn](https://blog.csdn.net/chenwewi520feng) [Operation and maintenance monitoring](https://blog.csdn.net/chenwewi520feng/article/details/141623081) [This example collects host information...] Posted yesterday. [Login](https://example.com/login)
 </ExampleInput>
 
 <CorrectOutputFormat>
-{{"title": "Windows running on smartwatches amazes netizens: This time it's true Windows on Arm", "link": "https://blog.csdn.net/csdnnews/article/details/146969048", "summary": "", "date": "2025-04-01"}}
-{{"title": "After 25 years of coding, a veteran programmer discovers: AI assistants might still be \\"half-baked\\"!", "link": "https://blog.csdn.net/csdnnews/article/details/146967618", "summary": "", "date": ""}}
-{{"title": "Operation and maintenance monitoring", "link": "https://blog.csdn.net/chenwewi520feng/article/details/141623081", "summary": "This example collects host information...", "date": "2025-04-04"}}
+[
+  {{
+    "title": "Windows running on smartwatches amazes netizens: This time it's true Windows on Arm",
+    "link": "https://blog.csdn.net/csdnnews/article/details/146969048",
+    "summary": "",
+    "date": "2025-04-01"
+  }},
+  {{
+    "title": "After 25 years of coding, a veteran programmer discovers: AI assistants might still be \"half-baked\"!",
+    "link": "https://blog.csdn.net/csdnnews/article/details/146967618",
+    "summary": "",
+    "date": ""
+  }},
+  {{
+    "title": "Operation and maintenance monitoring",
+    "link": "https://blog.csdn.net/chenwewi520feng/article/details/141623081",
+    "summary": "This example collects host information...",
+    "date": "2025-04-07"
+  }}
+]
 </CorrectOutputFormat>
 
-Please start processing the following markdown content, ensuring each extracted item is a valid JSON object on its own line:
+Please start processing the following markdown content, ensuring the final output is a valid JSON array:
 <markdown>
 {markdown}
 </markdown>
 """
+
         return prompt
 
-    # --- News Management ---
-
+    # --- News Management --- (Keep remaining methods as they are)
+    # get_news_by_id, get_all_news, delete_news, clear_all_news
+    # get_all_categories, get_all_categories_with_counts, add_category, etc.
+    # get_all_sources, get_sources_by_category_id, add_source, etc.
     def get_news_by_id(self, news_id: int) -> Optional[Dict[str, Any]]:
         """Retrieves a single news item by ID."""
         return self._news_repo.get_by_id(news_id)
@@ -377,8 +399,9 @@ Please start processing the following markdown content, ensuring each extracted 
         """Clears all news data from the database."""
         # Add warning? This is destructive.
         logger.warning("Executing clear_all_news - All news data will be removed.")
+        # Consider coordinating with QA service to clear ChromaDB data as well
         return self._news_repo.clear_all()
-        # Consider clearing ChromaDB data as well?
+
 
     # --- Category and Source Management ---
 
@@ -396,8 +419,6 @@ Please start processing the following markdown content, ensuring each extracted 
 
     def update_category(self, category_id: int, new_name: str) -> bool:
         """Updates a category name."""
-        # Also update category_name in news table? Could be complex.
-        # Simpler to just update the category table. UI might need refresh.
         return self._category_repo.update(category_id, new_name)
 
     def delete_category(self, category_id: int) -> bool:
@@ -410,14 +431,10 @@ Please start processing the following markdown content, ensuring each extracted 
     def get_all_sources(self) -> List[Dict[str, Any]]:
         """Gets all news sources with category names."""
         rows = self._source_repo.get_all()
-        # Convert tuples to dicts for easier use
         return [
             {
-                "id": r[0],
-                "name": r[1],
-                "url": r[2],
-                "category_id": r[3],
-                "category_name": r[4],
+                "id": r[0], "name": r[1], "url": r[2],
+                "category_id": r[3], "category_name": r[4],
             }
             for r in rows
         ]
@@ -429,18 +446,14 @@ Please start processing the following markdown content, ensuring each extracted 
 
     def add_source(self, name: str, url: str, category_name: str) -> Optional[int]:
         """Adds a news source. Creates category if it doesn't exist."""
-        # Find or create category
         category = self._category_repo.get_by_name(category_name)
         if not category:
             category_id = self._category_repo.add(category_name)
             if not category_id:
-                logger.error(
-                    f"Failed to add or find category '{category_name}' when adding source."
-                )
+                logger.error(f"Failed to add/find category '{category_name}'")
                 return None
         else:
             category_id = category[0]
-
         return self._source_repo.add(name, url, category_id)
 
     def update_source(
@@ -451,13 +464,10 @@ Please start processing the following markdown content, ensuring each extracted 
         if not category:
             category_id = self._category_repo.add(category_name)
             if not category_id:
-                logger.error(
-                    f"Failed to add or find category '{category_name}' when updating source."
-                )
+                logger.error(f"Failed to add/find category '{category_name}'")
                 return False
         else:
             category_id = category[0]
-
         return self._source_repo.update(source_id, name, url, category_id)
 
     def delete_source(self, source_id: int) -> bool:

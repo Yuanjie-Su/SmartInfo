@@ -26,7 +26,7 @@ DEFAULT_SQLITE_DB_NAME = "smartinfo.db"
 # --- Configuration Keys ---
 # Environment variables take precedence
 API_KEY_DEEPSEEK = "API_KEY_DEEPSEEK"  # Read from .env
-
+API_KEY_VOLCENGINE = "API_KEY_VOLCENGINE"  # Read from .env
 # Database configuration keys
 CONFIG_KEY_DATA_DIR = "data_dir"
 CONFIG_KEY_FETCH_FREQUENCY = "fetch_frequency"
@@ -82,6 +82,11 @@ class AppConfig:
         if not self._secrets[API_KEY_DEEPSEEK]:
             logger.warning(
                 "DEEPSEEK_API_KEY not found in environment variables or .env file."
+            )
+        self._secrets[API_KEY_VOLCENGINE] = os.getenv("VOLCENGINE_API_KEY")
+        if not self._secrets[API_KEY_VOLCENGINE]:
+            logger.warning(
+                "VOLCENGINE_API_KEY not found in environment variables or .env file."
             )
 
     def _ensure_data_dir(self) -> None:
@@ -254,10 +259,10 @@ class AppConfig:
         return self._db_path
 
     @property
-    def chroma_db_path(self) -> str:
-        """Get the storage path of ChromaDB"""
-        # ChromaDB path is usually under data_dir
-        return os.path.join(self._data_dir, "chromadb")
+    def log_file_path(self) -> str:
+        """Get the full path of the log file"""
+        # Log file path is usually under data_dir
+        return os.path.join(self._data_dir, "smartinfo.log")
 
 
 # --- Global configuration instance ---

@@ -11,10 +11,8 @@ import os
 import logging
 import sqlite3
 from typing import Optional
-import chromadb
 import atexit
 from threading import Lock
-from chromadb.config import Settings
 import time
 
 # Get paths from unified configuration
@@ -41,7 +39,6 @@ class DatabaseConnectionManager:
                     try:
                         app_config = get_config()
                         cls._instance._sqlite_db_path = app_config.db_path
-                        cls._instance._chroma_db_path = app_config.chroma_db_path
                     except RuntimeError as e:
                         logger.critical(
                             f"Configuration not initialized before DB connection: {e}"
@@ -58,7 +55,6 @@ class DatabaseConnectionManager:
                         ) from e
 
                     cls._instance._sqlite_conn = None
-                    cls._instance._chroma_client = None
                     cls._instance._initialize()
                     # Register cleanup function on program exit
                     atexit.register(cls._instance._cleanup)
@@ -74,13 +70,6 @@ class DatabaseConnectionManager:
                 self._sqlite_db_path, check_same_thread=False
             )
             self._create_sqlite_tables()  # Ensure table structures exist
-
-            logger.info(f"Initializing ChromaDB client at: {self._chroma_db_path}")
-            # Initialize ChromaDB client
-            self._chroma_client = chromadb.PersistentClient(
-                path=self._chroma_db_path, settings=Settings(anonymized_telemetry=False)
-            )
-            self._init_chroma_collections()  # Ensure collections exist
 
             logger.info("Database connections initialized successfully.")
         except Exception as e:
@@ -144,7 +133,6 @@ class DatabaseConnectionManager:
                     content TEXT,
                     llm_analysis TEXT,
                     analyzed BOOLEAN NOT NULL DEFAULT 0,
-                    embedded BOOLEAN NOT NULL DEFAULT 0,
                     published_date TEXT,
                     FOREIGN KEY (source_id) REFERENCES news_sources(id) ON DELETE SET NULL,
                     FOREIGN KEY (category_id) REFERENCES news_category(id) ON DELETE SET NULL
@@ -158,9 +146,6 @@ class DatabaseConnectionManager:
             )
             cursor.execute(
                 "CREATE INDEX IF NOT EXISTS idx_news_analyzed ON news (analyzed)"
-            )
-            cursor.execute(
-                "CREATE INDEX IF NOT EXISTS idx_news_embedded ON news (embedded)"
             )
 
             # API Configuration Table (for storing API keys - consider security implications)
@@ -218,30 +203,6 @@ class DatabaseConnectionManager:
                 self._sqlite_conn.rollback()
             raise  # Re-raise the exception
 
-    def _init_chroma_collections(self):
-        """Initialize ChromaDB collections"""
-        if not self._chroma_client:
-            logger.error(
-                "Cannot initialize collections, ChromaDB client is not initialized."
-            )
-            return
-        try:
-            # Create or get news collection
-            self._chroma_client.get_or_create_collection(
-                name="news_collection",
-                # Consider adding embedding function details to metadata if needed
-                metadata={
-                    "description": "Vector embeddings of news content for semantic search"
-                },
-            )
-            logger.info("ChromaDB collection 'news_collection' verified/created.")
-        except Exception as e:
-            logger.error(
-                f"Failed to initialize ChromaDB collection: {e}", exc_info=True
-            )
-            # Depending on severity, might want to raise this
-            raise
-
     def _cleanup(self):
         """Clean up resources, close database connections"""
         logger.info("Cleaning up database connections...")
@@ -254,7 +215,6 @@ class DatabaseConnectionManager:
                 logger.error(
                     f"Error closing SQLite connection: {str(e)}", exc_info=True
                 )
-        # ChromaDB persistent client doesn't have an explicit close method in typical usage
 
     def get_sqlite_connection(self) -> sqlite3.Connection:
         """Get SQLite database connection object"""
@@ -265,33 +225,6 @@ class DatabaseConnectionManager:
             if self._sqlite_conn is None:
                 raise ConnectionError("Failed to establish SQLite connection.")
         return self._sqlite_conn
-
-    def get_chroma_client(self) -> chromadb.Client:
-        """Get ChromaDB client object"""
-        if self._chroma_client is None:
-            logger.error("ChromaDB client is not available.")
-            # Attempt to re-initialize or raise an error
-            self._initialize()  # Try to reconnect
-            if self._chroma_client is None:
-                raise ConnectionError("Failed to establish ChromaDB client connection.")
-        return self._chroma_client
-
-    def get_chroma_collection(
-        self, collection_name="news_collection"
-    ) -> chromadb.Collection:
-        """Get specified ChromaDB collection"""
-        client = self.get_chroma_client()
-        try:
-            return client.get_collection(collection_name)
-        except Exception as e:
-            logger.error(
-                f"Failed to get ChromaDB collection '{collection_name}': {e}",
-                exc_info=True,
-            )
-            # Optionally try get_or_create_collection or raise
-            raise ValueError(
-                f"Collection '{collection_name}' not found or accessible."
-            ) from e
 
 
 # --- Global database connection instance ---
@@ -320,12 +253,3 @@ def get_db() -> sqlite3.Connection:
     """Convenience function: Get SQLite connection"""
     return get_db_connection_manager().get_sqlite_connection()
 
-
-def get_chroma() -> chromadb.Client:
-    """Convenience function: Get ChromaDB client"""
-    return get_db_connection_manager().get_chroma_client()
-
-
-def get_chroma_news_collection() -> chromadb.Collection:
-    """Convenience function: Get ChromaDB news collection"""
-    return get_db_connection_manager().get_chroma_collection("news_collection")

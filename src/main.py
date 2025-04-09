@@ -105,21 +105,23 @@ def initialize_services(
 
         # Initialize LLM Client (needs API key)
         deepseek_api_key = setting_service.get_api_key("deepseek")
+        volcengine_api_key = setting_service.get_api_key("volcengine")
         if not deepseek_api_key:
             logger.warning(
                 "DeepSeek API key not configured. LLM-dependent features may fail."
             )
-        llm_base_url = "https://api.deepseek.com"
+        if not volcengine_api_key:
+            logger.warning(
+                "Volcano Engine API key not configured. LLM-dependent features may fail."
+            )
         llm_client = LLMClient(
-            base_url=llm_base_url, api_key=deepseek_api_key, async_mode=True
+            base_url="https://ark.cn-beijing.volces.com/api/v3", api_key=volcengine_api_key, async_mode=True
         )  # Use async for UI
 
         news_service = NewsService(news_repo, source_repo, category_repo, llm_client)
         analysis_service = AnalysisService(news_repo, llm_client)
 
-        # QA Service needs Chroma client
-        chroma_client = db_manager.get_chroma_client()
-        qa_service = QAService(config, news_repo, qa_repo, chroma_client, llm_client)
+        qa_service = QAService(qa_repo, llm_client)
 
         logger.info("Services initialized successfully.")
         return {

@@ -11,6 +11,7 @@ import json
 from typing import Optional, Dict, Any, List, Tuple
 
 from src.config import (
+    API_KEY_VOLCENGINE,
     AppConfig,
     API_KEY_DEEPSEEK,
     CONFIG_KEY_DATA_DIR,
@@ -46,6 +47,12 @@ class SettingService:
             env_key = self._config.get(API_KEY_DEEPSEEK)
             if env_key:
                 logger.debug(f"Using DeepSeek API key from environment.")
+                return env_key
+        
+        if api_name.lower() == "volcengine":
+            env_key = self._config.get(API_KEY_VOLCENGINE)
+            if env_key:
+                logger.debug(f"Using Volcano Engine API key from environment.")
                 return env_key
 
         # 2. Fallback to database

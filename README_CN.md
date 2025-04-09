@@ -23,15 +23,11 @@ SmartInfo 是一款桌面应用程序，旨在帮助研究人员、分析师和�
 - **智能分析:**
   - 使用 LLM (DeepSeek) 对选定的新闻文章生成摘要并执行不同类型的分析（例如，技术分析、趋势洞察、竞争分析）。
   - 并排查看原始内容和生成的分析报告。
-- **知识库问答:**
-  - 使用 Sentence Transformers 自动为新闻内容生成向量嵌入。
-  - 将嵌入存储在 ChromaDB 向量数据库中以进行语义搜索。
-  - 基于收集到的新闻提出自然语言问题。
-  - 从知识库中检索相关上下文，并使用 LLM 生成答案。
+- **问答:**
+  - 与大模型对话
   - 查看问答历史记录。
 - **配置管理:**
   - 通过 UI（存储在数据库中）或环境变量（`.env` 文件优先）管理 API 密钥（例如 DeepSeek）。
-  - 配置用于知识库的嵌入模型。
   - 管理新闻分类和资讯源。
   - 查看并可能更改数据存储路径（默认：`~/SmartInfo/data`）。
 
@@ -43,8 +39,6 @@ SmartInfo 是一款桌面应用程序，旨在帮助研究人员、分析师和�
 - **网页抓取:** `crawl4ai`
 - **数据库:**
   - SQLite (用于元数据、配置、问答历史)
-  - ChromaDB (用于向量嵌入)
-- **嵌入:** `sentence-transformers`
 - **配置:** `python-dotenv`
 - **其他:** `requests` (用于 API 测试), `ijson` (可能用于流式 JSON 解析)
 
@@ -67,7 +61,6 @@ SmartInfo 是一款桌面应用程序，旨在帮助研究人员、分析师和�
     ```bash
     pip install -r requirements.txt
     ```
-    - 关键依赖可能包括: `PySide6`, `requests`, `python-dotenv`, `crawl4ai`, `chromadb`, `sentence-transformers`, `openai`, `deepseek-tokenizer`, `ijson`。
 
 ## 配置
 
