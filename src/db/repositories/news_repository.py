@@ -33,12 +33,11 @@ class NewsRepository(BaseRepository):
             return None
 
         # Prepare data
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         query = """
             INSERT INTO news (
                 title, link, source_name, category_name, source_id, category_id,
-                summary, content, llm_analysis, analyzed, published_date
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                summary, analysis, date
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         params = (
             item.get("title"),
@@ -48,10 +47,8 @@ class NewsRepository(BaseRepository):
             item.get("source_id"),
             item.get("category_id"),
             item.get("summary"),
-            item.get("content"),
-            item.get("llm_analysis"),
-            bool(item.get("llm_analysis")),
-            item.get("published_date"),
+            item.get("analysis"),
+            item.get("date"),
         )
 
         cursor = self._execute(query, params, commit=True)
@@ -70,7 +67,6 @@ class NewsRepository(BaseRepository):
         params_list = []
         skipped_count = 0
         processed_links = set(self.get_all_links())  # Get existing links efficiently
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         for item in items:
             link = item.get("link")
@@ -89,10 +85,8 @@ class NewsRepository(BaseRepository):
                 item.get("source_id"),
                 item.get("category_id"),
                 item.get("summary"),
-                item.get("content"),
-                item.get("llm_analysis"),
-                bool(item.get("llm_analysis")),
-                item.get("published_date"),
+                item.get("analysis"),
+                item.get("date"),
             )
             params_list.append(params)
             processed_links.add(link)  # Add to set to avoid duplicates within the batch
@@ -103,8 +97,8 @@ class NewsRepository(BaseRepository):
         query = """
             INSERT INTO news (
                 title, link, source_name, category_name, source_id, category_id,
-                summary, content, llm_analysis, analyzed, published_date
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                summary, analysis, date
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         success_count = self._executemany(query, params_list, commit=True)
 
@@ -124,7 +118,7 @@ class NewsRepository(BaseRepository):
         """Gets a news item by its ID."""
         query = """
             SELECT id, title, link, source_name, category_name, source_id, category_id,
-                   summary, content, llm_analysis, analyzed, published_date
+                   summary, analysis, date
             FROM news WHERE id = ?
         """
         row = self._fetchone(query, (news_id,))
@@ -134,45 +128,11 @@ class NewsRepository(BaseRepository):
         """Gets all news items with pagination."""
         query = """
              SELECT id, title, link, source_name, category_name, source_id, category_id,
-                    summary, content, llm_analysis, analyzed, published_date
-             FROM news ORDER BY published_date DESC, id DESC LIMIT ? OFFSET ?
+                    summary, analysis, date
+             FROM news ORDER BY date DESC, id DESC LIMIT ? OFFSET ?
          """
         rows = self._fetchall(query, (limit, offset))
         return [self._row_to_dict(row) for row in rows]
-
-    def get_unanalyzed(self, limit: int = 10) -> List[Dict[str, Any]]:
-        """Gets unanalyzed news items."""
-        query = """
-            SELECT id, title, link, source_name, category_name, source_id, category_id,
-                   summary, content, published_date
-            FROM news WHERE analyzed = 0 ORDER BY published_date ASC, id ASC LIMIT ?
-        """  # Process older items first
-        rows = self._fetchall(query, (limit,))
-        # Return dicts with needed fields for analysis
-        return [
-            {
-                "id": row[0],
-                "title": row[1],
-                "link": row[2],
-                "source_name": row[3],
-                "category_name": row[4],
-                "source_id": row[5],
-                "category_id": row[6],
-                "summary": row[7],
-                "content": row[8],
-                "published_date": row[9],
-            }
-            for row in rows
-        ]
-
-    def update_analysis(self, news_id: int, analysis_text: str) -> bool:
-        """Updates the LLM analysis for a news item and marks it as analyzed."""
-        query = "UPDATE news SET llm_analysis = ?, analyzed = 1 WHERE id = ?"
-        cursor = self._execute(query, (analysis_text, news_id), commit=True)
-        updated = cursor.rowcount > 0 if cursor else False
-        if updated:
-            logger.info(f"Updated analysis for news ID {news_id}.")
-        return updated
 
     def delete(self, news_id: int) -> bool:
         """Deletes a news item."""
@@ -221,8 +181,6 @@ class NewsRepository(BaseRepository):
             "source_id": row[5],
             "category_id": row[6],
             "summary": row[7],
-            "content": row[8],
-            "llm_analysis": row[9],
-            "analyzed": bool(row[10]),
-            "published_date": row[11],
+            "analysis": row[8],
+            "date": row[9],
         }

@@ -1,6 +1,4 @@
 # -*- coding: utf-8 -*-
-# (Content is identical to the original src/core/llm/utils.py)
-# Just ensure the file is moved to src/utils/token_utils.py
 
 # Requires installing the deepseek tokenizer: pip install deepseek-tokenizer
 try:

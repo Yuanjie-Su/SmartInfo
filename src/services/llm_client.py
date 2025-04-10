@@ -6,6 +6,7 @@ Responsible for interacting with Large Language Models (LLMs)
 """
 
 import asyncio
+from datetime import datetime
 import logging
 import os
 import io
@@ -23,10 +24,44 @@ from typing import (
     Union,
 )
 
-from openai import APIError, AsyncOpenAI, OpenAI
+from openai import APIError, AsyncOpenAI, OpenAI, ChatCompletion
 
 logger = logging.getLogger(__name__)
 
+tools = [
+  {
+    "type": "function",
+    "function": {
+      "name": "crawl_and_analyze_items",
+      "description": (
+        "Given a markdown document that may include multiple news headlines with links, "
+        "extract valid article URLs and crawl each one to obtain the full content. "
+        "Then generate a structured summary and analysis for each article. "
+        "Use this function when the initial markdown lacks full article content "
+        "and deeper understanding is required."
+      ),
+      "strict": True,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "urls": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": (
+              "The list of article URLs extracted from the markdown content "
+              "that should be crawled and analyzed."
+            )
+          }
+        },
+        "required": ["urls"],
+        "additionalProperties": False
+      }
+    }
+  }
+]
 
 class LLMClient:
     """
@@ -68,6 +103,70 @@ class LLMClient:
         else:
             logger.debug(f"Creating OpenAI client for {self.base_url}")
             return OpenAI(**common_args)
+        
+    async def get_completion_or_tool_call(
+        self,
+        model: str,
+        messages: List[Dict[str, str]],
+        tools: Optional[List[Dict]] = None,
+        tool_choice: Optional[Union[str, Dict]] = "auto", # Default to auto
+        max_tokens: Optional[int] = 1500,
+        temperature: float = 0.3,
+        max_retries: int = 3,
+        **kwargs,
+    ) -> Optional[ChatCompletion]: # Return the full object
+        """
+        Retrieves a completion or tool call request from the LLM.
+        Returns the full ChatCompletion object or None on failure.
+        """
+        request_params = {
+            "model": model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            **kwargs,
+        }
+        if tools:
+            request_params["tools"] = tools
+            request_params["tool_choice"] = tool_choice
+
+        logger.debug(f"LLM request with tools: {request_params}")
+
+        for attempt in range(max_retries):
+            try:
+                # Determine sync/async client and make the call
+                if self.async_mode:
+                    if not isinstance(self._client, AsyncOpenAI):
+                        raise TypeError("Client is not in async mode.")
+                    completion: ChatCompletion = await self._client.chat.completions.create(
+                        **request_params
+                    )
+                else:
+                    if not isinstance(self._client, OpenAI):
+                        raise TypeError("Client is not in sync mode.")
+                    completion: ChatCompletion = self._client.chat.completions.create(**request_params)
+
+                # Log usage if available
+                if completion.usage:
+                    logger.info(
+                        f"LLM API Usage: Prompt={completion.usage.prompt_tokens}, Completion={completion.usage.completion_tokens}, Total={completion.usage.total_tokens}"
+                    )
+
+                # Return the full completion object
+                logger.debug("LLM response received.")
+                return completion
+
+            except APIError as e:
+                # ... (existing error handling and retry logic) ...
+                logger.error(f"LLM API Error (Attempt {attempt + 1}/{max_retries}): {e}", exc_info=True)
+                # ... backoff ...
+            except Exception as e:
+                # ... (existing error handling and retry logic) ...
+                logger.error(f"Unexpected Error (Attempt {attempt + 1}/{max_retries}): {e}", exc_info=True)
+                # ... backoff ...
+
+        logger.error(f"Failed to get LLM response after {max_retries} attempts.")
+        return None
 
     async def get_completion_content(
         self,
@@ -316,3 +415,55 @@ class LLMClient:
                 f"Sync stream processing ended for model {model_name}. Total chunks processed: {total_chunks}"
             )
             # if hasattr(response, 'close'): response.close()
+
+async def main():
+    from src.core.crawler import AiohttpCrawler
+    import dotenv
+    dotenv.load_dotenv()
+    llm_client = LLMClient(base_url=os.getenv("VOLCENGINE_BASE_URL"), api_key=os.getenv("VOLCENGINE_API_KEY"))
+    crawler = AiohttpCrawler()
+    async for crawl_result in crawler.process_urls(["https://www.jiqizhixin.com/"]):
+        markdown_content = crawl_result.get("content")
+        if not markdown_content:
+            continue
+
+        original_url = crawl_result.get("original_url")
+        prompt = f"""
+        You are an intelligent news analysis assistant.
+
+        You are provided with a markdown-formatted document crawled from a web page (URL is shown below).  
+        The markdown may contain multiple content entries — such as news items, forum posts, academic papers, technical blogs, or other article-like links.  
+        Your goal is to identify which links, if any, require deeper understanding by retrieving the full content.  
+        When appropriate, call the function `crawl_and_analyze_items` with those URLs to fetch and analyze the original articles.
+
+        Guidelines:
+        - Ignore non-informational links such as login pages, navigation bars, ads, or category listings.
+        - Include only those links that point to actual articles, blogs, or technical posts worth reading in full.
+        - Do NOT summarize or analyze yourself. If the current markdown lacks sufficient detail, call the function instead.
+        - Skip any links that are clearly irrelevant or repetitive.
+        - Only call the function when full article content is needed to understand the link properly.
+
+        <ExampleInput>
+        [AI 重塑生产力](https://example.com/articles/ai-productivity)
+        [登录](https://example.com/login)
+        [Python 教程](https://example.com/tutorial/python-intro)
+        </ExampleInput>
+
+        <ExampleFunctionCall>
+        crawl_and_analyze_items(urls=[
+        "https://example.com/articles/ai-productivity",
+        "https://example.com/tutorial/python-intro"
+        ])
+        </ExampleFunctionCall>
+
+        Now analyze the following markdown content. It was crawled from:{original_url}
+
+        <markdown>
+        {markdown_content}
+        </markdown>
+        """
+        response = await llm_client.get_completion_or_tool_call(model=os.getenv("VOLCENGINE_MODEL"), messages=[{"role": "user", "content": prompt}], tools=tools)
+        print(response)
+
+if __name__ == "__main__":
+    asyncio.run(main())

@@ -37,7 +37,6 @@ from src.db.repositories import (
 from src.services.llm_client import LLMClient
 from src.services.setting_service import SettingService
 from src.services.news_service import NewsService
-from src.services.analysis_service import AnalysisService
 from src.services.qa_service import QAService
 
 # --- Configure Logging ---
@@ -119,15 +118,12 @@ def initialize_services(
         )  # Use async for UI
 
         news_service = NewsService(news_repo, source_repo, category_repo, llm_client)
-        analysis_service = AnalysisService(news_repo, llm_client)
-
         qa_service = QAService(qa_repo, llm_client)
 
         logger.info("Services initialized successfully.")
         return {
             "setting_service": setting_service,
             "news_service": news_service,
-            "analysis_service": analysis_service,
             "qa_service": qa_service,
         }
     except Exception as e:

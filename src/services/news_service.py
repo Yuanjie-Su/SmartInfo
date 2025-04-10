@@ -14,14 +14,16 @@ import threading
 # Added Callable for the new callback type
 from typing import List, Dict, Optional, Tuple, Callable, AsyncGenerator, Any
 from datetime import datetime
+from urllib.parse import urljoin
 
-from src.core.crawler import get_markdown_by_url
+from src.core.crawler import AiohttpCrawler, PlaywrightCrawler
 from src.db.repositories import (
     NewsRepository,
     NewsSourceRepository,
     NewsCategoryRepository,
 )
-from .llm_client import LLMClient
+from src.utils.parse import parse_markdown_analysis_output
+from .llm_client import LLMClient, tools
 from src.utils.token_utils import get_token_size
 
 logger = logging.getLogger(__name__)
@@ -30,7 +32,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_EXTRACTION_MODEL = "deepseek-v3-250324"
 MAX_MARKDOWN_TOKENS = 20480 # 20k
 MAX_OUTPUT_TOKENS = 16384 # 16k
-# MAX_CONTEXT_TOKENS = 131072 # 128k
+MAX_INPUT_TOKENS = 131072 - MAX_OUTPUT_TOKENS # 128k - 16k
 
 
 class NewsService:
@@ -105,11 +107,13 @@ class NewsService:
 
         logger.info(f"Crawling {len(urls_to_crawl)} sources...")
 
+        crawler = PlaywrightCrawler(headless=True)
+
         try:
-            async for crawl_result in get_markdown_by_url(urls_to_crawl):
+            async for crawl_result in crawler.process_urls(urls_to_crawl, output_format="markdown", scroll_pages=False):
                 processed_url_count += 1
-                url = crawl_result["url"]
-                markdown = crawl_result.get("markdown")
+                url = crawl_result.get("original_url", "")
+                markdown = crawl_result.get("content")
                 source_info = url_to_source_info.get(url)
 
                 if not source_info:
@@ -132,7 +136,7 @@ class NewsService:
                     )
                     all_extraction_tasks.append(task)
                 else:
-                    logger.warning(f"Failed to get markdown for: {url}")
+                    logger.warning(f"Failed to get markdown for: {url}, error: {crawl_result.get('error', 'Unknown error')}")
                     # Report error via callback if desired, or just log
                     if on_url_status_update:
                          on_url_status_update(url, "Error", "Failed to crawl markdown")
@@ -196,9 +200,6 @@ class NewsService:
         Returns:
             Tuple of (URL, Number of saved items OR Error object/string).
         """
-        items_to_save_batch: List[Dict[str, Any]] = []
-        total_saved_for_url = 0
-        total_skipped_for_url = 0
 
         try: # Wrap the whole process for better error reporting per URL
             if not markdown:
@@ -213,8 +214,8 @@ class NewsService:
             markdown_chunks = [markdown]
             num_chunks = 1
 
-            if token_size > MAX_MARKDOWN_TOKENS:
-                num_chunks = (token_size // MAX_MARKDOWN_TOKENS) + 1
+            if token_size > MAX_INPUT_TOKENS:
+                num_chunks = (token_size // MAX_INPUT_TOKENS) + 1
                 try:
                     markdown_chunks = self._get_chunks(markdown, num_chunks)
                     log_msg = f"Splitting markdown for {url} into {len(markdown_chunks)} chunks ({token_size} tokens)."
@@ -238,61 +239,46 @@ class NewsService:
                 if on_url_status_update: on_url_status_update(url, "Extracting (LLM)", f"{chunk_status_prefix} Sending request...")
                 logger.info(f"Processing chunk {i+1}/{num_chunks} for {url} with non-streaming LLM...")
 
-                chunk_prompt = self._get_prompt_extract_info_from_markdown(chunk)
+                chunk_prompt = self.build_link_extraction_prompt(url, chunk)
 
                 # --- Call Non-Streaming LLM ---
-                llm_result = await self._llm_client.get_completion_content(
-                    model=DEFAULT_EXTRACTION_MODEL,
-                    messages=[{"role": "user", "content": chunk_prompt}],
-                    max_tokens=MAX_OUTPUT_TOKENS, # Might need adjustment based on expected output size
-                    temperature=0.1
-                )
-                # --- End LLM Call ---
-
-                if llm_result:
-                    logger.info(f"LLM extraction successful for chunk {i+1}/{num_chunks} ({url}).")
-                    if on_url_status_update: on_url_status_update(url, "Extracting (LLM)", f"{chunk_status_prefix} Received response")
-                    # Process and save the extracted items
+                urls_str = await self._llm_client.get_completion_content(model=DEFAULT_EXTRACTION_MODEL, messages=[{"role": "user", "content": chunk_prompt}], max_tokens=MAX_OUTPUT_TOKENS)
+                if urls_str:
                     try:
-                        print(llm_result)
-                        items_extracted = json.loads(llm_result)
-                        if isinstance(items_extracted, list) and items_extracted and isinstance(items_extracted[0], dict):
-                            # Enrich items with source information before saving
-                            enriched_items = []
-                            for item in items_extracted:
-                                if isinstance(item, dict) and item.get('link') and item.get('title'): # Basic validation
-                                    item['source_id'] = source_info.get('id')
-                                    item['source_name'] = source_info.get('name')
-                                    item['category_id'] = source_info.get('category_id')
-                                    item['category_name'] = source_info.get('category_name')
-                                    enriched_items.append(item)
-                                else:
-                                    logger.warning(f"Skipping invalid item structure in LLM result for {url}: {item}")
+                        urls = urls_str.split("\n")
+                        # 相对链接转为绝对链接
+                        urls = [urljoin(url, url) for url in urls if url.strip()]
+                        print(urls)
+                        crawler = AiohttpCrawler()
+                        results = []
+                        async for crawl_result in crawler.process_urls(urls, output_format="markdown", markdownify_options={"strip": ["img"]}):
+                            results.append(crawl_result)
 
-                            if enriched_items:
-                                logger.info(f"Saving {len(enriched_items)} enriched items from LLM result for {url}...")
-                                success_count, skipped_count = self._news_repo.add_batch(enriched_items)
-                                total_saved_for_url += success_count
-                                total_skipped_for_url += skipped_count
-                                logger.info(f"Saved: {success_count}, Skipped (duplicates): {skipped_count} for chunk {i+1}/{num_chunks} ({url}).")
-                                if on_url_status_update: on_url_status_update(url, "Saving", f"{chunk_status_prefix} Saved {success_count}, Skipped {skipped_count}")
-                            else:
-                                logger.info(f"No valid items to save after enrichment for chunk {i+1}/{num_chunks} ({url}).")
-
-                        elif isinstance(items_extracted, list) and not items_extracted:
-                             logger.info(f"LLM returned an empty list for chunk {i+1}/{num_chunks} ({url}).")
+                        results = [result for result in results if result.get("content")]
+                        if results:
+                            analysis_prompt = self.build_content_analysis_prompt(results)
+                            analysis_result = await self._llm_client.get_completion_content(model=DEFAULT_EXTRACTION_MODEL, messages=[{"role": "user", "content": analysis_prompt}], max_tokens=MAX_OUTPUT_TOKENS)
+                            if analysis_result:
+                                with open(f"analysis_result.txt", "w", encoding="utf-8") as f:
+                                    f.write(analysis_result)
+                                parsed_result = parse_markdown_analysis_output(analysis_result)
+                                print(parsed_result)
+                                parsed_result = [{"title": result["title"], "link": result["link"],
+                                 "date": result["date"], "summary": result["summary"], "analysis": result["analysis"],
+                                   "source_name": source_info["name"], "category_name": source_info["category_name"], 
+                                   "source_id": source_info["id"], "category_id": source_info["category_id"]} for result in parsed_result]
+                                # save to db
+                                self._news_repo.add_batch(parsed_result)
                         else:
-                            logger.warning(f"Invalid LLM result format for {url}. Expected non-empty list of dictionaries, got: {type(items_extracted)}")
-                            if on_url_status_update: on_url_status_update(url, "Error", "Invalid result format")
-                    except json.JSONDecodeError as e:
-                        logger.error(f"Error parsing LLM JSON result for {url}: {e}", exc_info=True)
+                            logger.warning(f"No valid content found for {url}.")
+                        
+                    except Exception as e:
+                        logger.error(f"Error parsing LLM result for {url}: {e}", exc_info=True)
                         if on_url_status_update: on_url_status_update(url, "Error", f"JSON Parsing Failed: {e}")
-                    except Exception as e: # Catch other potential errors during enrichment/saving
-                        logger.error(f"Error processing/saving LLM result for {url}: {e}", exc_info=True)
-                        if on_url_status_update: on_url_status_update(url, "Error", f"Processing Failed: {e}")
                 else:
                     logger.warning(f"LLM returned empty result for chunk {i+1}/{num_chunks} ({url}).")
                     if on_url_status_update: on_url_status_update(url, "Extracting (LLM)", f"{chunk_status_prefix} Failed (No response)")
+                # --- End LLM Call ---
 
         except Exception as e:
              logger.error(f"Critical error processing URL {url}: {e}", exc_info=True)
@@ -326,57 +312,97 @@ class NewsService:
                 break
 
         return [chunk for chunk in chunks if chunk and chunk.strip()] # Remove empty chunks
+    
+
+    def build_link_extraction_prompt(self, url: str, markdown_content: str) -> str:
+        prompt = f"""
+You are an intelligent information assistant.
+
+You are provided with a markdown-formatted document crawled from a web page.  
+The markdown may contain multiple content entries — such as news headlines, forum posts, academic papers, technical blogs, or other article-like links.  
+Your task is to **identify which links if any, require deeper understanding by retrieving the full content**, and output those URLs in plain text format — one per line.
+
+### Instructions:
+- Only include links that point to real content pages (e.g., full articles, papers, posts, tutorials).
+- Ignore any non-informational links such as login pages, navigation, ads, search/category pages, or QR codes.
+- Skip any links that are clearly irrelevant or repetitive.
+- If a link is relative (e.g., starts with `/articles/xxx`), please convert it into a full absolute URL using the base: {url}
+- Do **not** summarize or analyze the content.
+- Do **not** output any explanations, formatting, markdown, or JSON.
+- Simply output a list of full URLs, one per line.
+
+---
+markdown-formatted document:
+{markdown_content}
+
+Please list the URLs that should be deeply analyzed:
+"""
+        return prompt
 
 
-    def _get_prompt_extract_info_from_markdown(self, markdown: str) -> str:
-        """Generates the prompt for LLM extraction."""
-        # (Keep the original prompt structure)
-        current_date = datetime.now().strftime("%Y-%m-%d")
-        prompt = f"""You are an information extraction assistant. Given a markdown-formatted text, please extract valid information according to the following strict rules:
-1. Extract only valid content with links. Filter out irrelevant content such as navigation menus, login information, advertisements, feature introductions, UI elements, personal information, and any links that do not lead to substantial informational content (e.g., links to search pages, landing pages with little content, or unrelated promotional links).
-2. For each valid content, extract only the following four fields:
-   - "title": the text title corresponding to the link, must not be empty
-   - "link": the URL address of the link, must be a valid URL starting with http:// or https://
-   - "summary": the description or summary text associated with the link. If no summary exists, set it to "". If the summary exists and exceeds 100 words, summarize and reduce it to approximately 80 words. If the summary is already less than 80 words, leave it as-is.
-   - "date": the date when the content was published, deduced from the context or surrounding text. If no specific date can be deduced, set it to "". Use YYYY-MM-DD format if possible. Current date is {current_date}
-3. The "summary" and "date" fields are optional; only populate them if clearly available. The "title" and "link" fields are mandatory.
-4. Ensure the "link" field contains a complete and valid URL. Resolve relative URLs if possible based on the context; otherwise skip the item.
-5. The output MUST be a valid JSON array beginning with [ and ending with ]. Each item must be a JSON object. **Do not include markdown code block syntax like json``` and ```.**
+    def build_content_analysis_prompt(self, markdown_contents: List[Dict[str, Any]]) -> str:
+        # 多篇内容聚合分析 markdown 输出 prompt
+        prompt = """
+You are an intelligent content summarization assistant.  
+You are given a collection of web pages in Markdown format. Each page represents a full article.  
+Your job is to extract key information from each article and present it in a **well-structured, human-readable Markdown format** suitable for quick scanning and understanding.
 
-<ExampleInput>
-[Windows running on smartwatches amazes netizens: This time it's true Windows on Arm](https://blog.csdn.net/csdnnews/article/details/146969048) Published on 2025-04-01. [After 25 years of coding, a veteran programmer discovers: AI assistants might still be "half-baked"!](https://blog.csdn.net/csdnnews/article/details/146967618) [A sip of alanchanchn](https://blog.csdn.net/chenwewi520feng) [Operation and maintenance monitoring](https://blog.csdn.net/chenwewi520feng/article/details/141623081) [This example collects host information...] Posted yesterday. [Login](https://example.com/login)
-</ExampleInput>
+### Your task:
 
-<CorrectOutputFormat>
-[
-  {{
-    "title": "Windows running on smartwatches amazes netizens: This time it's true Windows on Arm",
-    "link": "https://blog.csdn.net/csdnnews/article/details/146969048",
-    "summary": "",
-    "date": "2025-04-01"
-  }},
-  {{
-    "title": "After 25 years of coding, a veteran programmer discovers: AI assistants might still be \"half-baked\"!",
-    "link": "https://blog.csdn.net/csdnnews/article/details/146967618",
-    "summary": "",
-    "date": ""
-  }},
-  {{
-    "title": "Operation and maintenance monitoring",
-    "link": "https://blog.csdn.net/chenwewi520feng/article/details/141623081",
-    "summary": "This example collects host information...",
-    "date": "2025-04-07"
-  }}
-]
-</CorrectOutputFormat>
+1. For **each article**, extract and organize the following information:
+   - **Title**: Inferred from the content or heading, must not be empty.
+   - **Original Link**: Provided with the article (you will find it right above each markdown block).
+   - **Publication Date**: If a specific date is mentioned in the content, include it in `YYYY-MM-DD` format.
+   - **Summary**: A concise overview within 100 words that captures the core message of the article.
+   - **Analysis**: Provide meaningful insights based on the article content. The angle of analysis should be derived from the context — such as technical innovations, social impact, trends, strategic implications, etc. Do not use a fixed template. Make the analysis content-specific and informative.
 
-Please start processing the following markdown content, ensuring the final output is a valid JSON array:
-<markdown>
-{markdown}
-</markdown>
+2. Markdown formatting guidelines:
+   - Use `###` for the title of each article.
+   - Display the link and date using `🔗` and `📅` icons.
+   - Use labels like `**Summary:**` and `**Analysis:**` for clear formatting.
+   - Ensure the content is easy to read in both English and Chinese.
+   - Avoid promotional content, ads, irrelevant metadata, or UI elements.
+   - Your output should use **the same language as the original article**.  
+     Do not translate or switch languages.  
+     If the article is written in Chinese, your summary and analysis should also be in Chinese.
+
+### Example Output (for reference only):
+
+---
+
+### Huawei Unveils CloudMatrix 384 Super Node
+
+🔗 https://www.example.com/articles/huawei-cloudmatrix  
+📅 2025-04-10
+
+**Summary:** Huawei launched the CloudMatrix 384 super node, enabling scaled deployment of Ascend AI infrastructure and significantly boosting model training efficiency.
+
+**Analysis:** This marks a major step in Huawei’s commitment to building a domestic AI ecosystem. The CloudMatrix platform is poised to drive accelerated adoption of AI in sectors like healthcare, finance, and manufacturing, reinforcing Huawei’s leadership in AI cloud infrastructure.
+
+---
+
+### Introduction to Self-Attention in Transformer Models
+
+🔗 https://www.example.com/tutorial/transformer-self-attention  
+📅 2024-11-22
+
+**Summary:** This tutorial explains the concept of self-attention in Transformer models with diagrams and PyTorch examples. It is targeted at ML beginners.
+
+**Analysis:** The article offers a clear pedagogical breakdown of one of the most important deep learning mechanisms. It bridges theoretical concepts and practical code, making it an ideal entry point for those aiming to implement custom Transformer blocks.
+
+---
+
+Now process the following articles. For each one, the original link is included above the markdown content:
+
 """
 
+        for i, markdown_content in enumerate(markdown_contents):
+            prompt += f"\n\n[Article {i+1}] Link: {markdown_content.get('original_url')}\n{markdown_content.get('content')}\n"
+
+        prompt += "\n\nPlease summarize and analyze each article in Markdown format, following the structure and style shown above."
         return prompt
+
+
 
     # --- News Management --- (Keep remaining methods as they are)
     # get_news_by_id, get_all_news, delete_news, clear_all_news

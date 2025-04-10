@@ -23,15 +23,11 @@ The application features a user-friendly interface built with PySide6, allowing 
 - **Intelligent Analysis:**
   - Generate summaries and perform different types of analysis (e.g., Technical, Trends, Competitive) on selected news articles using an LLM (DeepSeek).
   - View original content alongside the generated analysis.
-- **Knowledge Base Q&A:**
-  - Automatically generate vector embeddings for news content using Sentence Transformers.
-  - Store embeddings in a ChromaDB vector database for semantic search.
+- **Q&A:**
   - Ask natural language questions based on the collected news.
-  - Retrieve relevant context from the knowledge base and generate answers using an LLM.
   - View Q&A history.
 - **Configuration:**
   - Manage API keys (e.g., DeepSeek) via UI (stored in database) or environment variables (`.env` file takes priority).
-  - Configure the embedding model used for the knowledge base.
   - Manage news categories and sources.
   - View and potentially change the data storage path (default: `~/SmartInfo/data`).
 
@@ -43,8 +39,6 @@ The application features a user-friendly interface built with PySide6, allowing 
 - **Web Crawling:** `crawl4ai`
 - **Database:**
   - SQLite (for metadata, configuration, Q&A history)
-  - ChromaDB (for vector embeddings)
-- **Embeddings:** `sentence-transformers`
 - **Configuration:** `python-dotenv`
 - **Other:** `requests` (for API testing), `ijson` (likely for stream parsing)
 
@@ -67,7 +61,6 @@ The application features a user-friendly interface built with PySide6, allowing 
     ```bash
     pip install -r requirements.txt
     ```
-    - Key dependencies likely include: `PySide6`, `requests`, `python-dotenv`, `crawl4ai`, `chromadb`, `sentence-transformers`, `openai`, `deepseek-tokenizer`, `ijson`.
 
 ## Configuration
 
@@ -99,7 +92,7 @@ The application supports the following command-line arguments when run from the 
 
 - `python src/main.py --reset-sources`: (Functionality might need implementation in `NewsService`) Reset news sources to default.
 - `python src/main.py --clear-news`: Clear ALL news data from SQLite and embeddings from ChromaDB (prompts for confirmation).
-- `python src/main.py --reset-database`: Reset the entire database, clearing ALL data including configuration, API keys, news, embeddings, and Q&A history (prompts for confirmation).
+- `python src/main.py --reset-database`: Reset the entire database, clearing ALL data including configuration, API keys, news and Q&A history (prompts for confirmation).
 - `python src/main.py --log-level <LEVEL>`: Set the logging level (e.g., `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`). Default is `INFO`. Log file is `smartinfo.log`.
 
 ## Project Structure

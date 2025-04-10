@@ -132,9 +132,9 @@ class NewsTab(QWidget):
         bottom_toolbar.addStretch(1)
 
         self.analyze_button = QPushButton("Analyze Selected")
-        self.analyze_button.setToolTip("Run LLM analysis on the selected news item(s).")
-        # self.analyze_button.clicked.connect(self._analyze_selected_news) # Connect later
-        self.analyze_button.setEnabled(False)
+        self.analyze_button.setToolTip("Analyze functionality has been removed.")
+        self.analyze_button.setEnabled(False)  # Disable permanently
+        self.analyze_button.clicked.connect(self._analyze_removed_notification)
         bottom_toolbar.addWidget(self.analyze_button)
 
         self.edit_button = QPushButton("Edit") # Keep Edit button, maybe disable
@@ -163,9 +163,9 @@ class NewsTab(QWidget):
     # ... (paste existing implementations here) ...
     def _setup_table_model(self):
         """Sets up the QStandardItemModel and QSortFilterProxyModel."""
-        self.model = QStandardItemModel(0, 5, self)  # 5 columns
+        self.model = QStandardItemModel(0, 4, self)  # 4 columns, removed Analyzed column
         self.model.setHorizontalHeaderLabels(
-            ["Title", "Source", "Category", "Published Date", "Analyzed"]
+            ["Title", "Source", "Category", "Published Date"]
         )
         self.proxy_model = QSortFilterProxyModel(self)
         self.proxy_model.setSourceModel(self.model)
@@ -198,12 +198,11 @@ class NewsTab(QWidget):
                 title_item = QStandardItem(news.get("title", "N/A"))
                 source_item = QStandardItem(news.get("source_name", "N/A"))
                 category_item = QStandardItem(news.get("category_name", "N/A"))
-                date_item = QStandardItem(news.get("published_date", "N/A"))
-                analyzed_item = QStandardItem("Yes" if news.get("analyzed") else "No")
+                date_item = QStandardItem(news.get("date", "N/A"))
                 title_item.setData(news_id, Qt.ItemDataRole.UserRole)
-                for item in [title_item, source_item, category_item, date_item, analyzed_item]:
+                for item in [title_item, source_item, category_item, date_item]:
                     item.setEditable(False)
-                self.model.appendRow([title_item, source_item, category_item, date_item, analyzed_item])
+                self.model.appendRow([title_item, source_item, category_item, date_item])
             self._apply_filters()
             logger.info(f"Populated table with {self.model.rowCount()} news items.")
             self.news_data_changed.emit()
@@ -466,21 +465,9 @@ class NewsTab(QWidget):
         source_index = self.proxy_model.mapToSource(selected_indexes[0])
         news_id = self.model.item(source_index.row(), 0).data(Qt.ItemDataRole.UserRole)
         news_title = self.model.item(source_index.row(), 0).text()
-        if news_id is not None:
-            try:
-                main_window = self.window()
-                if hasattr(main_window, "analysis_tab") and main_window.analysis_tab:
-                    main_window.analysis_tab.load_news_for_analysis(news_id)
-                    if hasattr(main_window, "tabs"):
-                        main_window.tabs.setCurrentWidget(main_window.analysis_tab)
-                    QMessageBox.information(self, "Notice", f"'{news_title}' sent to Analysis.")
-                else:
-                    QMessageBox.warning(self, "Error", "Cannot access Analysis tab.")
-            except Exception as e:
-                logger.error(f"Error sending to analysis: {e}", exc_info=True)
-                QMessageBox.critical(self, "Error", f"Failed to send: {e}")
-        else:
-            QMessageBox.warning(self, "Error", "Cannot get ID.")
+        
+        # 告知用户分析页面已移除
+        QMessageBox.information(self, "Notice", "Analysis tab has been removed from the application.")
 
     def _export_news(self):
         if self._is_fetching: return
@@ -505,15 +492,15 @@ class NewsTab(QWidget):
             # ... (rest of the HTML formatting) ...
             preview_html += f"<p><b>Source:</b> {news.get('source_name', 'N/A')}<br>"
             preview_html += f"<b>Category:</b> {news.get('category_name', 'N/A')}<br>"
-            date_str = news.get("published_date") or news.get("date") or news.get("fetched_date", "")
+            date_str = news.get("date") or news.get("date") or news.get("fetched_date", "")
             preview_html += f"<b>Date:</b> {date_str[:19] if date_str else 'N/A'}<br>"
             link = news.get("link", "#")
             preview_html += f"<b>Link:</b> <a href='{link}'>{link}</a><br>"
             preview_html += f"<b>Analyzed:</b> {'Yes' if news.get('analyzed') else 'No'}</p><hr>"
             preview_html += f"<b>Summary:</b><p>{news.get('summary', 'No summary')}</p>"
-            llm_analysis = news.get("llm_analysis")
-            if llm_analysis:
-                preview_html += f"<hr><p><b>AI Analysis:</b></p><p>{llm_analysis}</p>"
+            analysis = news.get("analysis")
+            if analysis:
+                preview_html += f"<hr><p><b>AI Analysis:</b></p><p>{analysis}</p>"
             self.preview_text.setHtml(preview_html)
         else:
             self.preview_text.setText(f"Cannot load preview (ID: {news_id})")
@@ -545,3 +532,8 @@ class NewsTab(QWidget):
             text_match = proxy_index.isValid()
             self.news_table.setRowHidden(row, not (text_match and category_matches and source_matches))
         logger.debug(f"Applied filters: Cat='{selected_category_text}', Src='{selected_source_text}', Search='{search_text}'")
+
+    # Add method to show notification
+    def _analyze_removed_notification(self):
+        """Show notification that analyze functionality has been removed"""
+        QMessageBox.information(self, "Notice", "Analysis functionality has been removed from the application.")

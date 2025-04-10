@@ -130,10 +130,8 @@ class DatabaseConnectionManager:
                     source_id INTEGER,
                     category_id INTEGER,
                     summary TEXT,
-                    content TEXT,
-                    llm_analysis TEXT,
-                    analyzed BOOLEAN NOT NULL DEFAULT 0,
-                    published_date TEXT,
+                    analysis TEXT,
+                    date TEXT,
                     FOREIGN KEY (source_id) REFERENCES news_sources(id) ON DELETE SET NULL,
                     FOREIGN KEY (category_id) REFERENCES news_category(id) ON DELETE SET NULL
                 );
@@ -142,10 +140,7 @@ class DatabaseConnectionManager:
             # Add indexes
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_news_link ON news (link)")
             cursor.execute(
-                "CREATE INDEX IF NOT EXISTS idx_news_date ON news (published_date)"
-            )
-            cursor.execute(
-                "CREATE INDEX IF NOT EXISTS idx_news_analyzed ON news (analyzed)"
+                "CREATE INDEX IF NOT EXISTS idx_news_date ON news (date)"
             )
 
             # API Configuration Table (for storing API keys - consider security implications)

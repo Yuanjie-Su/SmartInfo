@@ -22,7 +22,6 @@ from PySide6.QtGui import QAction
 
 # Import refactored tabs
 from .tabs.news_tab import NewsTab
-from .tabs.analysis_tab import AnalysisTab
 from .tabs.qa_tab import QATab
 from .tabs.settings_tab import SettingsTab
 
@@ -63,10 +62,6 @@ class MainWindow(QMainWindow):
         try:
             # NewsTab needs NewsService and potentially SettingService for initial filter load
             self.news_tab = NewsTab(self.services["news_service"])
-            # AnalysisTab needs AnalysisService and maybe NewsService to get item details
-            self.analysis_tab = AnalysisTab(
-                self.services["analysis_service"], self.services["news_service"]
-            )
             # QATab needs QAService
             self.qa_tab = QATab(self.services["qa_service"])
             # SettingsTab needs SettingService and NewsService
@@ -102,7 +97,6 @@ class MainWindow(QMainWindow):
 
         # Add tabs to the widget
         self.tabs.addTab(self.news_tab, "News Management")
-        self.tabs.addTab(self.analysis_tab, "Intelligent Analysis")
         self.tabs.addTab(self.qa_tab, "Q&A")
         self.tabs.addTab(self.settings_tab, "Settings")
 
@@ -185,9 +179,7 @@ class MainWindow(QMainWindow):
             self._refresh_news_tab_filters()
 
         # Add actions for other tabs if needed when they become active
-        elif index == 1:  # Analysis Tab
-            self.analysis_tab.load_pending_news()  # Add this method to AnalysisTab
-        elif index == 2:  # QA Tab
+        elif index == 1:  # QA Tab
             self.qa_tab.load_history()  # Add this method to QATab
 
     def _refresh_news_tab_filters(self):
