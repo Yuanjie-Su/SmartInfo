@@ -503,7 +503,7 @@ Your job is to extract key information from each article and present it in a **w
 
 **Summary:** Huawei launched the CloudMatrix 384 super node, enabling scaled deployment of Ascend AI infrastructure and significantly boosting model training efficiency.
 
-**Analysis:** This marks a major step in Huawei’s commitment to building a domestic AI ecosystem. The CloudMatrix platform is poised to drive accelerated adoption of AI in sectors like healthcare, finance, and manufacturing, reinforcing Huawei’s leadership in AI cloud infrastructure.
+**Analysis:** This marks a major step in Huawei's commitment to building a domestic AI ecosystem. The CloudMatrix platform is poised to drive accelerated adoption of AI in sectors like healthcare, finance, and manufacturing, reinforcing Huawei's leadership in AI cloud infrastructure.
 
 ---
 
@@ -544,14 +544,12 @@ Now process the following articles. For each one, the original link is included 
 
     def delete_news(self, news_id: int) -> bool:
         """Deletes a news item."""
-        # Consider deleting related embeddings as well?
         return self._news_repo.delete(news_id)
 
     def clear_all_news(self) -> bool:
         """Clears all news data from the database."""
         # Add warning? This is destructive.
         logger.warning("Executing clear_all_news - All news data will be removed.")
-        # Consider coordinating with QA service to clear ChromaDB data as well
         return self._news_repo.clear_all()
 
 

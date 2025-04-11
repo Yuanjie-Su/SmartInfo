@@ -15,8 +15,9 @@ from src.config import (
     AppConfig,
     API_KEY_DEEPSEEK,
     CONFIG_KEY_DATA_DIR,
-    CONFIG_KEY_EMBEDDING_MODEL,
     CONFIG_KEY_FETCH_FREQUENCY,
+    CONFIG_KEY_UI_THEME,
+    CONFIG_KEY_LANGUAGE,
 )
 from src.db.repositories import ApiKeyRepository, SystemConfigRepository
 
@@ -203,13 +204,6 @@ class SettingService:
 
     def get_data_dir(self) -> str:
         return self._config.data_dir
-
-    def get_embedding_model(self) -> str:
-        default = AppConfig.DEFAULT_PERSISTENT_CONFIG[CONFIG_KEY_EMBEDDING_MODEL]
-        return self.get_setting(CONFIG_KEY_EMBEDDING_MODEL, default)
-
-    def save_embedding_model(self, model_name: str) -> bool:
-        return self.save_setting(CONFIG_KEY_EMBEDDING_MODEL, model_name)
 
     def get_fetch_frequency(self) -> str:
         default = AppConfig.DEFAULT_PERSISTENT_CONFIG[CONFIG_KEY_FETCH_FREQUENCY]

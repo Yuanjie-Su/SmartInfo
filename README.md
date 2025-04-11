@@ -73,8 +73,8 @@ The application features a user-friendly interface built with PySide6, allowing 
       ```
     - Alternatively, you can set the API key via the "Settings" tab in the application UI. Keys set via the UI are stored in the SQLite database (`smartinfo.db`). **Note:** The `.env` file setting always takes priority if present.
 2.  **Other Settings:**
-    - The embedding model, data directory, and other system settings can be viewed and potentially modified in the "Settings" tab of the application.
-    - Settings changed via the UI are saved in the `smartinfo.db` SQLite database located in the data directory.
+    - The data directory and other system settings can be viewed and potentially modified in the "Settings" tab of the application.
+    - Settings changed through the UI are stored in the SQLite database (`smartinfo.db`) in the data directory.
     - The default data directory is `~/SmartInfo/data` (within your user home directory).
 
 ## Usage
@@ -91,9 +91,9 @@ The application features a user-friendly interface built with PySide6, allowing 
 The application supports the following command-line arguments when run from the root directory:
 
 - `python src/main.py --reset-sources`: (Functionality might need implementation in `NewsService`) Reset news sources to default.
-- `python src/main.py --clear-news`: Clear ALL news data from SQLite and embeddings from ChromaDB (prompts for confirmation).
+- `python src/main.py --clear-news`: Clear ALL news data from SQLite (prompts for confirmation).
 - `python src/main.py --reset-database`: Reset the entire database, clearing ALL data including configuration, API keys, news and Q&A history (prompts for confirmation).
-- `python src/main.py --log-level <LEVEL>`: Set the logging level (e.g., `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`). Default is `INFO`. Log file is `smartinfo.log`.
+- `python src/main.py --log-level <LEVEL>`: Set the logging level (e.g., `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`). Default is `INFO`.
 
 ## Project Structure
 

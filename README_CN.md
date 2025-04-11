@@ -71,9 +71,9 @@ SmartInfo 是一款桌面应用程序，旨在帮助研究人员、分析师和�
       # .env 文件内容
       DEEPSEEK_API_KEY=your_deepseek_api_key_here
       ```
-    - 或者，您也可以通过应用程序 UI 中的“设置”选项卡设置 API 密钥。通过 UI 设置的密钥存储在 SQLite 数据库 (`smartinfo.db`) 中。**注意:** 如果 `.env` 文件存在，其设置将始终优先。
+    - 或者，您也可以通过应用程序 UI 中的"设置"选项卡设置 API 密钥。通过 UI 设置的密钥存储在 SQLite 数据库 (`smartinfo.db`) 中。**注意:** 如果 `.env` 文件存在，其设置将始终优先。
 2.  **其他设置:**
-    - 嵌入模型、数据目录和其他系统设置可以在应用程序的“设置”选项卡中查看和修改。
+    - 数据目录和其他系统设置可以在应用程序的"设置"选项卡中查看和修改。
     - 通过 UI 更改的设置将保存在数据目录下的 `smartinfo.db` SQLite 数据库中。
     - 默认数据目录是 `~/SmartInfo/data` （位于您的用户主目录下）。
 
@@ -91,9 +91,9 @@ SmartInfo 是一款桌面应用程序，旨在帮助研究人员、分析师和�
 从项目根目录运行时，应用程序支持以下命令行参数：
 
 - `python src/main.py --reset-sources`: (功能可能需要在 `NewsService` 中实现) 将资讯源重置为默认值。
-- `python src/main.py --clear-news`: 清除 SQLite 中的所有新闻数据和 ChromaDB 中的嵌入（会提示确认）。
-- `python src/main.py --reset-database`: 重置整个数据库，清除所有数据，包括配置、API 密钥、新闻、嵌入和问答历史（会提示确认）。
-- `python src/main.py --log-level <LEVEL>`: 设置日志记录级别 (例如 `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`)。默认为 `INFO`。日志文件为 `smartinfo.log`。
+- `python src/main.py --clear-news`: 清除 SQLite 中的所有新闻数据（会提示确认）。
+- `python src/main.py --reset-database`: 重置整个数据库，清除所有数据，包括配置、API 密钥、新闻和问答历史（会提示确认）。
+- `python src/main.py --log-level <LEVEL>`: 设置日志记录级别 (例如 `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`)。默认为 `INFO`。
 
 ## 项目结构
 

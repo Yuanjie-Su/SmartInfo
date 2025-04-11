@@ -3,7 +3,7 @@
 
 """
 Database connection management module
-Responsible for creating and managing SQLite and ChromaDB database connections
+Responsible for creating and managing SQLite database connections
 Uses singleton pattern to ensure connections are reused throughout the application lifecycle
 """
 

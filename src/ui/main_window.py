@@ -8,29 +8,28 @@ Implements the main user interface of the application
 
 import sys
 import logging
-from typing import Dict, Any  # Added for type hinting
+from typing import Dict, Any
 
 from PySide6.QtWidgets import (
-    QMainWindow,
-    QTabWidget,
-    QWidget,
-    QVBoxLayout,
-    QStatusBar,
-    QMessageBox,
+    QMainWindow, QTabWidget, QWidget, QVBoxLayout, QStatusBar, QMessageBox, QDialog # Added QDialog
 )
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtCore import Slot # Added Slot
 from qasync import QEventLoop
 
-# Import refactored tabs
+# Import tabs
 from .tabs.news_tab import NewsTab
 from .tabs.qa_tab import QATab
-from .tabs.settings_tab import SettingsTab
+# SettingsTab is removed
 
-# Assuming service classes are imported in main.py and passed
-# No direct service imports here
+# Import dialogs (assuming they are created)
+from .dialogs.source_management_dialog import SourceManagementDialog
+# Import other dialogs as they are created
+# from .dialogs.category_management_dialog import CategoryManagementDialog
+# from .dialogs.api_settings_dialog import ApiSettingsDialog
+# from .dialogs.system_settings_dialog import SystemSettingsDialog
 
 logger = logging.getLogger(__name__)
-
 
 class MainWindow(QMainWindow):
     """Main Window Class"""
@@ -40,13 +39,11 @@ class MainWindow(QMainWindow):
         self.services = services
         self.loop = loop
 
-        self.setWindowTitle(
-            "SmartInfo - Intelligent News Analysis and Knowledge Management Tool"
-        )
+        self.setWindowTitle("SmartInfo - Intelligent News Analysis")
         self.setMinimumSize(1200, 800)
 
-        # Flag to indicate if news sources or categories changed in settings
-        self.news_sources_or_categories_changed = False
+        # No longer needed as SettingsTab is gone
+        # self.news_sources_or_categories_changed = False
 
         self._setup_ui()
         logger.info("Main window initialization completed")
@@ -60,49 +57,26 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         main_layout.addWidget(self.tabs)
 
-        # --- Create tabs and inject required services ---
+        # --- Create tabs (excluding SettingsTab) ---
         try:
-            # NewsTab needs NewsService and potentially SettingService for initial filter load
             self.news_tab = NewsTab(self.services["news_service"])
-            # QATab needs QAService
             self.qa_tab = QATab(self.services["qa_service"])
-            # SettingsTab needs SettingService and NewsService
-            self.settings_tab = SettingsTab(
-                self.services["setting_service"], self.services["news_service"]
-            )
-
-            # Connect signal from settings tab if sources/categories change
-            self.settings_tab.settings_changed_signal.connect(
-                self._handle_settings_change
-            )
-
+            # SettingsTab is removed
         except KeyError as e:
-            logger.critical(
-                f"Service dictionary missing required key: {e}. Cannot initialize UI.",
-                exc_info=True,
-            )
-            QMessageBox.critical(
-                self,
-                "Initialization Error",
-                f"Required service '{e}' not found. Application cannot start.",
-            )
-            # Exit or disable tabs? Exiting is safer.
-            sys.exit(1)  # Or raise an exception
+            logger.critical(f"Service dictionary missing key: {e}.", exc_info=True)
+            QMessageBox.critical(self, "Init Error", f"Service '{e}' not found.")
+            sys.exit(1)
         except Exception as e:
-            logger.critical(
-                f"Unexpected error initializing UI tabs: {e}", exc_info=True
-            )
-            QMessageBox.critical(
-                self, "Initialization Error", f"Error creating UI tabs: {e}"
-            )
+            logger.critical(f"Error initializing UI tabs: {e}", exc_info=True)
+            QMessageBox.critical(self, "Init Error", f"Error creating UI tabs: {e}")
             sys.exit(1)
 
         # Add tabs to the widget
-        self.tabs.addTab(self.news_tab, "News Management")
+        self.tabs.addTab(self.news_tab, "News") # Simplified name
         self.tabs.addTab(self.qa_tab, "Q&A")
-        self.tabs.addTab(self.settings_tab, "Settings")
 
-        self.tabs.currentChanged.connect(self._on_tab_changed)
+        # No longer needed
+        # self.tabs.currentChanged.connect(self._on_tab_changed)
 
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
@@ -110,89 +84,153 @@ class MainWindow(QMainWindow):
 
         self._create_menu_bar()
 
-    def _handle_settings_change(self):
-        """Slot to handle signal from SettingsTab when sources/categories change."""
-        logger.info(
-            "Received settings change signal (sources/categories potentially updated)."
-        )
-        self.news_sources_or_categories_changed = True
-        # Check if the NewsTab is currently visible, if so, refresh it immediately
-        if self.tabs.currentIndex() == 0:  # Index of NewsTab
-            self._refresh_news_tab_filters()
+    # No longer needed
+    # def _handle_settings_change(self): ...
+    # def _on_tab_changed(self, index): ...
+    # def _refresh_news_tab_filters(self): ...
+
 
     def _create_menu_bar(self):
         """Create menu bar"""
-        file_menu = self.menuBar().addMenu("File")
-        export_action = QAction("Export Data", self)
-        export_action.triggered.connect(self._export_data)
-        file_menu.addAction(export_action)
+        menu_bar = self.menuBar()
+
+        # --- File Menu ---
+        file_menu = menu_bar.addMenu("&File")
+        # export_action = QAction("Export Data", self)
+        # export_action.triggered.connect(self._export_data)
+        # file_menu.addAction(export_action)
+        # file_menu.addSeparator()
         exit_action = QAction("Exit", self)
+        exit_action.setShortcut(QKeySequence.Quit) # Standard shortcut
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
 
-        edit_menu = self.menuBar().addMenu("Edit")
-        # Add edit actions if needed
+        # --- Settings Menu ---
+        settings_menu = menu_bar.addMenu("&Settings")
 
-        help_menu = self.menuBar().addMenu("Help")
+        manage_sources_action = QAction("Manage News Sources...", self)
+        manage_sources_action.triggered.connect(self._open_source_manager)
+        settings_menu.addAction(manage_sources_action)
+
+        # Placeholder actions for other settings dialogs
+        manage_categories_action = QAction("Manage Categories...", self)
+        manage_categories_action.triggered.connect(self._open_category_manager) # Placeholder method
+        settings_menu.addAction(manage_categories_action)
+
+        settings_menu.addSeparator()
+
+        api_config_action = QAction("API Configuration...", self)
+        api_config_action.triggered.connect(self._open_api_config) # Placeholder method
+        settings_menu.addAction(api_config_action)
+
+        system_config_action = QAction("System Configuration...", self)
+        system_config_action.triggered.connect(self._open_system_config) # Placeholder method
+        settings_menu.addAction(system_config_action)
+
+
+        # --- Help Menu ---
+        help_menu = menu_bar.addMenu("&Help")
         about_action = QAction("About", self)
         about_action.triggered.connect(self._show_about)
         help_menu.addAction(about_action)
 
+    # --- Settings Dialog Handlers ---
+
+    @Slot()
+    def _open_source_manager(self):
+        """Opens the news source management dialog."""
+        try:
+            dialog = SourceManagementDialog(self.services["news_service"], self)
+            # Connect signals from dialog if needed (e.g., to refresh news tab filters)
+            # dialog.sources_changed.connect(self._refresh_news_tab_filters)
+            dialog.exec() # Show modally
+            # After dialog closes, refresh filters in news tab
+            if hasattr(self, 'news_tab') and self.news_tab:
+                 self.news_tab._load_filters()
+        except Exception as e:
+             logger.error(f"Error opening source management dialog: {e}", exc_info=True)
+             QMessageBox.critical(self, "Error", f"Could not open source manager: {e}")
+
+    # --- Placeholder Handlers for Other Settings ---
+    @Slot()
+    def _open_category_manager(self):
+        # TODO: Create CategoryManagementDialog and implement this
+        QMessageBox.information(self, "Not Implemented", "Category management dialog is not yet implemented.")
+        # Example:
+        # try:
+        #     dialog = CategoryManagementDialog(self.services["news_service"], self)
+        #     dialog.exec()
+        #     if hasattr(self, 'news_tab') and self.news_tab: self.news_tab._load_filters()
+        # except Exception as e: logger.error(...)
+
+    @Slot()
+    def _open_api_config(self):
+        # TODO: Create ApiSettingsDialog and implement this
+        QMessageBox.information(self, "Not Implemented", "API configuration dialog is not yet implemented.")
+         # Example:
+        # try:
+        #     dialog = ApiSettingsDialog(self.services["setting_service"], self)
+        #     dialog.exec()
+        #     # Maybe update status bar or re-init LLM client?
+        # except Exception as e: logger.error(...)
+
+    @Slot()
+    def _open_system_config(self):
+         # TODO: Create SystemSettingsDialog and implement this
+        QMessageBox.information(self, "Not Implemented", "System configuration dialog is not yet implemented.")
+         # Example:
+        # try:
+        #     dialog = SystemSettingsDialog(self.services["setting_service"], self)
+        #     dialog.exec()
+        #     # Refresh relevant parts of the UI?
+        # except Exception as e: logger.error(...)
+
+
+    # --- Other Methods ---
+
     def _export_data(self):
         """Export data functionality (placeholder)"""
-        # TODO: Implement using service layer if needed
-        self.status_bar.showMessage("Export data feature in development...")
-        QMessageBox.information(
-            self, "Info", "Export data feature not yet implemented."
-        )
+        self.status_bar.showMessage("Export data feature not implemented.")
+        QMessageBox.information(self, "Info", "Export data feature not yet implemented.")
 
     def _show_about(self):
         """Show about dialog"""
         QMessageBox.about(
-            self,
-            "About SmartInfo",
-            "SmartInfo - Intelligent News Analysis and Knowledge Management Tool\n"
-            "Version: 1.0.0\n"
-            "An intelligent tool for tech researchers, analysts, and enthusiasts.",
+            self, "About SmartInfo",
+            "SmartInfo - Intelligent News Analysis\nVersion: 1.1.0 (Refactored)\n"
         )
 
     def closeEvent(self, event):
         """Handle window close event"""
-        reply = QMessageBox.question(
-            self,
-            "Confirm Exit",
-            "Are you sure you want to exit?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
+        # Ensure background tasks are handled (example for news_tab)
+        if hasattr(self, 'news_tab') and self.news_tab.fetch_task and not self.news_tab.fetch_task.done():
+            reply = QMessageBox.question(
+                self, "Confirm Exit",
+                "A news fetch task is running. Are you sure you want to exit? The task will be cancelled.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply == QMessageBox.StandardButton.No:
+                event.ignore()
+                return
+            else:
+                 logger.info("User requested exit during fetch, cancelling task.")
+                 self.news_tab.fetch_task.cancel() # Cancel the task
 
+        # Add similar checks for qa_tab if its task needs explicit handling on close
+        if hasattr(self, 'qa_tab') and self.qa_tab._qa_task and not self.qa_tab._qa_task.done():
+            logger.info("QA task running during exit, cancelling.")
+            self.qa_tab._qa_task.cancel()
+
+        # Standard exit confirmation (optional if task check is sufficient)
+        reply = QMessageBox.question(
+            self, "Confirm Exit", "Are you sure you want to exit?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
-            logger.info("Application exited normally by user.")
-            # Perform any cleanup needed before closing services (DB connection closes via atexit)
-            if hasattr(self, 'loop'):
+            logger.info("Application exiting.")
+            # Cleanly stop the asyncio loop associated with qasync
+            if hasattr(self, 'loop') and self.loop.is_running():
+                logger.info("Stopping asyncio event loop.")
                 self.loop.quit()
             event.accept()
-        else:
-            event.ignore()
-
-    def _on_tab_changed(self, index):
-        """Handles tab change event."""
-        logger.debug(f"Tab changed to index {index}")
-        # If switched to News tab AND settings indicated a change, refresh filters
-        if index == 0 and self.news_sources_or_categories_changed:  # Index 0 is NewsTab
-            self._refresh_news_tab_filters()
-
-        # Add actions for other tabs if needed when they become active
-        elif index == 1:  # QA Tab
-            self.qa_tab.load_history()  # Add this method to QATab
-
-    def _refresh_news_tab_filters(self):
-        """Refreshes filters on the news tab."""
-        if hasattr(self, "news_tab") and self.news_tab:
-            logger.info("Refreshing news tab filters due to settings change.")
-            self.news_tab._load_filters()  # Call the filter loading method directly
-            self.news_sources_or_categories_changed = False  # Reset flag
-        else:
-            logger.warning(
-                "Attempted to refresh news tab filters, but tab object doesn't exist."
-            )

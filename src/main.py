@@ -16,6 +16,7 @@ from typing import Any, Dict
 # --- Project Setup ---
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(current_dir)
+styles_dir = os.path.join(current_dir, "ui", "styles")
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
@@ -40,13 +41,12 @@ from src.services.news_service import NewsService
 from src.services.qa_service import QAService
 
 # --- Configure Logging ---
-log_file_path = "smartinfo.log"
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     handlers=[
-        logging.FileHandler(log_file_path, encoding="utf-8"),
-        logging.StreamHandler(sys.stdout),  # Log to console as well
+        logging.FileHandler("smartinfo.log", encoding="utf-8"),
+        logging.StreamHandler(sys.stdout),  # 只保留控制台日志输出
     ],
 )
 logger = logging.getLogger(__name__)
@@ -62,7 +62,7 @@ def parse_args():
     parser.add_argument(
         "--clear-news",
         action="store_true",
-        help="Clear ALL news data (SQLite and Embeddings)",
+        help="Clear ALL news data (SQLite)",
     )
     parser.add_argument(
         "--reset-database",
@@ -103,8 +103,10 @@ def initialize_services(
         setting_service = SettingService(config, api_key_repo, system_config_repo)
 
         # Initialize LLM Client (needs API key)
+        # Fetch keys using the service method
         deepseek_api_key = setting_service.get_api_key("deepseek")
         volcengine_api_key = setting_service.get_api_key("volcengine")
+
         if not deepseek_api_key:
             logger.warning(
                 "DeepSeek API key not configured. LLM-dependent features may fail."
@@ -113,11 +115,19 @@ def initialize_services(
             logger.warning(
                 "Volcano Engine API key not configured. LLM-dependent features may fail."
             )
+        # Use the appropriate key based on which service is intended
+        # Assuming NewsService might use Volcano Engine based on original code
         llm_client = LLMClient(
-            base_url="https://ark.cn-beijing.volces.com/api/v3", api_key=volcengine_api_key, async_mode=True
-        )  # Use async for UI
+            base_url="https://ark.cn-beijing.volces.com/api/v3",
+            api_key=volcengine_api_key, # Use Volcano Engine key
+            async_mode=True
+        )
 
+        # Instantiate services with repositories and LLM client
         news_service = NewsService(news_repo, source_repo, category_repo, llm_client)
+        # QAService might use a different model/API key if intended, needs adjustment
+        # For now, pass the same LLM client, but it might default to DeepSeek models internally
+        # QA Service requires the LLM client
         qa_service = QAService(qa_repo, llm_client)
 
         logger.info("Services initialized successfully.")
@@ -125,10 +135,25 @@ def initialize_services(
             "setting_service": setting_service,
             "news_service": news_service,
             "qa_service": qa_service,
+            "llm_client": llm_client,
         }
     except Exception as e:
         logger.critical(f"Failed to initialize services: {e}", exc_info=True)
         sys.exit(f"Service Initialization Error: {e}")
+
+
+def load_stylesheet(app: "QApplication"):
+    """Loads the QSS stylesheet."""
+    qss_file = os.path.join(styles_dir, "style.qss")
+    try:
+        with open(qss_file, "r", encoding="utf-8") as f:
+            stylesheet = f.read()
+            app.setStyleSheet(stylesheet)
+            logger.info(f"Loaded stylesheet from {qss_file}")
+    except FileNotFoundError:
+        logger.warning(f"Stylesheet file not found: {qss_file}. Using default styles.")
+    except Exception as e:
+        logger.error(f"Error loading stylesheet: {e}", exc_info=True)
 
 
 def run_gui(services: Dict[str, Any]):
@@ -143,12 +168,16 @@ def run_gui(services: Dict[str, Any]):
         from src.ui.main_window import MainWindow
     except ImportError as e:
         logger.critical(
-            f"Failed to import GUI components (PySide6?): {e}", exc_info=True
+            f"Failed to import GUI components (PySide6, qasync?): {e}", exc_info=True
         )
-        sys.exit(f"GUI Import Error: {e}. Please ensure PySide6 is installed.")
+        sys.exit(f"GUI Import Error: {e}. Please ensure PySide6 and qasync are installed.")
 
     app = QApplication(sys.argv)
     app.setApplicationName("SmartInfo")
+
+    # --- Load Stylesheet ---
+    load_stylesheet(app)
+
     # Pass services to MainWindow (MainWindow needs modification)
     try:
         loop = QEventLoop(app)
@@ -171,7 +200,7 @@ def main():
     try:
         # 1. Initialize Configuration
         config = init_config()
-
+        
         # 2. Initialize Database Connection Manager
         # This also ensures DB paths based on config are correct and tables exist
         db_manager = init_db_connection()
@@ -179,7 +208,7 @@ def main():
         # 3. Initialize Services
         services = initialize_services(config, db_manager)
 
-        # --- Handle Command Line Arguments ---
+        # --- Handle Command Line Arguments (Needs refinement based on services) ---
         if args.reset_database:
             logger.warning("Executing --reset-database argument...")
             confirm = input(
@@ -187,76 +216,72 @@ def main():
             )
             if confirm == "YES":
                 logger.info("Resetting all database tables...")
-                # Clear SQLite tables via repos
-                QARepository().clear_history()
-                ApiKeyRepository().delete_all()
-                SystemConfigRepository().delete_all()
-                NewsRepository().clear_all()
-                NewsSourceRepository().delete_all()
-                NewsCategoryRepository().delete_all()
-                # Clear ChromaDB
-                QAService(
-                    config,
-                    NewsRepository(),
-                    QARepository(),
-                    db_manager.get_chroma_client(),
-                    services["llm_client"],
-                ).clear_all_embeddings()  # Re-init QA service to clear
-                logger.info(
-                    "Database reset complete (manual repo calls). Consider dedicated service method."
-                )
-                # Re-initialize default sources? Need method in NewsService
-                # services["news_service"].initialize_default_sources() # Example
+                # Example: Using service methods if available, otherwise direct repo calls
+                try:
+                     # Clear data via Repositories (as service methods might not exist for all clears)
+                    QARepository().clear_history()
+                    ApiKeyRepository().delete_all()
+                    SystemConfigRepository().delete_all()
+                    NewsRepository().clear_all() # Clears news table
+                    # Need to clear sources and categories *before* news if FKs are strict, or handle deletion order
+                    NewsSourceRepository()._execute("DELETE FROM news_sources", commit=True) # Direct execute might be needed if no clear_all
+                    NewsCategoryRepository()._execute("DELETE FROM news_category", commit=True)
+
+                    logger.info(
+                        "Database reset complete (SQLite tables cleared via Repos)."
+                    )
+                    # Re-initialize default sources/categories if needed
+                    # e.g., services["news_service"].initialize_defaults()
+                except Exception as db_reset_err:
+                     logger.error(f"Error resetting database tables: {db_reset_err}", exc_info=True)
             else:
                 logger.info("Database reset aborted.")
+            sys.exit(0) # Exit after CLI operations
 
         elif args.reset_sources:
-            logger.info("Executing --reset-sources argument...")
-            # Need method in NewsService
-            # services["news_service"].reset_sources_to_default() # Example
-            logger.warning(
-                "Reset sources functionality needs implementation in NewsService."
-            )
+            logger.warning("Executing --reset-sources. Functionality needs implementation.")
+            # Example call: services["news_service"].reset_sources_to_default()
+            sys.exit(0)
 
         elif args.clear_news:
             logger.warning("Executing --clear-news argument...")
             confirm = input(
-                "WARNING: This will delete ALL news articles and embeddings. Type 'YES' to confirm: "
+                "WARNING: This will delete ALL news articles. Type 'YES' to confirm: "
             )
             if confirm == "YES":
-                # Use NewsService and QAService methods
+                # Use NewsService method
                 if services["news_service"].clear_all_news():
                     logger.info("Cleared news data from SQLite.")
                 else:
                     logger.error("Failed to clear news data from SQLite.")
-
-                if services["qa_service"].clear_all_embeddings():
-                    logger.info(
-                        "Cleared news embeddings from ChromaDB and reset flags."
-                    )
-                else:
-                    logger.error("Failed to clear news embeddings/reset flags.")
-                logger.info("Clear news data operation complete.")
             else:
                 logger.info("Clear news data aborted.")
+            sys.exit(0)
+
 
         # --- Run the Application ---
         run_gui(services)
 
+    except SystemExit: # Catch sys.exit() calls
+         logger.info("Application exiting via sys.exit().")
     except Exception as e:
         logger.critical(
             f"An unhandled error occurred during application startup: {e}",
             exc_info=True,
         )
+        # Attempt to show message box if GUI libraries are loaded
+        try:
+             from PySide6.QtWidgets import QMessageBox, QApplication
+             # Need to ensure QApplication exists if error happens before run_gui
+             if QApplication.instance() is None:
+                  _ = QApplication([]) # Create temporary instance
+             QMessageBox.critical(None, "Fatal Error", f"Application failed to start:\n{e}")
+        except Exception:
+             pass # Ignore if GUI cannot be shown
         sys.exit(f"Fatal Error: {e}")
     finally:
         logger.info("-------------------- Application Terminating --------------------")
 
 
 if __name__ == "__main__":
-    # Ensure event loop runs for async operations if services require it at top level
-    # For GUI apps, the Qt event loop usually handles this, but service init might need it.
-    # If using async heavily outside GUI event handlers, consider:
-    # asyncio.run(main())
-    # But for PyQt, direct call is usually correct.
     main()

@@ -1,29 +1,28 @@
-# src/ui/task_status_popup.py  <-- Renamed file
+# src/ui/task_log_viewer.py  <-- Renamed file
 # -*- coding: utf-8 -*-
 
 import logging
 from typing import Optional
-
+import markdown
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QTextEdit, QDialogButtonBox, QApplication,
-    QSizePolicy # Keep QSizePolicy if used elsewhere, otherwise can remove
+    QDialog, QVBoxLayout, QTextBrowser, QDialogButtonBox, QApplication # Changed QTextEdit
 )
 from PySide6.QtCore import Qt, Slot, QMetaObject, Q_ARG
-from PySide6.QtGui import QTextCursor # For scrolling
+from PySide6.QtGui import QTextCursor # Keep for scrolling if needed
 
 logger = logging.getLogger(__name__)
 
 # Renamed class
-class TaskStatusPopup(QDialog):
+class TaskLogViewer(QDialog):
     """
-    A dialog to display the status and streaming output (e.g., from LLM) of a background task.
+    A dialog to display the status and streaming output (e.g., from LLM)
+    of a background task, with basic Markdown/HTML rendering.
     """
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        # Update window title to be more general
-        self.setWindowTitle("Task Status")
-        self.setMinimumSize(800, 500) # Adjusted size for text area
+        self.setWindowTitle("Task Log") # Updated title
+        self.setMinimumSize(800, 500)
 
         # Standard window flags
         current_flags = self.windowFlags()
@@ -32,53 +31,42 @@ class TaskStatusPopup(QDialog):
 
         self._layout = QVBoxLayout(self)
 
-        # --- Text Edit for Streaming Output ---
-        self.log_display = QTextEdit()
+        # --- Use QTextBrowser for better rich text/markdown rendering ---
+        self.log_display = QTextBrowser() # Changed from QTextEdit
         self.log_display.setReadOnly(True)
-        # Optional: Use a monospaced font for better log readability
-        # font = QFont("Courier New", 10)
-        # self.log_display.setFont(font)
-        self.log_display.setAcceptRichText(True) # To handle potential markdown/HTML formatting
-        self._layout.addWidget(self.log_display, 1) # Text area takes most space
+        self.log_display.setOpenExternalLinks(True) # Open links in browser
+        self.log_display.setAcceptRichText(True) # QTextBrowser does this by default
+        self._layout.addWidget(self.log_display, 1)
 
         # --- Close Button ---
         self.button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
-        self.button_box.rejected.connect(self.reject) # Connect Close button to hide
+        self.button_box.rejected.connect(self.reject)
         self._layout.addWidget(self.button_box)
 
     @Slot(str)
     def append_log_message(self, message: str):
         """Appends a message (e.g., a stream chunk) to the log display."""
-        # Ensure this runs on the GUI thread
         if QApplication.instance().thread() != self.thread():
-            # Use QueuedConnection for cross-thread signals/slots
             QMetaObject.invokeMethod(self, "append_log_message", Qt.ConnectionType.QueuedConnection,
                                      Q_ARG(str, message))
             return
 
-        # Append the message - using insertPlainText might be safer if markdown rendering is basic
-        # Or append() if you expect simple text lines. Using insertHtml for flexibility.
-        # Note: Full markdown rendering in QTextEdit is limited.
-        # Consider converting markdown chunk to basic HTML if needed, or just display as text.
-        # For now, just appending the raw chunk.
-        cursor = self.log_display.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-        cursor.insertText(message) # Appends the text chunk
-        self.log_display.setTextCursor(cursor)
-        # self.log_display.ensureCursorVisible() # Auto-scroll to the bottom
+        # Use append for QTextBrowser - it handles basic HTML/Markdown automatically
+        # For more complex markdown, convert to HTML first using a library
+        # message = markdown.markdown(message) # Example using 'markdown' library
+        self.log_display.moveCursor(QTextCursor.End)
+        self.log_display.insertPlainText(message)
 
     def clear_display(self):
         """Clears the log display and resets the state."""
-        # Ensure this runs on the GUI thread if called from elsewhere
         if QApplication.instance().thread() != self.thread():
              QMetaObject.invokeMethod(self, "clear_display", Qt.ConnectionType.QueuedConnection)
              return
         self.log_display.clear()
-        self.setWindowTitle("Task Status") # Reset title
+        self.setWindowTitle("Task Log") # Reset title
 
     def set_final_status(self, status: str, is_error: bool = False):
         """Sets the overall final status, reflected in the window title."""
-        # Ensure this runs on the GUI thread
         if QApplication.instance().thread() != self.thread():
             QMetaObject.invokeMethod(self, "set_final_status", Qt.ConnectionType.QueuedConnection,
                                      Q_ARG(str, status), Q_ARG(bool, is_error))
@@ -86,7 +74,7 @@ class TaskStatusPopup(QDialog):
 
         log_level = logging.ERROR if is_error else logging.INFO
         logger.log(log_level, f"Task Status Popup Final Status: {status}")
-        base_title = "Task"
+        base_title = "Task Log"
         if is_error:
             self.setWindowTitle(f"{base_title} Error - {status}")
         else:
@@ -94,10 +82,10 @@ class TaskStatusPopup(QDialog):
 
     # --- Methods for Hiding ---
     def reject(self):
-        logger.debug("Task status popup reject triggered, hiding instead.")
+        logger.debug("Task log viewer reject triggered, hiding instead.")
         self.hide()
 
     def closeEvent(self, event):
-        logger.debug("Task status popup closeEvent triggered, hiding instead.")
+        logger.debug("Task log viewer closeEvent triggered, hiding instead.")
         self.hide()
         event.ignore()

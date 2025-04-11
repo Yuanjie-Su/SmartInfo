@@ -30,7 +30,6 @@ API_KEY_VOLCENGINE = "API_KEY_VOLCENGINE"  # Read from .env
 # Database configuration keys
 CONFIG_KEY_DATA_DIR = "data_dir"
 CONFIG_KEY_FETCH_FREQUENCY = "fetch_frequency"
-CONFIG_KEY_EMBEDDING_MODEL = "embedding_model"
 CONFIG_KEY_UI_THEME = "ui_theme"
 CONFIG_KEY_LANGUAGE = "language"
 
@@ -42,7 +41,6 @@ class AppConfig:
     DEFAULT_PERSISTENT_CONFIG = {
         CONFIG_KEY_DATA_DIR: DEFAULT_DATA_DIR,
         CONFIG_KEY_FETCH_FREQUENCY: "manual",
-        CONFIG_KEY_EMBEDDING_MODEL: "sentence-transformers/all-MiniLM-L6-v2",
         CONFIG_KEY_UI_THEME: "light",
         CONFIG_KEY_LANGUAGE: "zh_CN",
     }
@@ -257,12 +255,6 @@ class AppConfig:
     def db_path(self) -> str:
         """Get the full path of the SQLite database"""
         return self._db_path
-
-    @property
-    def log_file_path(self) -> str:
-        """Get the full path of the log file"""
-        # Log file path is usually under data_dir
-        return os.path.join(self._data_dir, "smartinfo.log")
 
 
 # --- Global configuration instance ---

@@ -8,46 +8,34 @@ Implements knowledge-based intelligent question answering (using Service Layer)
 
 import logging
 import asyncio
-from typing import List, Dict, Optional, Any  # Added
+from typing import List, Dict, Optional, Any
 
 from PySide6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QPushButton,
-    QTextEdit,
-    QLineEdit,
-    QLabel,
-    QListWidget,
-    QListWidgetItem,
-    QSplitter,
-    QFrame,
-    QMessageBox,
-    QApplication,  # Added QApplication
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QTextBrowser, # Changed to QTextBrowser
+    QLineEdit, QLabel, QListWidget, QListWidgetItem, QSplitter,
+    QFrame, QMessageBox, QApplication,
 )
-from PySide6.QtCore import Qt, Slot, QThreadPool  # Added Slot, QThreadPool
+from PySide6.QtCore import Qt, Slot # Removed QThreadPool
 from PySide6.QtGui import QFont, QColor
 
 # Import Services needed
 from src.services.qa_service import QAService
 
-# Assuming AsyncTaskRunner is now in ui.async_runner
-from src.ui.async_runner import AsyncTaskRunner
+# AsyncTaskRunner is no longer needed
+# from src.ui.async_runner import AsyncTaskRunner
 
 logger = logging.getLogger(__name__)
-
 
 class QATab(QWidget):
     """Intelligent Q&A Tab (Refactored)"""
 
-    def __init__(self, qa_service: QAService):  # Inject service
+    def __init__(self, qa_service: QAService): # Inject service
         super().__init__()
         self._qa_service = qa_service
-        self._current_answer_sources: List[Dict] = (
-            []
-        )  # Store sources for current answer
+        self._current_answer_sources: List[Dict] = []
+        self._qa_task: Optional[asyncio.Task] = None # To hold the running task
         self._setup_ui()
-        self.load_history()  # Load history on init
+        self.load_history() # Load history on init
 
     def _setup_ui(self):
         """Set up user interface"""
@@ -61,7 +49,7 @@ class QATab(QWidget):
         history_widget = QWidget()
         history_layout = QVBoxLayout(history_widget)
         history_layout.setContentsMargins(0, 0, 0, 0)
-        history_layout.addWidget(QLabel("Q&A history (last 20):"))
+        history_layout.addWidget(QLabel("Q&A history (last 50):")) # Increased limit
 
         self.history_list = QListWidget()
         self.history_list.itemClicked.connect(self._on_history_item_clicked)
@@ -78,24 +66,20 @@ class QATab(QWidget):
         chat_layout = QVBoxLayout(chat_widget)
         chat_layout.setContentsMargins(0, 0, 0, 0)
 
-        # Chat Display Area
-        self.chat_display = QTextEdit()
+        # Use QTextBrowser for better rich text display
+        self.chat_display = QTextBrowser()
         self.chat_display.setReadOnly(True)
-        # Increase font size for readability
+        self.chat_display.setOpenExternalLinks(True)
         font = self.chat_display.font()
-        font.setPointSize(font.pointSize() + 1)
+        font.setPointSize(font.pointSize() + 1) # Keep increased font size
         self.chat_display.setFont(font)
-        chat_layout.addWidget(self.chat_display, 1)  # Give more space
+        chat_layout.addWidget(self.chat_display, 1)
 
         # Input Area
         input_layout = QHBoxLayout()
         self.question_input = QLineEdit()
-        self.question_input.setPlaceholderText(
-            "Enter your question here, based on the collected and analyzed information..."
-        )
-        self.question_input.returnPressed.connect(
-            self._send_question
-        )  # Trigger on Enter
+        self.question_input.setPlaceholderText("Enter your question...")
+        self.question_input.returnPressed.connect(self._send_question)
         input_layout.addWidget(self.question_input, 1)
 
         self.send_button = QPushButton("Send")
@@ -106,7 +90,7 @@ class QATab(QWidget):
         main_splitter.addWidget(chat_widget)
 
         # Adjust splitter sizes
-        main_splitter.setSizes([250, 750])
+        main_splitter.setSizes([300, 700]) # Adjusted history panel size slightly
 
         self._show_welcome_message()
 
@@ -115,14 +99,12 @@ class QATab(QWidget):
         logger.info("Loading QA history...")
         try:
             self.history_list.clear()
-            history_items = self._qa_service.get_qa_history(limit=20)  # Get recent 20
+            history_items = self._qa_service.get_qa_history(limit=50) # Load more history
             if history_items:
-                for item in reversed(history_items):  # Show oldest first in list
+                for item in reversed(history_items):
                     q_item = QListWidgetItem(item["question"])
-                    # Store full item data in the list item? Or just ID?
-                    q_item.setData(Qt.ItemDataRole.UserRole, item["id"])
-                    # Set tooltip to show answer preview?
-                    q_item.setToolTip(f"Answer: {item['answer'][:100]}...")
+                    q_item.setData(Qt.ItemDataRole.UserRole, item) # Store full item data
+                    q_item.setToolTip(f"A: {item['answer'][:100]}...")
                     self.history_list.addItem(q_item)
             logger.info(f"Loaded {len(history_items)} QA history items.")
         except Exception as e:
@@ -131,186 +113,166 @@ class QATab(QWidget):
 
     def _show_welcome_message(self):
         """Display welcome message"""
+        # Slightly updated welcome message
         welcome_message = (
             "<p>Welcome to <b>SmartInfo Intelligent Q&A</b>!</p>"
-            "<p>You can ask questions based on the collected and analyzed information. "
-            "The system will use the knowledge base and large language model to provide answers.</p>"
-            "<p><b>For example:</b></p>"
-            "<ul>"
-            "<li>What are the major advancements in AI recently?</li>"
-            "<li>Summarize the current state of quantum computing.</li>"
-            "<li>What is the latest breakthrough in chip technology?</li>"
-            "</ul>"
-            "<p>Please enter your question to start exploring!</p>"
+            "<p>Ask questions based on the information analyzed by the system. "
+            "Use the history panel on the left to revisit previous conversations.</p>"
+            "<p>Enter your question below and press Enter or click Send.</p>"
         )
         self.chat_display.setHtml(welcome_message)
 
     def _send_question(self):
-        """Sends the user's question to the QA service asynchronously."""
+        """Sends the user's question to the QA service using asyncio."""
         question = self.question_input.text().strip()
-        if not question:
-            return
+        if not question or (self._qa_task and not self._qa_task.done()):
+             if not question:
+                  return
+             else:
+                  QMessageBox.information(self, "Busy", "Please wait for the current answer.")
+                  return
 
         self.question_input.clear()
-        self._add_message_to_chat("👤 User", question)  # Add user message immediately
-        self._current_answer_sources = []  # Clear sources from previous answer
+        self._add_message_to_chat("👤 User", question)
+        self._current_answer_sources = []
 
         # --- Update UI State ---
         self.send_button.setEnabled(False)
         self.question_input.setEnabled(False)
-        # Append thinking message without newline before it if chat is not empty
-        separator = "\n" if self.chat_display.toPlainText() else ""
-        self.chat_display.append(
-            f"{separator}<i style='color: gray;'>🤖 System is thinking...</i>"
-        )
-        self.chat_display.ensureCursorVisible()  # Scroll down
+        self._add_thinking_message()
         QApplication.processEvents()
 
-        # --- Run async task ---
-        answer_coro = self._qa_service.answer_question
-        args = (question,)
+        # --- Run async task using asyncio ---
+        try:
+            loop = asyncio.get_running_loop()
+            coro = self._qa_service.answer_question(question)
+            self._qa_task = loop.create_task(coro)
+            self._qa_task.add_done_callback(self._on_qa_task_done)
+            logger.info(f"QA task created for question: {question[:50]}...")
+        except Exception as e:
+             logger.error(f"Failed to create QA task: {e}", exc_info=True)
+             self._remove_thinking_message()
+             self._add_message_to_chat("⚠️ System Error", f"Failed to start task: {e}")
+             self.send_button.setEnabled(True)
+             self.question_input.setEnabled(True)
 
-        self.runner = AsyncTaskRunner(answer_coro, *args)
-        self.runner.setAutoDelete(True)
-        self.runner.signals.finished.connect(self._on_answer_received)
-        self.runner.signals.error.connect(self._on_qa_error)
-        QThreadPool.globalInstance().start(self.runner)
-
-    @Slot(object)
-    def _on_answer_received(self, result: Dict[str, Any]):
-        """Handles the result from the QA service."""
-        self.send_button.setEnabled(True)
-        self.question_input.setEnabled(True)
-        self.question_input.setFocus()  # Set focus back to input
-
-        # Remove "Thinking..." message
-        html = self.chat_display.toHtml()
-        # Be careful with replacing HTML, might remove previous formatting
-        html = html.replace(
-            '<p style="-qt-paragraph-type:empty"><br /></p>', ""
-        )  # Remove empty paragraphs sometimes added
-        thinking_msg = "<i style='color: gray;'>🤖 System is thinking...</i>"
-        # Find the last occurrence and remove it cleanly
-        last_occurrence = html.rfind(thinking_msg)
-        if last_occurrence != -1:
-            # Check if it's at the very end or followed by closing tags
-            end_part = html[last_occurrence + len(thinking_msg) :].strip()
-            if end_part.lower() in ["</p>", "</body></html>", ""]:
-                html = html[:last_occurrence]
-            else:  # Fallback: simple replace (might leave empty tags)
-                html = html.replace(thinking_msg, "")
-
-        self.chat_display.setHtml(html)  # Update HTML without the thinking message
-
-        if result and result.get("error"):
-            logger.error(f"QA service returned an error: {result['error']}")
-            self._add_message_to_chat(
-                "⚠️ System Error",
-                f"Sorry, an error occurred while answering: {result['error']}",
-            )
-        elif result and result.get("answer"):
-            answer = result["answer"]
-            self._current_answer_sources = result.get("sources", [])
-            # Add the actual answer
-            self._add_message_to_chat("🤖 System", answer)
-            # Add sources if any
-            if self._current_answer_sources:
-                sources_html = "<br /><small><b>Reference Sources (Similarity):</b><ul>"
-                for src in self._current_answer_sources:
-                    title = src.get("title", "Unknown Title")
-                    sim = src.get("similarity", 0)
-                    # Make title clickable if we store/retrieve the link? Need service change.
-                    # For now, just display title and similarity.
-                    sources_html += f"<li>{title} ({sim}%)</li>"
-                sources_html += "</ul></small>"
-                self.chat_display.append(sources_html)
-
-            # Update history list if the question was new
-            self.load_history()  # Reload history to show the new entry
-
-        else:
-            # Should not happen if error is None, but handle defensively
-            logger.error("QA service returned an unexpected empty result.")
-            self._add_message_to_chat(
-                "⚠️ System Error", "Sorry, the system couldn't generate an answer."
-            )
-
-        self.chat_display.ensureCursorVisible()
-
-    @Slot(Exception)
-    def _on_qa_error(self, error: Exception):
-        """Handle errors during question answering"""
+    def _on_qa_task_done(self, task: asyncio.Task):
+        """Handles the completion of the asyncio QA task."""
+        self._qa_task = None # Clear the task holder
         self.send_button.setEnabled(True)
         self.question_input.setEnabled(True)
         self.question_input.setFocus()
+        self._remove_thinking_message()
 
-        # Remove "Thinking..." message (same logic as in _on_answer_received)
-        html = self.chat_display.toHtml()
-        html = html.replace('<p style="-qt-paragraph-type:empty"><br /></p>', "")
-        thinking_msg = "<i style='color: gray;'>🤖 System is thinking...</i>"
-        last_occurrence = html.rfind(thinking_msg)
-        if last_occurrence != -1:
-            end_part = html[last_occurrence + len(thinking_msg) :].strip()
-            if end_part.lower() in ["</p>", "</body></html>", ""]:
-                html = html[:last_occurrence]
+        try:
+            if task.cancelled():
+                logger.warning("QA task was cancelled.")
+                self._add_message_to_chat("⚠️ System Info", "Question answering was cancelled.")
+            elif task.exception():
+                error = task.exception()
+                logger.error(f"QA task failed: {error}", exc_info=error)
+                self._add_message_to_chat(
+                    "⚠️ System Error",
+                    f"Sorry, an error occurred while answering: {error}",
+                )
             else:
-                html = html.replace(thinking_msg, "")
-        self.chat_display.setHtml(html)
+                result = task.result()
+                if result and result.get("answer"):
+                    answer = result["answer"]
+                    self._current_answer_sources = result.get("context_ids", None) # Get context IDs if provided
+                    self._add_message_to_chat("🤖 System", answer)
 
-        logger.error(f"QA task execution failed: {error}", exc_info=error)
-        self._add_message_to_chat(
-            "⚠️ System Error",
-            f"An internal error occurred while processing the question: {str(error)}",
-        )
+                    # Display source info if available (adjust based on what context_ids contains)
+                    if self._current_answer_sources:
+                        sources_text = f"Context IDs: {self._current_answer_sources}"
+                        sources_html = f"<br /><small><i>{sources_text}</i></small>"
+                        self.chat_display.append(sources_html)
+
+                    self.load_history() # Refresh history
+                else:
+                     # Handle case where result might be valid but empty or has an error flag
+                     error_msg = result.get("error", "System couldn't generate an answer.") if result else "System couldn't generate an answer."
+                     logger.error(f"QA service returned: {error_msg}")
+                     self._add_message_to_chat("⚠️ System Error", f"Sorry, {error_msg}")
+
+        except Exception as e:
+             # Catch errors within the callback itself
+             logger.error(f"Error in _on_qa_task_done callback: {e}", exc_info=True)
+             self._add_message_to_chat("⚠️ System Error", f"Error processing result: {e}")
+
+        self.chat_display.moveCursor(QTextCursor.MoveOperation.End)
         self.chat_display.ensureCursorVisible()
+
+
+    def _add_thinking_message(self):
+        """Adds a 'thinking' message to the chat display."""
+        thinking_html = "<p style='color: gray; font-style: italic;'>🤖 System is thinking...</p>"
+        self.chat_display.append(thinking_html)
+        self.chat_display.ensureCursorVisible()
+
+    def _remove_thinking_message(self):
+        """Removes the 'thinking' message from the chat display."""
+        cursor = self.chat_display.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        # Move up to select the last block (the thinking message)
+        cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock, QTextCursor.MoveMode.KeepAnchor)
+        # A more robust check might be needed if other messages could interfere
+        if "System is thinking..." in cursor.selectedText():
+             cursor.removeSelectedText()
+             # Also remove the potentially empty paragraph left behind
+             cursor.deletePreviousChar()
+             self.chat_display.setTextCursor(cursor)
+
 
     def _add_message_to_chat(self, sender: str, message: str):
-        """Add a message to the chat display"""
-        # Basic HTML escaping for the message content
-        message = (
-            message.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        )
-        # Convert newlines to <br> for HTML display
-        message = message.replace("\n", "<br />")
-
+        """Add a formatted message to the chat display (QTextBrowser)."""
+        # Prepare sender style
         sender_style = ""
+        sender_color = "#212121" # Default color
         if "User" in sender:
-            sender_style = "color: #005eff; font-weight: bold;"  # Blue for user
-            message_html = f"<p style='margin-bottom: 5px;'><span style='{sender_style}'>{sender}:</span><br />{message}</p>"
+            sender_color = "#005eff" # Blue
         elif "System Error" in sender:
-            sender_style = "color: #D50000; font-weight: bold;"  # Red for error
-            message_html = f"<p style='margin-bottom: 5px;'><span style='{sender_style}'>{sender}:</span><br />{message}</p>"
-        else:  # System answer
-            sender_style = "color: #008000; font-weight: bold;"  # Green for system
-            # Add message without extra <p> tag if it's part of answer
-            message_html = (
-                f"<span style='{sender_style}'>{sender}:</span><br />{message}"
-            )
+            sender_color = "#D50000" # Red
+        elif "System" in sender:
+            sender_color = "#008000" # Green
 
-        # Append message and ensure visibility
-        # Check if the last block is an empty paragraph, common issue
-        cursor = self.chat_display.textCursor()
-        cursor.movePosition(cursor.MoveOperation.End)
-        self.chat_display.setTextCursor(cursor)
-        if self.chat_display.toPlainText():  # Add separator if not the first message
-            self.chat_display.append("")  # Adds a paragraph break
+        sender_html = f"<strong style='color: {sender_color};'>{sender}:</strong><br>"
 
-        self.chat_display.insertHtml(message_html)
+        # Basic HTML escaping for the message
+        message = message.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        # Convert newlines to <br> for HTML display
+        message_html = message.replace("\n", "<br />")
+
+        # Combine and append (append adds a paragraph block)
+        full_html = sender_html + message_html
+        self.chat_display.append(full_html)
         self.chat_display.ensureCursorVisible()
+
 
     def _on_history_item_clicked(self, item: QListWidgetItem):
         """Load and display a question-answer pair from history"""
-        question = item.text()
-        # Re-submit the question
-        self.question_input.setText(question)
-        self._send_question()
+        data = item.data(Qt.ItemDataRole.UserRole)
+        if isinstance(data, dict):
+            self.chat_display.clear() # Clear current chat
+            self._add_message_to_chat("👤 User", data.get("question", "N/A"))
+            self._add_message_to_chat("🤖 System", data.get("answer", "N/A"))
+            # Optionally display context IDs if stored
+            context_ids = data.get("context_ids")
+            if context_ids:
+                 sources_text = f"Context IDs: {context_ids}"
+                 sources_html = f"<br /><small><i>{sources_text}</i></small>"
+                 self.chat_display.append(sources_html)
+            self.chat_display.moveCursor(QTextCursor.MoveOperation.Start) # Scroll to top
+        else:
+             # Fallback: Re-submit the question if full data wasn't stored
+             question = item.text()
+             self.question_input.setText(question)
+             self._send_question()
 
     def _clear_history(self):
         """Clear the Q&A history"""
         reply = QMessageBox.question(
-            self,
-            "Confirm Clear",
-            "Are you sure you want to clear all Q&A history?",
+            self, "Confirm Clear", "Are you sure you want to clear all Q&A history?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -318,15 +280,17 @@ class QATab(QWidget):
             try:
                 if self._qa_service.clear_qa_history():
                     self.history_list.clear()
-                    self.chat_history = (
-                        []
-                    )  # Assuming chat_history is still used somewhere? If not, remove.
-                    self._show_welcome_message()  # Show welcome message again
-                    QMessageBox.information(
-                        self, "Success", "Q&A history has been cleared."
-                    )
+                    self._show_welcome_message()
+                    QMessageBox.information(self, "Success", "Q&A history has been cleared.")
                 else:
                     QMessageBox.warning(self, "Failure", "Failed to clear Q&A history.")
             except Exception as e:
                 logger.error(f"Error clearing QA history: {e}", exc_info=True)
                 QMessageBox.critical(self, "Error", f"Error clearing history: {e}")
+
+    # Ensure task is cancelled if tab/window is closed
+    def closeEvent(self, event): # This might be better placed in MainWindow closing the whole app
+        if self._qa_task and not self._qa_task.done():
+            logger.info("QA tab closing, cancelling active task.")
+            self._qa_task.cancel()
+        # super().closeEvent(event) # Usually not needed for QWidget unless overridden

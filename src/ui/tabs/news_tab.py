@@ -32,9 +32,7 @@ from PySide6.QtCore import Qt, QSortFilterProxyModel, Signal, Slot, QObject, QMe
 from PySide6.QtGui import QStandardItemModel, QStandardItem
 
 from src.services.news_service import NewsService
-# AsyncTaskRunner is no longer needed here
-# from src.ui.async_runner import AsyncTaskRunner
-from src.ui.task_status_popup import TaskStatusPopup
+from src.ui.task_log_viewer import TaskLogViewer
 
 logger = logging.getLogger(__name__)
 
@@ -51,8 +49,8 @@ class NewsTab(QWidget):
         self.categories_cache: List[Tuple[int, str]] = []
         self.sources_cache: List[Dict[str, Any]] = []
         self._is_fetching = False
-        self.fetch_task: Optional[asyncio.Task] = None # <-- Store the asyncio task
-        self.task_status_popup: Optional[TaskStatusPopup] = None
+        self.fetch_task: Optional[asyncio.Task] = None
+        self.task_status_popup: Optional[TaskLogViewer] = None
         self._setup_ui()
         self._load_filters()
         self._load_news()
@@ -320,13 +318,13 @@ class NewsTab(QWidget):
             self.fetch_button.setEnabled(False) # Disable button temporarily
             self.fetch_button.setText("Fetching...")
 
-            # --- Setup TaskStatusPopup ---
+            # --- Setup TaskLogViewer ---
             if self.task_status_popup is None:
-                logger.info("Creating new TaskStatusPopup instance.")
-                self.task_status_popup = TaskStatusPopup(self)
+                logger.info("Creating new TaskLogViewer instance.")
+                self.task_status_popup = TaskLogViewer(self) # Use new class name
                 self.task_status_popup.show()
             else:
-                logger.info("Reusing existing TaskStatusPopup instance.")
+                logger.info("Reusing existing TaskLogViewer instance.")
             self.task_status_popup.clear_display()
             self.task_status_popup.append_log_message(f"Starting fetch for {urls_to_fetch_count} URLs...\n")
             self.show_status_button.setEnabled(True)
@@ -461,14 +459,14 @@ class NewsTab(QWidget):
     @Slot()
     def _show_task_progress_window(self):
         """Shows the task status popup window."""
-        if self.task_status_popup and isinstance(self.task_status_popup, TaskStatusPopup):
-            logger.debug("Showing task status popup.")
+        if self.task_status_popup and isinstance(self.task_status_popup, TaskLogViewer): # Use new class name
+            logger.debug("Showing task log viewer.")
             self.task_status_popup.show()
             self.task_status_popup.raise_()
             self.task_status_popup.activateWindow()
         else:
-            logger.info("Task status popup has not been created yet.")
-            QMessageBox.information(self, "Info", "The task status window hasn't been created yet. Start a fetch task first.")
+            logger.info("Task log viewer has not been created yet.")
+            QMessageBox.information(self, "Info", "The task log viewer hasn't been created yet. Start a task first.")
 
     # Slot needed for signal connection, but now called directly by service
     # The @Slot decorator doesn't hurt, but isn't strictly necessary for direct calls
