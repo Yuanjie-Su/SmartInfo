@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
 )
 from PySide6.QtGui import QAction
+from qasync import QEventLoop
 
 # Import refactored tabs
 from .tabs.news_tab import NewsTab
@@ -34,9 +35,10 @@ logger = logging.getLogger(__name__)
 class MainWindow(QMainWindow):
     """Main Window Class"""
 
-    def __init__(self, services: Dict[str, Any]):
+    def __init__(self, services: Dict[str, Any], loop: QEventLoop):
         super().__init__()
         self.services = services
+        self.loop = loop
 
         self.setWindowTitle(
             "SmartInfo - Intelligent News Analysis and Knowledge Management Tool"
@@ -167,6 +169,8 @@ class MainWindow(QMainWindow):
         if reply == QMessageBox.StandardButton.Yes:
             logger.info("Application exited normally by user.")
             # Perform any cleanup needed before closing services (DB connection closes via atexit)
+            if hasattr(self, 'loop'):
+                self.loop.quit()
             event.accept()
         else:
             event.ignore()

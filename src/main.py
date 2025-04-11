@@ -137,6 +137,7 @@ def run_gui(services: Dict[str, Any]):
     # Import GUI elements late to avoid issues if dependencies are missing initially
     try:
         from PySide6.QtWidgets import QApplication
+        from qasync import QEventLoop
 
         # IMPORTANT: MainWindow needs refactoring to accept services
         from src.ui.main_window import MainWindow
@@ -148,13 +149,14 @@ def run_gui(services: Dict[str, Any]):
 
     app = QApplication(sys.argv)
     app.setApplicationName("SmartInfo")
-
     # Pass services to MainWindow (MainWindow needs modification)
     try:
-        window = MainWindow(services)  # Pass services dict
+        loop = QEventLoop(app)
+        asyncio.set_event_loop(loop)
+        window = MainWindow(services, loop)  # Pass services dict
         window.show()
         logger.info("MainWindow shown.")
-        sys.exit(app.exec())
+        sys.exit(loop.run_forever())
     except Exception as e:
         logger.critical(f"Error running the GUI application: {e}", exc_info=True)
         sys.exit(f"GUI Runtime Error: {e}")
