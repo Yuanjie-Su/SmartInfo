@@ -1,108 +1,162 @@
-# SmartInfo - Intelligent News Analysis and Knowledge Management Tool
+# SmartInfo 智能信息系统
 
-[![GitHub stars](https://img.shields.io/github/stars/catorsu/SmartInfo?style=social)](https://github.com/catorsu/SmartInfo/stargazers)
-[![GitHub forks](https://img.shields.io/github/forks/catorsu/SmartInfo?style=social)](https://github.com/catorsu/SmartInfo/network/members)
-[![GitHub issues](https://img.shields.io/github/issues/catorsu/SmartInfo)](https://github.com/catorsu/SmartInfo/issues)
+一个基于FastAPI和Tauri+React的智能信息聚合和问答系统。
 
-**Repository:** [https://github.com/catorsu/SmartInfo.git](https://github.com/catorsu/SmartInfo.git)
+## 项目结构
 
-## Overview
+```
+SmartInfo/
+├── src/                    # 后端代码（Python FastAPI）
+│   ├── api/                # API定义
+│   │   ├── routers/        # REST API路由
+│   │   ├── schemas/        # API数据模型
+│   │   └── websockets/     # WebSocket端点
+│   ├── services/           # 业务服务
+│   └── main.py             # 主程序入口
+│
+└── frontend-react-tauri/   # 前端代码（Tauri + React + TypeScript）
+    ├── src/                # 前端源代码
+    │   ├── components/     # 共享组件
+    │   ├── hooks/          # 自定义Hooks
+    │   ├── services/       # API服务
+    │   ├── store/          # 状态管理
+    │   ├── types/          # 类型定义
+    │   ├── views/          # 页面视图
+    │   ├── App.tsx         # 主应用组件
+    │   └── main.tsx        # 入口文件
+    ├── src-tauri/          # Tauri配置和原生代码
+    └── package.json        # 项目依赖
+```
 
-SmartInfo is a desktop application designed for researchers, analysts, and enthusiasts to aggregate news from various sources, perform intelligent analysis and summarization using Large Language Models (LLMs), and build a searchable knowledge base for question-answering.
+## 运行方法
 
-The application features a user-friendly interface built with PySide6, allowing users to manage news sources, fetch articles, view content, trigger AI-powered analysis, and interact with a Q&A system based on the collected information.
+### 1. 运行后端（FastAPI）
 
-## Key Features
+确保已安装Python 3.12或更高版本，以及所需依赖：
 
-- **News Management:**
-  - Configure and manage news sources (URLs) categorized by topic.
-  - Fetch news articles from configured sources using web crawling (`crawl4ai`).
-  - Extract key information (title, link, summary, date) from crawled content using an LLM (e.g., DeepSeek).
-  - View, filter, search, and delete stored news articles.
-  - Preview news content and AI analysis results.
-- **Intelligent Analysis:**
-  - Generate summaries and perform different types of analysis (e.g., Technical, Trends, Competitive) on selected news articles using an LLM (DeepSeek).
-  - View original content alongside the generated analysis.
-- **Q&A:**
-  - Ask natural language questions based on the collected news.
-  - View Q&A history.
-- **Configuration:**
-  - Manage API keys (e.g., DeepSeek) via UI (stored in database) or environment variables (`.env` file takes priority).
-  - Manage news categories and sources.
-  - View and potentially change the data storage path (default: `~/SmartInfo/data`).
+```bash
+cd src
+pip install -r requirements.txt
+uvicorn main:app --reload --host 127.0.0.1 --port 8000
+```
 
-## Technology Stack
+后端将在 http://127.0.0.1:8000 上运行。
 
-- **Language:** Python 3.x
-- **GUI:** PySide6
-- **LLM Interaction:** `openai` library (compatible with DeepSeek API), `deepseek-tokenizer`
-- **Web Crawling:** `crawl4ai`
-- **Database:**
-  - SQLite (for metadata, configuration, Q&A history)
-- **Configuration:** `python-dotenv`
-- **Other:** `requests` (for API testing), `ijson` (likely for stream parsing)
+### 2. 运行前端（Tauri + React）
 
-## Installation
+确保已安装Node.js、npm和Rust环境：
 
-1.  **Clone the repository:**
-    ```bash
-    git clone [https://github.com/catorsu/SmartInfo.git](https://github.com/catorsu/SmartInfo.git)
-    cd SmartInfo
-    ```
-2.  **Create and activate a virtual environment (recommended):**
-    ```bash
-    python -m venv venv
-    # On Windows
-    venv\Scripts\activate
-    # On macOS/Linux
-    source venv/bin/activate
-    ```
-3.  **Install dependencies:**
-    ```bash
-    pip install -r requirements.txt
-    ```
+```bash
+cd frontend-react-tauri
+npm install
+npm run tauri dev
+```
 
-## Configuration
+## 开发须知
 
-1.  **API Keys:**
-    - The primary method for configuring the DeepSeek API key is through an environment variable. Create a file named `.env` in the project root directory.
-    - Add your API key to the `.env` file:
-      ```dotenv
-      # .env file
-      DEEPSEEK_API_KEY=your_deepseek_api_key_here
-      ```
-    - Alternatively, you can set the API key via the "Settings" tab in the application UI. Keys set via the UI are stored in the SQLite database (`smartinfo.db`). **Note:** The `.env` file setting always takes priority if present.
-2.  **Other Settings:**
-    - The data directory and other system settings can be viewed and potentially modified in the "Settings" tab of the application.
-    - Settings changed through the UI are stored in the SQLite database (`smartinfo.db`) in the data directory.
-    - The default data directory is `~/SmartInfo/data` (within your user home directory).
+1. **后端API变更**：在`backend/api`目录下进行
+2. **前端类型定义**：需要与后端API保持同步，位于`frontend/src/types`
+3. **前端API服务**：位于`frontend/src/services/api.ts`，需要与后端路由保持一致
+4. **WebSocket服务**：前端连接后端WebSocket的客户端实现位于`frontend/src/services/websocket.ts`
 
-## Usage
+## 功能概述
 
-1.  Ensure you have configured your API key (see Configuration section).
-2.  Make sure you are in the project's root directory (`SmartInfo`).
-3.  Run the main application script:
-    ```bash
-    python src/main.py
-    ```
+1. **新闻聚合**：自动抓取、分析、存储和展示新闻内容
+2. **智能问答**：基于已收集的信息提供问答功能
+3. **系统设置**：管理API密钥和系统配置
 
-## Command Line Arguments
+## 功能
 
-The application supports the following command-line arguments when run from the root directory:
+- 新闻采集和分析
+- 问答交互
+- 设置管理
 
-- `python src/main.py --reset-sources`: (Functionality might need implementation in `NewsService`) Reset news sources to default.
-- `python src/main.py --clear-news`: Clear ALL news data from SQLite (prompts for confirmation).
-- `python src/main.py --reset-database`: Reset the entire database, clearing ALL data including configuration, API keys, news and Q&A history (prompts for confirmation).
-- `python src/main.py --log-level <LEVEL>`: Set the logging level (e.g., `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`). Default is `INFO`.
+## 安装
 
-## Project Structure
+1. 克隆仓库：
 
-- `src/main.py`: Main application entry point.
-- `src/config.py`: Application configuration management.
-- `src/core/crawler.py`: Web crawling logic.
-- `src/db/`: Database connection and repository classes.
-- `src/services/`: Business logic layer (News, Analysis, QA, Settings, LLM Client).
-- `src/ui/`: User interface components (Main Window, Tabs, Async Runner).
-- `src/utils/`: Utility functions (e.g., token counting).
-- `requirements.txt`: Project dependencies.
-- `README.md` / `README_CN.md`: This documentation.
+```bash
+git clone https://github.com/yourusername/SmartInfo.git
+cd SmartInfo
+```
+
+2. 安装依赖项：
+
+```bash
+pip install -r requirements.txt
+```
+
+## 运行服务器
+
+```bash
+python -m backend.main
+```
+
+默认情况下，服务器将在 `http://127.0.0.1:8000` 运行。
+
+### 命令行参数
+
+- `--host`: 指定主机地址（默认：127.0.0.1）
+- `--port`: 指定端口号（默认：8000）
+- `--reset-sources`: 重置新闻源为默认值
+- `--clear-news`: 清除所有新闻数据
+- `--reset-database`: 重置整个数据库
+- `--log-level`: 设置日志级别（DEBUG、INFO、WARNING、ERROR、CRITICAL）
+
+示例：
+
+```bash
+python -m src.main --host 0.0.0.0 --port 8080 --log-level DEBUG
+```
+
+## API文档
+
+启动服务器后，访问以下URL查看API文档：
+
+- Swagger UI: `http://127.0.0.1:8000/docs`
+- ReDoc: `http://127.0.0.1:8000/redoc`
+
+## API端点结构
+
+### REST API
+
+- `/api/news/*`: 新闻相关操作
+- `/api/qa/*`: 问答相关操作
+- `/api/settings/*`: 设置相关操作
+
+### WebSocket
+
+- `/api/ws/news`: 新闻实时更新
+- `/api/ws/qa`: 问答实时流式响应
+
+## 配置
+
+在首次启动前，您需要配置以下API密钥：
+
+- DeepSeek API密钥：用于LLM问答功能
+- 火山引擎API密钥：用于新闻分析功能
+
+可以通过API设置这些密钥：
+
+```bash
+curl -X POST "http://127.0.0.1:8000/api/settings/api-keys" \
+  -H "Content-Type: application/json" \
+  -d '{"service": "deepseek", "key": "your-api-key"}'
+
+curl -X POST "http://127.0.0.1:8000/api/settings/api-keys" \
+  -H "Content-Type: application/json" \
+  -d '{"service": "volcengine", "key": "your-api-key"}'
+```
+
+## 开发
+
+此项目使用FastAPI框架。核心功能包括：
+
+- 新闻爬虫和分析
+- LLM交互
+- WebSocket实时通信
+- SQLite数据存储
+
+## 许可证
+
+[许可证信息]
