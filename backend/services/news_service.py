@@ -54,12 +54,14 @@ class NewsService:
     async def fetch_news_from_sources(
         self,
         source_ids: Optional[List[int]] = None,
-        on_url_status_update: Optional[Callable[[str, str, str], None]] = None,
-        on_stream_chunk_update: Optional[Callable[[str], None]] = None,
+        on_url_status_update: Optional[Callable[[str, str, str], asyncio.Future]] = None,
+        on_stream_chunk_update: Optional[Callable[[str], asyncio.Future]] = None,
     ) -> int:
         """
-        Fetch, extract, and save news from specified source IDs using non-streaming LLM.
+        Fetch, extract, and save news from specified source IDs.
+        Ensures Playwright crawler resources are cleaned up.
         Reports progress per URL via on_url_status_update callback.
+        Streams LLM analysis chunks via on_stream_chunk_update callback.
 
         Args:
             source_ids: List of source IDs to fetch. None means fetch all.
@@ -68,23 +70,30 @@ class NewsService:
         Returns:
             Total number of news entries successfully saved to the database.
         """
+        # --- Source fetching logic remains the same ---
         sources_to_fetch = []
         if source_ids:
-            all_sources = self._source_repo.get_all()
+            # Make get_all async if repository methods are async
+            all_sources = await self._source_repo.get_all() # Assuming async repo
             source_map = {s[0]: s for s in all_sources}
             for src_id in source_ids:
                 if src_id in source_map:
+                    # Convert tuple to dict if needed, or ensure repo returns dicts
+                    # Assuming get_all returns list of tuples: (id, name, url, cat_id, cat_name)
                     sources_to_fetch.append(source_map[src_id])
                 else:
                     logger.warning(f"Source ID {src_id} not found in database.")
         else:
-            sources_to_fetch = self._source_repo.get_all()
+            sources_to_fetch = await self._source_repo.get_all() # Assuming async repo
 
         if not sources_to_fetch:
             logger.warning("No valid news sources found to fetch.")
+            if on_stream_chunk_update:
+                await on_stream_chunk_update("[INFO] No valid news sources found to fetch.\n")
             return 0
 
         url_to_source_info: Dict[str, Dict[str, Any]] = {
+            # Adapt index based on actual return type of get_all
             src[2]: {
                 "id": src[0],
                 "name": src[1],
@@ -100,15 +109,18 @@ class NewsService:
         processed_url_count = 0
         all_extraction_tasks = []
 
-        logger.info(f"Crawling {len(urls_to_crawl)} sources...")
+        logger.info(f"Attempting to crawl {len(urls_to_crawl)} sources using Playwright...")
+        if on_stream_chunk_update:
+             await on_stream_chunk_update(f"[INFO] Starting crawl for {len(urls_to_crawl)} sources...\n")
 
-        # --- Decide Crawler ---
+        # --- Initialize Crawler ---
         # Using Playwright as per original code context
-        crawler = PlaywrightCrawler(headless=True)
-        # Alternative: crawler = AiohttpCrawler() if preferred
-
+        # Declare crawler outside try block to access in finally
+        crawler: Optional[PlaywrightCrawler] = None
         try:
+            crawler = PlaywrightCrawler(headless=True)
             # --- Process URLs ---
+            # Make sure process_urls is an async generator
             async for crawl_result in crawler.process_urls(urls_to_crawl, output_format="markdown", scroll_pages=False):
                 processed_url_count += 1
                 url = crawl_result.get("original_url", "")
@@ -117,84 +129,99 @@ class NewsService:
 
                 if not source_info:
                      logger.warning(f"Received crawl result for unknown URL: {url}")
-                     continue
+                     continue # Skip if source info not found
 
                 # Report crawl status via the *first* callback
                 if on_url_status_update:
                     status = "Crawled - Success" if markdown else "Crawled - Failed"
-                    details = "" if markdown else crawl_result.get("error", "Unknown crawl error")
-                    on_url_status_update(url, status, details)
+                    details = f"Markdown length: {len(markdown)}" if markdown else crawl_result.get("error", "Unknown crawl error")
+                    # Use await if the callback itself is async
+                    await on_url_status_update(url, status, details)
 
                 if markdown:
-                    logger.info(f"Successfully crawled markdown for: {url}")
+                    logger.info(f"Successfully crawled markdown for: {url}. Creating extraction task.")
                     task = asyncio.create_task(
                         self._extract_and_save_items_sequentially(
                             url,
                             markdown,
                             source_info,
-                            on_url_status_update,
-                            on_stream_chunk_update,
+                            on_url_status_update, # Pass the async callback
+                            on_stream_chunk_update, # Pass the async callback
                         )
                     )
                     all_extraction_tasks.append(task)
                 else:
                     logger.warning(f"Failed to get markdown for: {url}, error: {crawl_result.get('error', 'Unknown error')}")
+                    # No extraction task needed for failed crawls
 
-
-        except Exception as crawl_error:
-            logger.error(f"Error during crawling phase: {crawl_error}", exc_info=True)
-            # Report to stream
+            logger.info(f"Playwright crawling phase finished. Processed URLs: {processed_url_count}. Waiting for {len(all_extraction_tasks)} extraction tasks...")
             if on_stream_chunk_update:
-                on_stream_chunk_update(f"[ERROR] Crawling failed: {crawl_error}\n")
+                await on_stream_chunk_update(f"[INFO] Crawling finished. Waiting for analysis tasks...\n")
 
-        logger.info(f"Crawling phase finished. Processed URLs: {processed_url_count}. Waiting for extraction tasks...")
+            # --- Gather Extraction Results (logic remains the same) ---
+            if all_extraction_tasks:
+                results = await asyncio.gather(*all_extraction_tasks, return_exceptions=True)
+                for i, result in enumerate(results):
+                    # Initialize default values
+                    task_url = f"Extraction Task {i+1}" # Placeholder URL
+                    saved_count = 0
+                    task_exception = None
+                    is_error = False
 
-        if all_extraction_tasks:
-            results = await asyncio.gather(*all_extraction_tasks, return_exceptions=True)
-            for i, result in enumerate(results):
-                task_url = f"Task {i}" # Placeholder, ideally get URL from result
-                saved_count = 0
-                task_exception = None
+                    if isinstance(result, Exception):
+                        task_exception = result
+                        is_error = True
+                        # Try to get URL from exception context if possible, otherwise use placeholder
+                        # This part is tricky without modifying the structure significantly
+                    elif isinstance(result, tuple) and len(result) == 2:
+                        task_url, saved_count_or_error = result # Get URL from result tuple
+                        if isinstance(saved_count_or_error, int):
+                            saved_count = saved_count_or_error
+                        else: # Assume it's an error (Exception or string)
+                            task_exception = saved_count_or_error
+                            is_error = True
+                    else: # Unexpected result format
+                        task_exception = ValueError(f"Unexpected result format from extraction task: {result}")
+                        is_error = True
 
-                if isinstance(result, Exception):
-                    task_exception = result
-                    # Report exception to stream
-                    if on_stream_chunk_update:
-                        on_stream_chunk_update(f"[ERROR] Extraction task failed: {task_exception}\n")
-
-                elif isinstance(result, tuple) and len(result) == 2:
-                    task_url, saved_count_or_error = result
-                    if isinstance(saved_count_or_error, int):
-                        saved_count = saved_count_or_error
-                        # Report success for this URL to stream (optional)
+                    # Logging and reporting based on outcome
+                    if is_error:
+                        error_str = str(task_exception)
+                        logger.error(f"Error during extraction/saving task for {task_url}: {error_str}", exc_info=isinstance(task_exception, Exception))
+                        # Report error via both callbacks if possible
+                        if on_url_status_update:
+                             await on_url_status_update(task_url, "Error", f"Extraction/Save Failed: {error_str[:200]}") # Truncate long errors
+                        if on_stream_chunk_update:
+                            await on_stream_chunk_update(f"[ERROR] Processing {task_url} failed: {error_str[:200]}\n")
+                    else:
+                        total_saved_count += saved_count
+                        logger.info(f"Extraction task for {task_url} completed successfully, saved {saved_count} items.")
+                        # Optional: Send final success update via stream
                         # if on_stream_chunk_update:
-                        #    on_stream_chunk_update(f"[DONE] {task_url} - Saved {saved_count} items.\n")
-                    elif isinstance(saved_count_or_error, Exception): # Check if it's an Exception
-                        task_exception = saved_count_or_error
-                        # Report specific error for this URL via URL status callback
-                        if on_url_status_update:
-                             on_url_status_update(task_url, "Error", f"Extraction Failed: {task_exception}")
-                        # Also report to stream
-                        if on_stream_chunk_update:
-                            on_stream_chunk_update(f"[ERROR] Processing {task_url} failed: {task_exception}\n")
-                    else: # Treat other non-int as error string
-                        err_str = str(saved_count_or_error)
-                        if on_url_status_update:
-                            on_url_status_update(task_url, "Error", f"Extraction Failed: {err_str}")
-                        if on_stream_chunk_update:
-                            on_stream_chunk_update(f"[ERROR] Processing {task_url} failed: {err_str}\n")
+                        #    await on_stream_chunk_update(f"[DONE] {task_url} - Saved {saved_count} items.\n")
 
-                if task_exception:
-                    logger.error(f"Error during extraction/saving task for {task_url}: {task_exception}", exc_info=isinstance(task_exception, Exception))
-                else:
-                    total_saved_count += saved_count
+            else:
+                 logger.info("No extraction tasks were started.")
+                 if on_stream_chunk_update:
+                     await on_stream_chunk_update("[INFO] No extraction tasks needed.\n")
 
-        else:
-             logger.info("No extraction tasks were started.")
-             if on_stream_chunk_update:
-                 on_stream_chunk_update("[INFO] No extraction tasks needed.\n")
+        except Exception as process_error:
+            logger.error(f"Error during news fetching process: {process_error}", exc_info=True)
+            # Report general error to stream if possible
+            if on_stream_chunk_update:
+                await on_stream_chunk_update(f"[CRITICAL] News fetching process failed: {process_error}\n")
+        finally:
+            # --- Ensure crawler shutdown ---
+            if crawler:
+                logger.info("Shutting down Playwright crawler...")
+                await crawler.shutdown()
+                logger.info("Playwright crawler shut down.")
+            else:
+                 logger.info("Playwright crawler was not initialized, no shutdown needed.")
 
         logger.info(f"News fetching process completed. Total items saved across all sources: {total_saved_count}")
+        if on_stream_chunk_update:
+             await on_stream_chunk_update(f"[COMPLETE] News fetching finished. Total saved: {total_saved_count}.\n")
         return total_saved_count
 
     async def _extract_and_save_items_sequentially(
@@ -202,8 +229,8 @@ class NewsService:
         url: str,
         markdown: str,
         source_info: Dict[str, Any],
-        on_url_status_update: Optional[Callable[[str, str, str], None]],
-        on_stream_chunk_update: Optional[Callable[[str], None]],
+        on_url_status_update: Optional[Callable[[str, str, str], asyncio.Future]],
+        on_stream_chunk_update: Optional[Callable[[str], asyncio.Future]],
     ) -> Tuple[str, Any]: # Return URL and (count or error)
         """
         Helper coroutine: Extracts items from markdown using non-streaming LLM,
@@ -222,12 +249,12 @@ class NewsService:
         saved_item_count = 0 # Track of items saved for this URL
         try: # Wrap the whole process for better error reporting per URL
             if not markdown or not markdown.strip():
-                if on_url_status_update: on_url_status_update(url, "Skipped", "No markdown content")
+                if on_url_status_update: await on_url_status_update(url, "Skipped", "No markdown content")
                 return url, 0 # Return 0 saved
 
             # --- Token Check and Chunking (if needed) ---
             token_size = get_token_size(markdown)
-            if on_url_status_update: on_url_status_update(url, "Processing", f"Checking token size ({token_size})")
+            if on_url_status_update: await on_url_status_update(url, "Processing", f"Checking token size ({token_size})")
             markdown_chunks = [markdown]
             num_chunks = 1
             if token_size > MAX_INPUT_TOKENS:
@@ -236,13 +263,13 @@ class NewsService:
                     markdown_chunks = self._get_chunks(markdown, num_chunks)
                     log_msg = f"Splitting markdown for {url} into {len(markdown_chunks)} chunks ({token_size} tokens)."
                     logger.info(log_msg)
-                    if on_url_status_update: on_url_status_update(url, "Processing", f"Splitting into {len(markdown_chunks)} chunks")
+                    if on_url_status_update: await on_url_status_update(url, "Processing", f"Splitting into {len(markdown_chunks)} chunks")
                 except Exception as e:
                     log_msg = f"Error splitting markdown for {url}: {e}. Processing as single chunk."
                     logger.error(log_msg, exc_info=True)
                     markdown_chunks = [markdown] # Fallback to single chunk
                     num_chunks = 1
-                    if on_url_status_update: on_url_status_update(url, "Processing", "Split failed, using single chunk")
+                    if on_url_status_update: await on_url_status_update(url, "Processing", "Split failed, using single chunk")
 
             # --- Process Chunks ---
             all_parsed_results_for_url = [] # Collect results from all chunks for this URL
@@ -254,8 +281,8 @@ class NewsService:
 
                 chunk_status_prefix = f"Chunk {i+1}/{num_chunks}"
                 status_msg_llm = f"{chunk_status_prefix} Extracting links..."
-                if on_url_status_update: on_url_status_update(url, "Extracting (LLM)", status_msg_llm)
-                if on_stream_chunk_update: on_stream_chunk_update(f"[INFO] {url} - {status_msg_llm}\n")
+                if on_url_status_update: await on_url_status_update(url, "Extracting (LLM)", status_msg_llm)
+                if on_stream_chunk_update: await on_stream_chunk_update(f"[INFO] {url} - {status_msg_llm}\n")
                 logger.info(f"Processing chunk {i+1}/{num_chunks} for {url} (Link Extraction)...")
 
                 # 1. Extract Links from Chunk
@@ -270,8 +297,8 @@ class NewsService:
                 if not links_str or not links_str.strip():
                     logger.warning(f"LLM returned no links for chunk {i+1}/{num_chunks} ({url}).")
                     status_msg = f"{chunk_status_prefix} No links found."
-                    if on_url_status_update: on_url_status_update(url, "Processing", status_msg)
-                    if on_stream_chunk_update: on_stream_chunk_update(f"[INFO] {url} - {status_msg}\n")
+                    if on_url_status_update: await on_url_status_update(url, "Processing", status_msg)
+                    if on_stream_chunk_update: await on_stream_chunk_update(f"[INFO] {url} - {status_msg}\n")
                     continue # Move to the next chunk
 
                 # 2. Crawl Extracted Links
@@ -281,8 +308,8 @@ class NewsService:
                     continue
 
                 status_msg_crawl = f"{chunk_status_prefix} Crawling {len(extracted_links)} extracted links..."
-                if on_url_status_update: on_url_status_update(url, "Crawling Links", status_msg_crawl)
-                if on_stream_chunk_update: on_stream_chunk_update(f"[INFO] {url} - {status_msg_crawl}\n")
+                if on_url_status_update: await on_url_status_update(url, "Crawling Links", status_msg_crawl)
+                if on_stream_chunk_update: await on_stream_chunk_update(f"[INFO] {url} - {status_msg_crawl}\n")
                 logger.info(f"Crawling {len(extracted_links)} extracted links for chunk {i+1}/{num_chunks} of {url}...")
 
                 crawler = AiohttpCrawler() # Use Aiohttp for sub-crawls
@@ -297,21 +324,21 @@ class NewsService:
                 except Exception as sub_crawl_err:
                      err_msg = f"{chunk_status_prefix} Error during sub-crawl: {sub_crawl_err}"
                      logger.error(err_msg, exc_info=True)
-                     if on_url_status_update: on_url_status_update(url, "Error", err_msg)
+                     if on_url_status_update: await on_url_status_update(url, "Error", err_msg)
                      # Decide whether to continue with next chunk or fail the whole URL? Let's continue for robustness.
                      continue
 
                 if not sub_crawl_results:
                     status_msg_no_content = f"{chunk_status_prefix} No content found from {len(extracted_links)} extracted links."
                     logger.warning(status_msg_no_content)
-                    if on_url_status_update: on_url_status_update(url, "Processing", status_msg_no_content)
+                    if on_url_status_update: await on_url_status_update(url, "Processing", status_msg_no_content)
                     continue
 
                 # 3. Analyze Crawled Content using Streaming LLM
                 status_msg_analyze = f"{chunk_status_prefix} Analyzing content from {len(sub_crawl_results)} links..."
-                if on_url_status_update: on_url_status_update(url, "Analyzing (LLM)", status_msg_analyze)
+                if on_url_status_update: await on_url_status_update(url, "Analyzing (LLM)", status_msg_analyze)
                 if on_stream_chunk_update:
-                    on_stream_chunk_update(f"---\n[INFO] {url} - {status_msg_analyze}\n---\n") # Add separators for stream clarity
+                    await on_stream_chunk_update(f"---\n[INFO] {url} - {status_msg_analyze}\n---\n") # Add separators for stream clarity
                 logger.info(f"Analyzing content from {len(sub_crawl_results)} links for chunk {i+1}/{num_chunks} of {url}...")
 
                 analysis_prompt = self.build_content_analysis_prompt(sub_crawl_results)
@@ -320,8 +347,8 @@ class NewsService:
                 if token_check_analysis > MAX_INPUT_TOKENS:
                      err_msg = f"{chunk_status_prefix} Analysis prompt too large ({token_check_analysis} tokens), skipping analysis."
                      logger.error(err_msg)
-                     if on_url_status_update: on_url_status_update(url, "Error", err_msg)
-                     if on_stream_chunk_update: on_stream_chunk_update(f"[ERROR] {url} - {err_msg}\n")
+                     if on_url_status_update: await on_url_status_update(url, "Error", err_msg)
+                     if on_stream_chunk_update: await on_stream_chunk_update(f"[ERROR] {url} - {err_msg}\n")
                      continue
 
                 # --- Use streaming ---
@@ -338,16 +365,16 @@ class NewsService:
                         async for chunk in stream_generator:
                             analysis_result_markdown += chunk
                             if on_stream_chunk_update:
-                                on_stream_chunk_update(chunk)
+                                await on_stream_chunk_update(chunk)
                     except Exception as stream_err:
                         err_msg = f"{chunk_status_prefix} Error during LLM stream: {stream_err}"
                         logger.error(err_msg, exc_info=True)
-                        if on_url_status_update: on_url_status_update(url, "Error", err_msg)
+                        if on_url_status_update: await on_url_status_update(url, "Error", err_msg)
                         analysis_result_markdown = "" # Reset on error
                 else:
                     # Stream initiation failed (already logged by llm_client)
                      status_msg = f"{chunk_status_prefix} Failed to start LLM analysis stream."
-                     if on_url_status_update: on_url_status_update(url, "Error", status_msg)
+                     if on_url_status_update: await on_url_status_update(url, "Error", status_msg)
                      analysis_result_markdown = ""
 
                 # 4. Parse and Collect Results for the Chunk
@@ -367,40 +394,40 @@ class NewsService:
                             ]
                             all_parsed_results_for_url.extend(items_to_add)
                             status_msg = f"{chunk_status_prefix} Parsed {len(parsed_items)} items."
-                            if on_url_status_update: on_url_status_update(url, "Processing", status_msg)
+                            if on_url_status_update: await on_url_status_update(url, "Processing", status_msg)
                         else:
                              status_msg = f"{chunk_status_prefix} LLM analysis completed but no items parsed."
                              logger.warning(status_msg)
-                             if on_url_status_update: on_url_status_update(url, "Processing", status_msg)
+                             if on_url_status_update: await on_url_status_update(url, "Processing", status_msg)
 
                     except Exception as parse_err:
                         err_msg = f"{chunk_status_prefix} Error parsing LLM analysis output: {parse_err}"
                         logger.error(err_msg, exc_info=True)
-                        if on_url_status_update: on_url_status_update(url, "Error", err_msg)
+                        if on_url_status_update: await on_url_status_update(url, "Error", err_msg)
 
             # --- End Chunk Loop ---
 
             # 5. Save All Collected Results for the URL
             if all_parsed_results_for_url:
                 status_msg_save = f"Saving {len(all_parsed_results_for_url)} items..."
-                if on_url_status_update: on_url_status_update(url, "Saving", status_msg_save)
+                if on_url_status_update: await on_url_status_update(url, "Saving", status_msg_save)
                 logger.info(f"Saving {len(all_parsed_results_for_url)} items for {url}...")
 
                 try:
-                    added_count, skipped_count = self._news_repo.add_batch(all_parsed_results_for_url)
+                    added_count, skipped_count = await self._news_repo.add_batch(all_parsed_results_for_url)
                     saved_item_count = added_count # Store the count for this URL
                     status_msg_saved = f"Complete - Saved {added_count}, Skipped {skipped_count}"
-                    if on_url_status_update: on_url_status_update(url, "Complete", status_msg_saved)
+                    if on_url_status_update: await on_url_status_update(url, "Complete", status_msg_saved)
                 except Exception as db_err:
                     err_msg = f"Database error saving items: {db_err}"
                     logger.error(err_msg, exc_info=True)
-                    if on_url_status_update: on_url_status_update(url, "Error", err_msg)
+                    if on_url_status_update: await on_url_status_update(url, "Error", err_msg)
                     # Return the DB error instead of count
                     return url, db_err
             else:
                  # No items parsed/collected from any chunk
                  status_msg_no_items = "Complete - No new items found/parsed."
-                 if on_url_status_update: on_url_status_update(url, "Complete", status_msg_no_items)
+                 if on_url_status_update: await on_url_status_update(url, "Complete", status_msg_no_items)
 
             return url, saved_item_count # Return successful count for this URL
 
@@ -408,7 +435,7 @@ class NewsService:
              err_msg = f"Critical error processing URL {url}: {e}"
              logger.error(err_msg, exc_info=True)
              # Report error via both callbacks if possible
-             if on_url_status_update: on_url_status_update(url, "Error", f"Processing Failed: {e}")
+             if on_url_status_update: await on_url_status_update(url, "Error", f"Processing Failed: {e}")
              return url, e # Return the exception
 
 
@@ -536,51 +563,51 @@ Now process the following articles. For each one, the original link is included 
     # get_all_sources, get_sources_by_category_id, add_source, etc.
     async def get_news_by_id(self, news_id: int) -> Optional[Dict[str, Any]]:
         """Retrieves a single news item by ID."""
-        return self._news_repo.get_by_id(news_id)
+        return await self._news_repo.get_by_id(news_id)
 
     async def get_all_news(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
         """Retrieves all news items with pagination."""
-        return self._news_repo.get_all(limit, offset)
+        return await self._news_repo.get_all(limit, offset)
 
     async def delete_news(self, news_id: int) -> bool:
         """Deletes a news item."""
-        return self._news_repo.delete(news_id)
+        return await self._news_repo.delete(news_id)
 
     async def clear_all_news(self) -> bool:
         """Clears all news data from the database."""
         # Add warning? This is destructive.
         logger.warning("Executing clear_all_news - All news data will be removed.")
-        return self._news_repo.clear_all()
+        return await self._news_repo.clear_all()
 
 
     # --- Category and Source Management ---
 
     async def get_all_categories(self) -> List[Tuple[int, str]]:
         """Gets all news categories."""
-        return self._category_repo.get_all()
+        return await self._category_repo.get_all()
 
     async def get_all_categories_with_counts(self) -> List[Tuple[int, str, int]]:
         """Gets categories with source counts."""
-        return self._category_repo.get_with_source_count()
+        return await self._category_repo.get_with_source_count()
 
     async def add_category(self, name: str) -> Optional[int]:
         """Adds a new category."""
-        return self._category_repo.add(name)
+        return await self._category_repo.add(name)
 
     async def update_category(self, category_id: int, new_name: str) -> bool:
         """Updates a category name."""
-        return self._category_repo.update(category_id, new_name)
+        return await self._category_repo.update(category_id, new_name)
 
     async def delete_category(self, category_id: int) -> bool:
         """Deletes a category and associated sources (due to DB cascade)."""
         logger.warning(
             f"Deleting category ID {category_id} will also delete associated news sources."
         )
-        return self._category_repo.delete(category_id)
+        return await self._category_repo.delete(category_id)
 
     async def get_all_sources(self) -> List[Dict[str, Any]]:
         """Gets all news sources with category names."""
-        rows = self._source_repo.get_all()
+        rows = await self._source_repo.get_all()
         return [
             {
                 "id": r[0], "name": r[1], "url": r[2],
@@ -591,12 +618,21 @@ Now process the following articles. For each one, the original link is included 
 
     async def get_sources_by_category_id(self, category_id: int) -> List[Dict[str, Any]]:
         """Gets sources for a specific category."""
-        rows = self._source_repo.get_by_category(category_id)
+        rows = await self._source_repo.get_by_category(category_id)
         return [{"id": r[0], "name": r[1], "url": r[2]} for r in rows]
     
     async def get_source_by_id(self, source_id: int) -> Optional[Dict[str, Any]]:
         """Gets a source by ID."""
-        return self._source_repo.get_by_id(source_id)
+        row = await self._source_repo.get_by_id(source_id)
+        if row:
+            return {
+                "id": row[0],
+                "name": row[1],
+                "url": row[2],
+                "category_id": row[3],
+                "category_name": row[4]
+            }
+        return None
 
     async def add_source(self, name: str, url: str, category_name: str) -> Optional[int]:
         """Adds a news source. Creates category if it doesn't exist."""
@@ -608,7 +644,7 @@ Now process the following articles. For each one, the original link is included 
                 return None
         else:
             category_id = category[0]
-        return self._source_repo.add(name, url, category_id)
+        return await self._source_repo.add(name, url, category_id)
 
     async def update_source(
         self, source_id: int, name: str, url: str, category_name: str
@@ -622,8 +658,18 @@ Now process the following articles. For each one, the original link is included 
                 return False
         else:
             category_id = category[0]
-        return self._source_repo.update(source_id, name, url, category_id)
+        return await self._source_repo.update(source_id, name, url, category_id)
 
     async def delete_source(self, source_id: int) -> bool:
         """Deletes a news source."""
-        return self._source_repo.delete(source_id)
+        return await self._source_repo.delete(source_id)
+    
+    async def get_category_by_id(self, category_id: int) -> Optional[Dict[str, Any]]:
+        """Gets a category by ID."""
+        row = await self._category_repo.get_by_id(category_id)
+        if row:
+            return {
+                "id": row[0],
+                "name": row[1]
+            }
+        return None

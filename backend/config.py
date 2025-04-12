@@ -11,12 +11,12 @@ import os
 import json
 import logging
 import sqlite3
+import aiosqlite
 from typing import Dict, Any, Optional
+
 from dotenv import load_dotenv
 
-# Load .env file (ensure there is a .env file in the project root directory)
 load_dotenv()
-
 logger = logging.getLogger(__name__)
 
 # --- Constants ---
@@ -46,26 +46,21 @@ class AppConfig:
     }
 
     def __init__(self):
-        """Initialize configuration"""
-        # Store persistent configuration loaded from DB
+        """Initialize configuration (Sync Load, Async Save support)"""
         self._persistent_config: Dict[str, Any] = self.DEFAULT_PERSISTENT_CONFIG.copy()
-        # Store sensitive configuration loaded from environment variables
         self._secrets: Dict[str, Optional[str]] = {}
 
-        # 1. Load environment variables (Secrets)
         self._load_secrets_from_env()
 
-        # 2. Determine data directory and database path (must be done before loading DB configuration)
-        self._data_dir = self._persistent_config[
-            CONFIG_KEY_DATA_DIR
-        ]  # Initial default value
-        self._ensure_data_dir()  # Ensure the directory exists
+        # Determine initial data directory (sync)
+        self._data_dir = self._persistent_config[CONFIG_KEY_DATA_DIR]
+        self._ensure_data_dir() # Sync check/create
         self._db_path = os.path.join(self._data_dir, DEFAULT_SQLITE_DB_NAME)
 
-        # 3. Load database configuration (will override default values, including data_dir)
-        self._load_from_db()
+        # Load from DB SYNCHRONOUSLY during init
+        self._load_from_db_sync()
 
-        # 4. Confirm data directory again (as it may have been overridden by DB configuration)
+        # Confirm final data directory (sync)
         self._data_dir = self._persistent_config[CONFIG_KEY_DATA_DIR]
         self._ensure_data_dir()
         self._db_path = os.path.join(self._data_dir, DEFAULT_SQLITE_DB_NAME)
@@ -98,59 +93,43 @@ class AppConfig:
             # May need to take alternative measures or exit
             raise
 
-    def _load_from_db(self) -> None:
-        """Load persistent configuration from the database"""
+    def _load_from_db_sync(self) -> None:
+        """Load persistent configuration from the database SYNCHRONOUSLY."""
+        # Uses standard sqlite3 for startup load before async loop starts
         if not os.path.exists(self._db_path):
-            logger.info(
-                "Database file does not exist, using default persistent config."
-            )
+            logger.info("Database file does not exist, using default persistent config.")
             return
 
         conn = None
         try:
-            conn = sqlite3.connect(self._db_path)
+            conn = sqlite3.connect(self._db_path) # Use sync connect
             cursor = conn.cursor()
-
-            cursor.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='system_config'"
-            )
+            # Check if table exists
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='system_config'")
             if not cursor.fetchone():
-                logger.info(
-                    "system_config table does not exist, using default persistent config."
-                )
+                logger.info("system_config table does not exist, using default persistent config.")
                 return
 
             cursor.execute("SELECT config_key, config_value FROM system_config")
             rows = cursor.fetchall()
-
             loaded_config = {}
             for key, value in rows:
-                if (
-                    key in self.DEFAULT_PERSISTENT_CONFIG
-                ):  # Only load predefined persistent configuration items
+                if key in self.DEFAULT_PERSISTENT_CONFIG:
                     try:
-                        # Attempt to parse the value as a JSON object
                         loaded_config[key] = json.loads(value)
                     except json.JSONDecodeError:
-                        # If not JSON, use the string value directly
                         loaded_config[key] = value
                 else:
-                    logger.warning(
-                        f"Ignoring unknown config key '{key}' from database."
-                    )
+                     logger.warning(f"Ignoring unknown config key '{key}' from database during sync load.")
 
-            # Update the configuration in memory, but do not overwrite keys not in the default values
             for key in self.DEFAULT_PERSISTENT_CONFIG:
-                if key in loaded_config:
+                 if key in loaded_config:
                     self._persistent_config[key] = loaded_config[key]
 
-            logger.info("Successfully loaded configuration from database.")
+            logger.info("Successfully loaded configuration from database (synchronously).")
 
         except sqlite3.Error as e:
-            logger.error(
-                f"Failed to load configuration from database '{self._db_path}': {e}",
-                exc_info=True,
-            )
+            logger.error(f"Failed to load configuration from database (sync) '{self._db_path}': {e}", exc_info=True)
         finally:
             if conn:
                 conn.close()
@@ -186,56 +165,53 @@ class AppConfig:
                 f"Attempted to set unknown or non-persistent config key: {key}"
             )
 
-    def save_persistent(self) -> bool:
+    async def save_persistent(self) -> bool:
         """
-        Save the persistent configuration in memory to the database
+        Save the persistent configuration in memory to the database ASYNCHRONOUSLY.
         """
+        from backend.db.connection import get_db
         conn = None
         try:
-            self._ensure_data_dir()  # Ensure the directory exists
-            conn = sqlite3.connect(self._db_path)
-            cursor = conn.cursor()
+            # Ensure directory exists (sync check is ok before async connect)
+            self._ensure_data_dir()
+            conn = await get_db() # Get async connection
 
-            cursor.execute(
+            # Ensure table exists (async execute)
+            await conn.execute(
                 """
-            CREATE TABLE IF NOT EXISTS system_config (
-                config_key TEXT PRIMARY KEY NOT NULL,
-                config_value TEXT NOT NULL,
-                description TEXT
-            )
-            """
+                CREATE TABLE IF NOT EXISTS system_config (
+                    config_key TEXT PRIMARY KEY NOT NULL,
+                    config_value TEXT NOT NULL,
+                    description TEXT
+                )
+                """
             )
 
             config_to_save = []
             for key, value in self._persistent_config.items():
-                # Convert the value to a JSON string for storage
                 try:
                     json_value = json.dumps(value, ensure_ascii=False)
                 except TypeError:
-                    json_value = str(value)  # Fallback to string
-
+                    json_value = str(value)
                 config_to_save.append((key, json_value))
 
-            # Use INSERT OR REPLACE (or ON CONFLICT UPDATE) to update or insert
-            cursor.executemany(
+            # Use async executemany and commit
+            await conn.executemany(
                 "INSERT OR REPLACE INTO system_config (config_key, config_value) VALUES (?, ?)",
                 config_to_save,
             )
+            await conn.commit()
 
-            conn.commit()
-            logger.info("Successfully saved persistent configuration to database.")
+            logger.info("Successfully saved persistent configuration to database (asynchronously).")
             return True
-        except sqlite3.Error as e:
-            logger.error(
-                f"Failed to save configuration to database '{self._db_path}': {e}",
-                exc_info=True,
-            )
+        except aiosqlite.Error as e:
+            logger.error(f"Failed to save configuration to database (async) '{self._db_path}': {e}", exc_info=True)
             if conn:
-                conn.rollback()  # Rollback changes
+                try:
+                    await conn.rollback() # Async rollback
+                except Exception as rb_err:
+                     logger.error(f"Async rollback failed after config save error: {rb_err}")
             return False
-        finally:
-            if conn:
-                conn.close()
 
     def reset_persistent_to_defaults(self) -> None:
         """Reset persistent configuration to default values (in memory)"""

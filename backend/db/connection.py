@@ -2,94 +2,83 @@
 # -*- coding: utf-8 -*-
 
 """
-Database connection management module
-Responsible for creating and managing SQLite database connections
-Uses singleton pattern to ensure connections are reused throughout the application lifecycle
+Database connection management module (using aiosqlite)
+Responsible for creating and managing async SQLite database connections
 """
 
 import os
 import logging
-import sqlite3
+import aiosqlite
 from typing import Optional
-import atexit
-from threading import Lock
-import time
-
-# Get paths from unified configuration
-from backend.config import get_config
+import asyncio # Needed for lock
 
 logger = logging.getLogger(__name__)
 
 
-class DatabaseConnectionManager:
+class AsyncDatabaseConnectionManager:
     """
-    Database connection management class, implements singleton pattern
+    Async Database connection management class
+    Manages a single async connection.
     """
-
     _instance = None
-    _lock = Lock()
+    _lock = asyncio.Lock() # Use asyncio lock
+    _conn: Optional[aiosqlite.Connection] = None
+    _db_path: Optional[str] = None
 
-    def __new__(cls):
+    # Using __await__ or an async factory might be cleaner,
+    # but keeping singleton pattern similar for now. Requires careful init.
+    @classmethod
+    async def get_instance(cls):
         if cls._instance is None:
-            with cls._lock:
+            async with cls._lock:
                 if cls._instance is None:
-                    logger.info("Creating new DatabaseConnectionManager instance.")
-                    cls._instance = super(DatabaseConnectionManager, cls).__new__(cls)
-                    # Ensure configuration is loaded before initializing instance variables
+                    from backend.config import get_config
+                    logger.info("Creating new AsyncDatabaseConnectionManager instance.")
+                    cls._instance = cls()
                     try:
                         app_config = get_config()
-                        cls._instance._sqlite_db_path = app_config.db_path
-                    except RuntimeError as e:
-                        logger.critical(
-                            f"Configuration not initialized before DB connection: {e}"
-                        )
-                        raise RuntimeError(
-                            "Cannot create DB connection: Config not ready."
-                        ) from e
-                    except AttributeError as e:
-                        logger.critical(
-                            f"AppConfig missing expected path attributes: {e}"
-                        )
-                        raise RuntimeError(
-                            "Cannot create DB connection: Config paths missing."
-                        ) from e
-
-                    cls._instance._sqlite_conn = None
-                    cls._instance._initialize()
-                    # Register cleanup function on program exit
-                    atexit.register(cls._instance._cleanup)
+                        cls._db_path = app_config.db_path
+                        await cls._instance._initialize()
+                    except Exception as e:
+                         cls._instance = None # Reset on failure
+                         logger.critical(f"Failed to initialize async DB manager: {e}", exc_info=True)
+                         raise RuntimeError("Cannot create async DB connection: Initialization failed.") from e
         return cls._instance
 
-    def _initialize(self):
-        """Initialize database connections and table structures"""
-        try:
-            logger.info(f"Initializing SQLite connection to: {self._sqlite_db_path}")
-            # Initialize SQLite connection
-            # check_same_thread=False is suitable for multi-threaded access, but be cautious with transaction management
-            self._sqlite_conn = sqlite3.connect(
-                self._sqlite_db_path, check_same_thread=False
-            )
-            self._create_sqlite_tables()  # Ensure table structures exist
+    async def _initialize(self):
+        """Initialize database connection and table structures asynchronously"""
+        if self._conn is None:
+            try:
+                logger.info(f"Initializing aiosqlite connection to: {self._db_path}")
+                # Ensure directory exists (sync is fine here during init)
+                os.makedirs(os.path.dirname(self._db_path), exist_ok=True)
 
-            logger.info("Database connections initialized successfully.")
-        except Exception as e:
-            logger.error(
-                f"Database connection initialization failed: {str(e)}", exc_info=True
-            )
-            self._cleanup()  # Clean up resources that may have been created
-            raise
+                # Initialize aiosqlite connection
+                self._conn = await aiosqlite.connect(self._db_path)
+                # Enable WAL mode for better concurrency (recommended)
+                await self._conn.execute("PRAGMA journal_mode=WAL;")
+                await self._conn.commit()
 
-    def _create_sqlite_tables(self):
-        """Create SQLite database tables (if they do not exist)"""
-        if not self._sqlite_conn:
-            logger.error("Cannot create tables, SQLite connection is not initialized.")
+                await self._create_sqlite_tables()  # Ensure table structures exist
+
+                logger.info("Async database connection initialized successfully.")
+            except Exception as e:
+                logger.error(
+                    f"Async database connection initialization failed: {str(e)}", exc_info=True
+                )
+                await self.close() # Clean up resources
+                raise
+
+    async def _create_sqlite_tables(self):
+        """Create SQLite database tables asynchronously (if they do not exist)"""
+        if not self._conn:
+            logger.error("Cannot create tables, aiosqlite connection is not initialized.")
             return
 
         try:
-            cursor = self._sqlite_conn.cursor()
-
+            # Use execute() for schema changes
             # News Category Table
-            cursor.execute(
+            await self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS news_category (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -97,9 +86,8 @@ class DatabaseConnectionManager:
                 )
                 """
             )
-
             # News Sources Table
-            cursor.execute(
+            await self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS news_sources (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -110,16 +98,14 @@ class DatabaseConnectionManager:
                 )
                 """
             )
-            # Add index for performance
-            cursor.execute(
+            await self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_news_sources_url ON news_sources (url)"
             )
-            cursor.execute(
+            await self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_news_sources_category_id ON news_sources (category_id)"
             )
-
             # News Table
-            cursor.execute(
+            await self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS news (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -137,16 +123,12 @@ class DatabaseConnectionManager:
                 );
                 """
             )
-            # Add indexes
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_news_link ON news (link)")
-            cursor.execute(
+            await self._conn.execute("CREATE INDEX IF NOT EXISTS idx_news_link ON news (link)")
+            await self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_news_date ON news (date)"
             )
-
-            # API Configuration Table (for storing API keys - consider security implications)
-            # Storing API keys directly in DB might not be the most secure method.
-            # Environment variables or a dedicated secrets manager are often preferred.
-            cursor.execute(
+            # API Configuration Table
+            await self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS api_config (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -157,9 +139,8 @@ class DatabaseConnectionManager:
                 )
                 """
             )
-
             # System Configuration Table
-            cursor.execute(
+            await self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS system_config (
                     config_key TEXT PRIMARY KEY NOT NULL,
@@ -168,83 +149,65 @@ class DatabaseConnectionManager:
                 )
                 """
             )
-
             # Q&A History Table
-            cursor.execute(
+            await self._conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS qa_history (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     question TEXT NOT NULL,
                     answer TEXT NOT NULL,
-                    context_ids TEXT,            -- Comma-separated string of related news IDs
+                    context_ids TEXT,
                     created_date TEXT NOT NULL
                 )
                 """
             )
-            # Add index
-            cursor.execute(
+            await self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_qa_history_created_date ON qa_history (created_date)"
             )
 
-            # Set journal mode to WAL for better concurrency
-            cursor.execute("PRAGMA journal_mode=WAL;")
+            await self._conn.commit()
+            logger.info("Async SQLite tables verified/created successfully.")
 
-            self._sqlite_conn.commit()
-            logger.info("SQLite tables verified/created successfully.")
+        except aiosqlite.Error as e:
+            logger.error(f"Error creating async SQLite tables: {e}", exc_info=True)
+            if self._conn:
+                try:
+                    await self._conn.rollback()
+                except aiosqlite.Error as rb_err:
+                     logger.error(f"Rollback failed after table creation error: {rb_err}")
+            raise
 
-        except sqlite3.Error as e:
-            logger.error(f"Error creating SQLite tables: {e}", exc_info=True)
-            if self._sqlite_conn:
-                self._sqlite_conn.rollback()
-            raise  # Re-raise the exception
-
-    def _cleanup(self):
-        """Clean up resources, close database connections"""
-        logger.info("Cleaning up database connections...")
-        if self._sqlite_conn:
+    async def close(self):
+        """Clean up resources, close database connection"""
+        logger.info("Closing async database connection...")
+        if self._conn:
             try:
-                self._sqlite_conn.close()
-                self._sqlite_conn = None
-                logger.info("SQLite connection closed.")
+                await self._conn.close()
+                self._conn = None
+                logger.info("aiosqlite connection closed.")
             except Exception as e:
                 logger.error(
-                    f"Error closing SQLite connection: {str(e)}", exc_info=True
+                    f"Error closing aiosqlite connection: {str(e)}", exc_info=True
                 )
+        # Reset instance for potential re-initialization if needed
+        AsyncDatabaseConnectionManager._instance = None
 
-    def get_sqlite_connection(self) -> sqlite3.Connection:
-        """Get SQLite database connection object"""
-        if self._sqlite_conn is None:
-            logger.error("SQLite connection is not available.")
+
+    async def get_connection(self) -> aiosqlite.Connection:
+        """Get the active aiosqlite connection object"""
+        if self._conn is None or not self._conn._running: # Check if connection is active
+            logger.warning("aiosqlite connection is not available or closed. Attempting to re-initialize.")
             # Attempt to re-initialize or raise an error
-            self._initialize()  # Try to reconnect
-            if self._sqlite_conn is None:
-                raise ConnectionError("Failed to establish SQLite connection.")
-        return self._sqlite_conn
+            await self._initialize() # Try to reconnect
+            if self._conn is None:
+                 raise ConnectionError("Failed to establish aiosqlite connection.")
+        return self._conn
 
 
-# --- Global database connection instance ---
-# Initialized in main.py
-_db_manager: Optional[DatabaseConnectionManager] = None
+# --- Global database connection instance and getter ---
+# We will initialize this during FastAPI startup using lifespan events
 
-
-def init_db_connection() -> DatabaseConnectionManager:
-    """Initialize global database connection manager"""
-    global _db_manager
-    if _db_manager is None:
-        _db_manager = DatabaseConnectionManager()
-    return _db_manager
-
-
-def get_db_connection_manager() -> DatabaseConnectionManager:
-    """Get global database connection manager instance"""
-    if _db_manager is None:
-        raise RuntimeError(
-            "Database connection not initialized. Call init_db_connection() first."
-        )
-    return _db_manager
-
-
-def get_db() -> sqlite3.Connection:
-    """Convenience function: Get SQLite connection"""
-    return get_db_connection_manager().get_sqlite_connection()
-
+async def get_db() -> aiosqlite.Connection:
+    """Convenience function: Get the global async SQLite connection"""
+    manager = await AsyncDatabaseConnectionManager.get_instance()
+    return await manager.get_connection()

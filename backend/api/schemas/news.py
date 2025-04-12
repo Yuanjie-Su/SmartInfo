@@ -14,7 +14,7 @@ class NewsSource(BaseModel):
     name: str
     url: str
     category_id: int
-    category_name: str # Added, as returned by repo get_all
+    category_name: str
 
     class Config:
         from_attributes = True # Use this for ORM mode in Pydantic v2

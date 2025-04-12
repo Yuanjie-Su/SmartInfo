@@ -23,22 +23,6 @@ from backend.api.websockets.connection_manager import connection_manager # Impor
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-# --- Helper Function (Consider moving to service if complex) ---
-async def _get_category_id_or_create(category_name: str, news_service: NewsService) -> int:
-    """Gets category ID by name, creates it if not found."""
-    category_id = await news_service.get_category_id_by_name(category_name) # Assumes service method exists
-    if category_id:
-        return category_id
-    else:
-        # Create category if it doesn't exist
-        new_id = await news_service.add_category(category_name) # Assumes service method exists
-        if new_id:
-            return new_id
-        else:
-            # Log the error in the service layer ideally
-            logger.error(f"Failed to get or create category '{category_name}' via service.")
-            raise HTTPException(status_code=500, detail=f"Failed to process category '{category_name}'")
-
 # --- Sources ---
 @router.get("/sources", response_model=List[NewsSource])
 async def get_sources(
@@ -66,7 +50,7 @@ async def get_source(
     news_service: NewsService = Depends(get_news_service)
 ):
     """Get a specific news source by ID."""
-    source = await news_service.get_source_by_id(source_id) # Assume service method exists and returns NewsSource or None
+    source = await news_service.get_source_by_id(source_id)
     if not source:
         raise HTTPException(status_code=404, detail="Source not found")
     return source
@@ -248,21 +232,6 @@ async def clear_news(
         return {"message": "All news items cleared successfully"}
     else:
          raise HTTPException(status_code=500, detail="Failed to clear news items.")
-
-
-# --- Search (Placeholder - Requires Service Implementation) ---
-@router.post("/search", response_model=List[NewsItem])
-async def search_news(
-    search_request: NewsSearchRequest, # Renamed variable for clarity
-    news_service: NewsService = Depends(get_news_service)
-):
-    """Search for news items (Placeholder - requires service implementation)."""
-    logger.warning("'/news/search' endpoint called but search logic is not implemented in the service layer.")
-    # result = await news_service.search_news(query=search_request.query, ...)
-    # return result
-    # For now, return empty or 501
-    # raise HTTPException(status_code=501, detail="Search functionality not implemented")
-    return []
 
 
 # --- Fetch News (Triggers async process) ---

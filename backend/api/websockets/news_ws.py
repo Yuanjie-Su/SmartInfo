@@ -1,117 +1,74 @@
+# backend/api/websockets/news_ws.py
 """
-WebSocket handlers for news-related operations.
+WebSocket handler for receiving news fetch progress updates.
 """
 
 import logging
-import json
 import uuid
-from typing import Dict, Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
 
-from backend.services.news_service import NewsService
-from backend.api.dependencies import get_news_service
-from backend.api.schemas.news import FetchNewsRequest, NewsProgressUpdate
+# Use the globally managed instance
 from backend.api.websockets.connection_manager import connection_manager
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+# Define the group name used by the news_router's fetch callbacks
+NEWS_FETCH_PROGRESS_GROUP = "news_fetch_progress"
 
-@router.websocket("/ws/news")
-async def news_websocket(
-    websocket: WebSocket, 
-    news_service: NewsService = Depends(get_news_service)
-):
+@router.websocket("/ws/news_progress")
+async def news_progress_websocket(websocket: WebSocket):
     """
-    WebSocket endpoint for news operations.
-    
-    Handles streaming updates for news fetching and analysis operations.
+    WebSocket endpoint for clients to connect and receive news fetch progress.
+
+    Clients connect here, join the 'news_fetch_progress' group, and listen
+    for messages broadcasted by the news fetching process triggered via the
+    HTTP POST /api/news/fetch endpoint.
+
+    Sends:
+    - {"type": "connection_established", "client_id": "..."}
+    - Messages broadcasted to NEWS_FETCH_PROGRESS_GROUP (types: "news_progress", "stream_chunk")
+    - {"type": "error", "message": "..."} (e.g., connection issues)
+
+    Receives:
+    - Optional client messages (e.g., ping, though none handled currently).
     """
     client_id = str(uuid.uuid4())
-    
+
     try:
-        await connection_manager.connect(websocket, client_id, group="news")
-        logger.info(f"News WebSocket connection established for client {client_id}")
-        
-        # Send initial connection confirmation
+        # Accept connection and add to the progress group
+        await connection_manager.connect(websocket, client_id, group=NEWS_FETCH_PROGRESS_GROUP)
+        logger.info(f"News Progress WebSocket client {client_id} connected and added to group '{NEWS_FETCH_PROGRESS_GROUP}'.")
+
+        # Send connection confirmation
         await connection_manager.send_personal_message(
-            {"type": "connection_established", "client_id": client_id}, 
+            {"type": "connection_established", "client_id": client_id},
             client_id
         )
-        
-        # Listen for messages from the client
+
+        # Keep the connection alive and listen for potential client messages (optional)
+        # This loop primarily keeps the connection open to receive broadcasts.
         while True:
+            # We aren't expecting specific commands here, just listening for broadcasts.
+            # receive_text() will raise WebSocketDisconnect if the client closes.
+            # You could add a timeout or periodic ping/pong if needed.
             data = await websocket.receive_text()
-            try:
-                message = json.loads(data)
-                command = message.get("command")
-                
-                if command == "fetch_news":
-                    # Parse fetch news request
-                    request_data = message.get("data", {})
-                    request = FetchNewsRequest(**request_data)
-                    
-                    # Create progress callback to send updates via WebSocket
-                    async def progress_callback(progress_data: Dict[str, Any]):
-                        update = NewsProgressUpdate(**progress_data)
-                        await connection_manager.send_personal_message(
-                            {"type": "news_progress", "data": update.dict()},
-                            client_id
-                        )
-                    
-                    # Start news fetching in background task
-                    await news_service.fetch_news_from_sources(
-                        source_ids=request.source_ids,
-                        max_articles_per_source=request.max_articles_per_source,
-                        progress_callback=progress_callback
-                    )
-                
-                elif command == "analyze_news":
-                    # Similar implementation for news analysis
-                    news_ids = message.get("data", {}).get("news_ids", [])
-                    analysis_type = message.get("data", {}).get("analysis_type", "summary")
-                    
-                    # Create progress callback for analysis
-                    async def analysis_progress_callback(progress_data: Dict[str, Any]):
-                        update = NewsProgressUpdate(**progress_data)
-                        await connection_manager.send_personal_message(
-                            {"type": "analysis_progress", "data": update.dict()},
-                            client_id
-                        )
-                    
-                    # Start analysis in background
-                    await news_service.analyze_news(
-                        news_ids=news_ids,
-                        analysis_type=analysis_type,
-                        progress_callback=analysis_progress_callback
-                    )
-                
-                else:
-                    logger.warning(f"Unknown command received: {command}")
-                    await connection_manager.send_personal_message(
-                        {"type": "error", "message": f"Unknown command: {command}"},
-                        client_id
-                    )
-            
-            except json.JSONDecodeError:
-                logger.error(f"Invalid JSON received from client {client_id}")
-                await connection_manager.send_personal_message(
-                    {"type": "error", "message": "Invalid JSON"},
-                    client_id
-                )
-            
-            except Exception as e:
-                logger.error(f"Error processing message from client {client_id}: {e}")
-                await connection_manager.send_personal_message(
-                    {"type": "error", "message": str(e)},
-                    client_id
-                )
-    
+            logger.debug(f"Received text from news progress client {client_id}: {data} (ignoring)")
+            # Optional: Handle ping or other client messages if defined
+            # if data == "ping": await websocket.send_text("pong")
+
+
     except WebSocketDisconnect:
-        logger.info(f"News WebSocket client {client_id} disconnected")
-    
+        logger.info(f"News Progress WebSocket client {client_id} disconnected.")
     except Exception as e:
-        logger.error(f"Error in news WebSocket connection: {e}")
-    
+        # Catch errors during connect or the listen loop
+        logger.error(f"Error in News Progress WebSocket for client {client_id}: {e}", exc_info=True)
+        # Attempt to inform client if websocket is still available
+        try:
+             await websocket.send_json({"type": "error", "message": "WebSocket connection error."})
+        except:
+             pass
     finally:
-        connection_manager.disconnect(client_id) 
+        # Ensure the client is removed from the manager and group on disconnect/error
+        connection_manager.disconnect(client_id)
+        logger.info(f"Cleaned up News Progress WebSocket connection for client {client_id}")

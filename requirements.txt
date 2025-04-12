@@ -36,3 +36,6 @@ openai
 
 # Markdownify
 markdownify
+
+# DeepSeek Tokenizer
+deepseek-tokenizer

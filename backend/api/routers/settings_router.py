@@ -15,7 +15,6 @@ from backend.api.schemas.settings import (
     ApiKeyCreate, # Use for POST and PUT body
     SystemConfig, # Use for listing configs and GET by key
     SystemConfigUpdate, # Use for PUT body
-    ApiConnectionTestResult # Use for test connection endpoint
 )
 
 router = APIRouter()

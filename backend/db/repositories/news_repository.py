@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-News Repository Module
+News Repository Module (Async)
 Provides data access operations for news articles
 """
 
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 class NewsRepository(BaseRepository):
     """Repository for news table operations."""
 
-    def add(self, item: Dict[str, Any]) -> Optional[int]:
+    async def add(self, item: Dict[str, Any]) -> Optional[int]:
         """Adds a single news item. Returns new ID or None if failed/exists."""
         # Basic validation
         if not item.get("title") or not item.get("link"):
@@ -28,7 +28,7 @@ class NewsRepository(BaseRepository):
             return None
 
         # Check for duplicates by link
-        if self.exists_by_link(item["link"]):
+        if await self.exists_by_link(item["link"]):
             logger.debug(f"News with link {item['link']} already exists, skipping.")
             return None
 
@@ -51,7 +51,7 @@ class NewsRepository(BaseRepository):
             item.get("date"),
         )
 
-        cursor = self._execute(query, params, commit=True)
+        cursor = await self._execute(query, params, commit=True)
         if cursor and cursor.lastrowid:
             logger.info(
                 f"Added news item '{item.get('title')}' with ID {cursor.lastrowid}."
@@ -59,14 +59,14 @@ class NewsRepository(BaseRepository):
             return cursor.lastrowid
         return None
 
-    def add_batch(self, items: List[Dict[str, Any]]) -> Tuple[int, int]:
+    async def add_batch(self, items: List[Dict[str, Any]]) -> Tuple[int, int]:
         """Adds multiple news items in a batch. Returns (success_count, skipped_count)."""
         if not items:
             return 0, 0
 
         params_list = []
         skipped_count = 0
-        processed_links = set(self.get_all_links())  # Get existing links efficiently
+        processed_links = set(await self.get_all_links())  # Get existing links efficiently
 
         for item in items:
             link = item.get("link")
@@ -100,68 +100,65 @@ class NewsRepository(BaseRepository):
                 summary, analysis, date
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
-        success_count = self._executemany(query, params_list, commit=True)
+        success_count = await self._executemany(query, params_list, commit=True)
 
         # Adjust skipped count if execute_many reported fewer inserts than expected (unlikely with IGNORE but possible)
-        # skipped_count = len(items) - success_count # More accurate way
         if success_count != len(params_list):
             logger.warning(
                 f"Expected to insert {len(params_list)} items, but DB reported {success_count}. Transaction might have partially failed or links existed."
             )
-            # Re-query might be needed for absolute accuracy, but this gives an indication.
-            # For simplicity, we return the calculated skipped_count and reported success_count.
 
         logger.info(f"Batch add news: {success_count} added, {skipped_count} skipped.")
         return success_count, skipped_count
 
-    def get_by_id(self, news_id: int) -> Optional[Dict[str, Any]]:
+    async def get_by_id(self, news_id: int) -> Optional[Dict[str, Any]]:
         """Gets a news item by its ID."""
         query = """
             SELECT id, title, link, source_name, category_name, source_id, category_id,
                    summary, analysis, date
             FROM news WHERE id = ?
         """
-        row = self._fetchone(query, (news_id,))
+        row = await self._fetchone(query, (news_id,))
         return self._row_to_dict(row) if row else None
 
-    def get_all(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+    async def get_all(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
         """Gets all news items with pagination."""
         query = """
              SELECT id, title, link, source_name, category_name, source_id, category_id,
                     summary, analysis, date
              FROM news ORDER BY date DESC, id DESC LIMIT ? OFFSET ?
          """
-        rows = self._fetchall(query, (limit, offset))
+        rows = await self._fetchall(query, (limit, offset))
         return [self._row_to_dict(row) for row in rows]
 
-    def delete(self, news_id: int) -> bool:
+    async def delete(self, news_id: int) -> bool:
         """Deletes a news item."""
         query = "DELETE FROM news WHERE id = ?"
-        cursor = self._execute(query, (news_id,), commit=True)
+        cursor = await self._execute(query, (news_id,), commit=True)
         deleted = cursor.rowcount > 0 if cursor else False
         if deleted:
             logger.info(f"Deleted news item ID {news_id}.")
         return deleted
 
-    def exists_by_link(self, link: str) -> bool:
+    async def exists_by_link(self, link: str) -> bool:
         """Checks if a news item exists by its link."""
         query = "SELECT 1 FROM news WHERE link = ? LIMIT 1"
-        return self._fetchone(query, (link,)) is not None
+        return await self._fetchone(query, (link,)) is not None
 
-    def get_all_links(self) -> List[str]:
+    async def get_all_links(self) -> List[str]:
         """Gets all unique links currently in the news table."""
         query = "SELECT link FROM news"
-        rows = self._fetchall(query)
+        rows = await self._fetchall(query)
         return [row[0] for row in rows]
 
-    def clear_all(self) -> bool:
+    async def clear_all(self) -> bool:
         """Deletes all news items from the table."""
         logger.warning("Attempting to clear all news data.")
         # Reset auto-increment separately if needed after delete
-        cursor_seq = self._execute(
+        cursor_seq = await self._execute(
             "DELETE FROM sqlite_sequence WHERE name='news'", commit=False
         )  # Commit handled by next query
-        cursor_del = self._execute("DELETE FROM news", commit=True)
+        cursor_del = await self._execute("DELETE FROM news", commit=True)
         cleared = cursor_del is not None
         if cleared:
             logger.info("Cleared all data from news table.")
