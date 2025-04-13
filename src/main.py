@@ -50,7 +50,6 @@ logging.basicConfig(
     ],
 )
 logger = logging.getLogger(__name__)
-logger.info("-------------------- Application Starting --------------------")
 
 
 def parse_args():
@@ -163,6 +162,7 @@ def run_gui(services: Dict[str, Any]):
 # --- Main Execution ---
 def main():
     """Application main entry point"""
+    logger.info("-------------------- Application Starting --------------------")
     args = parse_args()
     setup_logging(args.log_level)
 

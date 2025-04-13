@@ -6,7 +6,6 @@ News Management Tab
 Implements news retrieval, viewing, deletion and editing functionality (using Service Layer)
 """
 
-import datetime
 import logging
 import asyncio
 from typing import List, Dict, Optional, Tuple, Any, Callable
@@ -26,20 +25,19 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QApplication,
 )
-from PySide6.QtCore import Qt, QSortFilterProxyModel, Signal, Slot, QThreadPool, QObject, QMetaObject, Q_ARG
+from PySide6.QtCore import Qt, QSortFilterProxyModel, Signal, Slot, QThreadPool
 from PySide6.QtGui import QStandardItemModel, QStandardItem
 
 from src.services.news_service import NewsService
 from src.ui.async_runner import AsyncTaskRunner
-# Import the RENAMED popup class
-from src.ui.task_status_popup import TaskStatusPopup # <-- Import renamed class
+from src.ui.task_status_popup import TaskStatusPopup
 
 logger = logging.getLogger(__name__)
 
 
 class NewsTab(QWidget):
     """News Management Tab"""
-
+    stream_chunk_received = Signal(str)
     news_data_changed = Signal()
 
     def __init__(self, news_service: NewsService):
@@ -201,13 +199,7 @@ class NewsTab(QWidget):
                 source_item = QStandardItem(news.get("source_name", "N/A"))
                 category_item = QStandardItem(news.get("category_name", "N/A"))
                 date_str = news.get("date", "")
-                # Attempt to format date for sorting if possible, otherwise keep as string
-                try:
-                     dt = datetime.fromisoformat(date_str.replace('Z', '+00:00')) if date_str else None
-                     display_date = dt.strftime('%Y-%m-%d %H:%M') if dt else "N/A"
-                except ValueError:
-                     display_date = date_str[:16] if date_str else "N/A" # Fallback display
-                date_item = QStandardItem(display_date)
+                date_item = QStandardItem(date_str)
 
                 # Store ID in the first column's item data for retrieval
                 title_item.setData(news_id, Qt.ItemDataRole.UserRole)
@@ -339,13 +331,15 @@ class NewsTab(QWidget):
             else:
                 logger.info("Reusing existing TaskStatusPopup instance.")
 
-            # Clear the popup display before starting
+            # Connect the stream_chunk_received signal to the popup's append_log_message method
+            try:
+                self.stream_chunk_received.disconnect()
+            except RuntimeError:
+                pass # Signal has no connections
+            self.stream_chunk_received.connect(self.task_status_popup.append_log_message)
             self.task_status_popup.clear_display()
-            # Append an initial message
             self.task_status_popup.append_log_message(f"Starting fetch for {urls_to_fetch_count} URLs...\n")
-
-            self.show_status_button.setEnabled(True) # Enable show status button
-            # --- End Popup Handling ---
+            self.show_status_button.setEnabled(True)
 
             fetch_coro = self._news_service.fetch_news_from_sources
             fetch_args = ()
@@ -365,7 +359,7 @@ class NewsTab(QWidget):
             QThreadPool.globalInstance().start(self.fetch_runner)
             logger.info("Fetch task started in background. Status popup is available.")
             # Optionally show the popup automatically
-            # self._show_task_progress_window()
+            self._show_task_progress_window()
 
         except Exception as e:
             logger.error(f"Failed to initiate news fetch: {e}", exc_info=True)
@@ -475,11 +469,10 @@ class NewsTab(QWidget):
     def _handle_stream_chunk_update(self, chunk: str):
         """Slot to receive LLM stream chunks and update the popup's text area."""
         # logger.debug(f"Stream Chunk Received: {chunk[:50]}...") # Can be very verbose
-        if self.task_status_popup:
-            # Pass the chunk directly to the popup's append method
-            self.task_status_popup.append_log_message(chunk)
-        else:
-             logger.warning("Received stream chunk update but task status popup does not exist.")
+        try:
+            self.stream_chunk_received.emit(chunk)
+        except Exception as e:
+             logger.error(f"Error emitting stream chunk signal: {e}", exc_info=True)
 
 
     @Slot(object)

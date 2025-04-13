@@ -48,31 +48,28 @@ class TaskStatusPopup(QDialog):
 
     @Slot(str)
     def append_log_message(self, message: str):
-        """Appends a message (e.g., a stream chunk) to the log display."""
-        # Ensure this runs on the GUI thread
-        if QApplication.instance().thread() != self.thread():
-            # Use QueuedConnection for cross-thread signals/slots
-            QMetaObject.invokeMethod(self, "append_log_message", Qt.ConnectionType.QueuedConnection,
-                                     Q_ARG(str, message))
-            return
-
-        # Append the message - using insertPlainText might be safer if markdown rendering is basic
-        # Or append() if you expect simple text lines. Using insertHtml for flexibility.
-        # Note: Full markdown rendering in QTextEdit is limited.
-        # Consider converting markdown chunk to basic HTML if needed, or just display as text.
-        # For now, just appending the raw chunk.
-        cursor = self.log_display.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-        cursor.insertText(message) # Appends the text chunk
-        self.log_display.setTextCursor(cursor)
-        # self.log_display.ensureCursorVisible() # Auto-scroll to the bottom
+        """Appends a message to the log display."""
+        try:
+            # Move cursor to end and insert text
+            cursor = self.log_display.textCursor()
+            cursor.movePosition(cursor.MoveOperation.End)
+            cursor.insertText(message)
+            self.log_display.ensureCursorVisible() # Scroll to bottom
+        except Exception as e:
+            logger.error(f"Error updating task status popup display: {e}", exc_info=True)
 
     def clear_display(self):
         """Clears the log display and resets the state."""
-        # Ensure this runs on the GUI thread if called from elsewhere
+        try:
+            self.log_display.clear()
+            self.setWindowTitle("Task Status") # Reset title
+        except Exception as e:
+            logger.error(f"Error clearing task status popup display: {e}", exc_info=True)
+
+        # Ensure this runs on the GUI thread
         if QApplication.instance().thread() != self.thread():
-             QMetaObject.invokeMethod(self, "clear_display", Qt.ConnectionType.QueuedConnection)
-             return
+            QMetaObject.invokeMethod(self, "clear_display", Qt.ConnectionType.QueuedConnection)
+            return
         self.log_display.clear()
         self.setWindowTitle("Task Status") # Reset title
 
