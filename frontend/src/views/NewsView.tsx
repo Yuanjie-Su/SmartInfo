@@ -1,326 +1,266 @@
-import React, { useEffect, useState } from 'react';
-import {
-    Box,
-    Typography,
-    Paper,
-    Button,
-    TextField,
-    FormControl,
-    InputLabel,
-    Select,
-    MenuItem,
-    Card,
-    CardContent,
-    CardActions,
-    Grid,
-    IconButton,
-    SelectChangeEvent,
-    CircularProgress
-} from '@mui/material';
-import { DataGrid, GridColDef } from '@mui/x-data-grid';
-import RefreshIcon from '@mui/icons-material/Refresh';
-import SearchIcon from '@mui/icons-material/Search';
-import { useNewsStore } from '../store/newsStore';
-import WorkspaceProgressModal from '../components/WorkspaceProgressModal';
-import { NewsWebSocketClient } from '../services/websocket';
-import { useWebSocket } from '../hooks/useWebSocket';
-import { NewsWebSocketMessage } from '../types/news';
+// src/views/NewsView.tsx
+// This file contains the NewsView component, which displays a news feed with filtering and search capabilities.
+// It uses Zustand for state management and a WebSocket client for real-time updates.
 
+// 引入 React 相关的 hooks
+import React, { useEffect, useState, useCallback } from 'react';
+// 引入 MUI 组件库的常用组件
+import Box from '@mui/material/Box';
+import Button from '@mui/material/Button';
+import TextField from '@mui/material/TextField';
+import FormControl from '@mui/material/FormControl';
+import InputLabel from '@mui/material/InputLabel';
+import Select, { SelectChangeEvent } from '@mui/material/Select';
+import MenuItem from '@mui/material/MenuItem';
+import CircularProgress from '@mui/material/CircularProgress';
+import Alert from '@mui/material/Alert';
+import { DataGrid, GridColDef, GridRowSelectionModel } from '@mui/x-data-grid';
+// 引入自定义的 Zustand 状态管理 store
+import { useNewsStore } from '../store/newsStore';
+// 引入用于处理 WebSocket 的客户端
+import { NewsWebSocketClient } from '../services/websocket';
+// 引入获取新闻数据时显示进度的模态框组件
+import FetchProgressModal from '../components/FetchProgressModal';
+// MUI 的排版组件
+import Typography from '@mui/material/Typography';
+// lodash 中的防抖函数
+import debounce from 'lodash/debounce';
+// 引入类型定义
+import {
+    NewsItem,
+    NewsCategory,
+    NewsSource,
+    NewsFetchProgressUpdate,
+    NewsStreamChunkUpdate
+} from '../types/news';
+
+// 实例化一个 WebSocket 客户端对象
+const newsWsClient = new NewsWebSocketClient();
+
+// 定义主组件 NewsView，使用泛型指定为函数组件（React.FC）
 const NewsView: React.FC = () => {
-    // 状态管理
+    // 从 Zustand store 中获取状态和操作
     const {
         items,
         isLoading,
         error,
-        selectedItem,
         categories,
         sources,
         selectedCategory,
         selectedSource,
         searchQuery,
-        isProgressModalOpen,
-        progressData,
-        analysisChunks,
         fetchNewsItems,
         fetchCategories,
         fetchSources,
-        selectItem,
         setSelectedCategory,
         setSelectedSource,
         setSearchQuery,
         openProgressModal,
         closeProgressModal,
-        updateProgress,
-        addAnalysisChunk,
-        clearProgress
+        isProgressModalOpen,
+        fetchProgress: storeProgressData,
+        fetchStreamChunks: storeAnalysisChunks,
+        addProgressUpdate,
+        addStreamChunk,
+        clearFetchProgress,
+        selectItem
     } = useNewsStore();
 
-    // WebSocket客户端
-    const [wsClient] = useState(() => new NewsWebSocketClient());
-    const { connected, messages, sendMessage } = useWebSocket<NewsWebSocketMessage>(wsClient);
+    // 定义本地搜索状态和更新函数
+    const [localSearch, setLocalSearch] = useState(searchQuery); // localSearch：输入框绑定的值，立刻更新。
 
-    // 获取数据
+    // 使用 lodash 的防抖函数对搜索进行防抖处理
+    const debouncedSearch = useCallback(
+        debounce((query: string) => {
+            setSearchQuery(query);
+        }, 500),
+        [setSearchQuery]
+    );
+
+    // 在组件挂载时获取新闻分类和来源
     useEffect(() => {
-        fetchNewsItems();
         fetchCategories();
         fetchSources();
-    }, [fetchNewsItems, fetchCategories, fetchSources]);
+    }, [fetchCategories, fetchSources]);
 
-    // 处理WebSocket消息
+    // 在组件挂载时获取新闻数据
     useEffect(() => {
-        if (messages.length > 0) {
-            const lastMessage = messages[messages.length - 1];
+        fetchNewsItems(useNewsStore.getState().currentPage, useNewsStore.getState().pageSize);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selectedCategory, selectedSource, searchQuery]);
 
-            if (lastMessage.type === 'news_progress') {
-                updateProgress(lastMessage.data);
-            } else if (lastMessage.type === 'news_analysis_chunk') {
-                addAnalysisChunk(lastMessage.data);
-            }
-        }
-    }, [messages, updateProgress, addAnalysisChunk]);
-
-    // 处理筛选变化
-    const handleCategoryChange = (event: SelectChangeEvent) => {
-        setSelectedCategory(event.target.value);
-    };
-
-    const handleSourceChange = (event: SelectChangeEvent) => {
-        setSelectedSource(event.target.value);
-    };
-
-    const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-        setSearchQuery(event.target.value);
-    };
-
-    // 应用筛选器
-    const handleApplyFilters = () => {
-        fetchNewsItems(selectedCategory, selectedSource, searchQuery);
-    };
-
-    // 清除筛选器
-    const handleClearFilters = () => {
-        setSelectedCategory('');
-        setSelectedSource('');
-        setSearchQuery('');
-        fetchNewsItems('', '', '');
-    };
-
-    // 获取新闻
-    const handleFetchNews = () => {
-        // 打开进度模态窗口
-        openProgressModal();
-        clearProgress();
-
-        // 发送WebSocket请求
-        if (connected) {
-            sendMessage({
-                command: 'fetch_news',
-                data: {
-                    category: selectedCategory || undefined,
-                    source: selectedSource || undefined
+    // 在组件挂载时连接 WebSocket
+    useEffect(() => {
+        const connectWs = async () => {
+            if (!newsWsClient.isConnected()) {
+                try {
+                    await newsWsClient.connect();
+                    console.log('News WebSocket connected');
+                } catch (err) {
+                    console.error('News WebSocket connection failed:', err);
                 }
-            });
-        } else {
-            console.error('WebSocket未连接');
-        }
+            }
+        };
+        connectWs();
+
+        // 定义消息处理函数
+        const removeMsgHandler = newsWsClient.onMessage((message) => {
+            if (message.type === 'news_progress' && message.data) {
+                addProgressUpdate(message.data as NewsFetchProgressUpdate);
+                const progress = message.data as NewsFetchProgressUpdate;
+                if (progress.status === 'completed' || progress.status === 'failed') {
+                    fetchNewsItems();
+                }
+            } else if (message.type === 'stream_chunk' && message.data) {
+                addStreamChunk((message.data as NewsStreamChunkUpdate).chunk);
+            }
+        });
+
+        return () => {
+            removeMsgHandler();
+        };
+    }, [fetchNewsItems, addProgressUpdate, addStreamChunk]);
+
+    // 定义处理获取新闻点击事件的函数
+    const handleFetchNewsClick = () => {
+        clearFetchProgress();
+        openProgressModal();
+        newsWsClient.fetchNews({
+            category_id: selectedCategory || undefined,
+            source_id: selectedSource || undefined,
+        });
     };
 
-    // 表格列定义
-    const columns: GridColDef[] = [
-        { field: 'title', headerName: '标题', flex: 1 },
-        { field: 'source', headerName: '来源', width: 150 },
-        { field: 'category', headerName: '分类', width: 150 },
+    // 定义处理分类选择变化的函数
+    const handleCategoryChange = (event: SelectChangeEvent<number | string>) => {
+        const value = event.target.value;
+        setSelectedCategory(value === "" ? null : Number(value));
+    };
+
+    // 定义处理来源选择变化的函数
+    const handleSourceChange = (event: SelectChangeEvent<number | string>) => {
+        const value = event.target.value;
+        setSelectedSource(value === "" ? null : Number(value));
+    };
+
+    // 定义处理搜索变化的函数
+    const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+        setLocalSearch(event.target.value);
+        debouncedSearch(event.target.value);
+    };
+
+    // 定义处理行选择变化的函数
+    const handleRowSelection = (selectionModel: GridRowSelectionModel) => {
+        const selectedId = selectionModel[0] as number | undefined;
+        const selectedNewsItem = items.find(item => item.id === selectedId) || null;
+        selectItem(selectedNewsItem);
+    };
+
+    // 定义表格的列定义
+    const columns: GridColDef<NewsItem>[] = [
+        { field: 'title', headerName: 'Title', flex: 3, minWidth: 250 },
         {
-            field: 'published_at',
-            headerName: '发布时间',
-            width: 200,
-            valueFormatter: (params) => {
-                return new Date(params.value).toLocaleString();
-            }
-        }
+            field: 'category_name',
+            headerName: 'Category',
+            type: 'string',
+            flex: 1,
+            minWidth: 100,
+            valueGetter: (_, row) => String(row.category_name ?? 'N/A')
+        },
+        {
+            field: 'source_name',
+            headerName: 'Source',
+            type: 'string',
+            flex: 1,
+            minWidth: 100,
+            valueGetter: (_, row) => String(row.source_name ?? 'N/A')
+        },
+        {
+            field: 'date',
+            headerName: 'Date',
+            type: 'string',
+            flex: 1,
+            minWidth: 160,
+            valueGetter: (value: string) => value ? new Date(value) : null
+        },
     ];
 
+    // 定义最后一条进度更新
+    const lastProgressUpdate = storeProgressData.length > 0 ? storeProgressData[storeProgressData.length - 1] : null;
+
+    // 返回组件的 JSX 结构
     return (
         <Box sx={{ p: 3, height: '100%', display: 'flex', flexDirection: 'column' }}>
-            <Typography variant="h4" gutterBottom>新闻资讯</Typography>
-
-            {/* 筛选区 */}
-            <Paper sx={{ p: 2, mb: 2 }}>
-                <Grid container spacing={2} alignItems="center">
-                    <Grid item xs={12} sm={6} md={3}>
-                        <FormControl fullWidth size="small">
-                            <InputLabel>分类</InputLabel>
-                            <Select
-                                value={selectedCategory}
-                                label="分类"
-                                onChange={handleCategoryChange}
-                            >
-                                <MenuItem value="">全部</MenuItem>
-                                {categories.map((category) => (
-                                    <MenuItem key={category} value={category}>{category}</MenuItem>
-                                ))}
-                            </Select>
-                        </FormControl>
-                    </Grid>
-
-                    <Grid item xs={12} sm={6} md={3}>
-                        <FormControl fullWidth size="small">
-                            <InputLabel>来源</InputLabel>
-                            <Select
-                                value={selectedSource}
-                                label="来源"
-                                onChange={handleSourceChange}
-                            >
-                                <MenuItem value="">全部</MenuItem>
-                                {sources.map((source) => (
-                                    <MenuItem key={source} value={source}>{source}</MenuItem>
-                                ))}
-                            </Select>
-                        </FormControl>
-                    </Grid>
-
-                    <Grid item xs={12} sm={6} md={3}>
-                        <TextField
-                            fullWidth
-                            size="small"
-                            label="搜索"
-                            variant="outlined"
-                            value={searchQuery}
-                            onChange={handleSearchChange}
-                            InputProps={{
-                                endAdornment: (
-                                    <IconButton
-                                        size="small"
-                                        onClick={handleApplyFilters}
-                                        edge="end"
-                                    >
-                                        <SearchIcon />
-                                    </IconButton>
-                                ),
-                            }}
-                            onKeyPress={(e) => {
-                                if (e.key === 'Enter') {
-                                    handleApplyFilters();
-                                }
-                            }}
-                        />
-                    </Grid>
-
-                    <Grid item xs={12} sm={6} md={3}>
-                        <Box sx={{ display: 'flex', gap: 1 }}>
-                            <Button
-                                variant="outlined"
-                                onClick={handleApplyFilters}
-                                startIcon={<SearchIcon />}
-                            >
-                                筛选
-                            </Button>
-
-                            <Button
-                                color="secondary"
-                                onClick={handleClearFilters}
-                            >
-                                清除
-                            </Button>
-
-                            <Button
-                                color="primary"
-                                variant="contained"
-                                onClick={handleFetchNews}
-                                disabled={!connected}
-                            >
-                                获取资讯
-                            </Button>
-                        </Box>
-                    </Grid>
-                </Grid>
-            </Paper>
-
-            {/* 主内容区 */}
-            <Box sx={{ display: 'flex', flexGrow: 1, gap: 2, height: 'calc(100% - 180px)' }}>
-                {/* 新闻列表 */}
-                <Box sx={{ flexGrow: 1, height: '100%' }}>
-                    <DataGrid
-                        rows={items}
-                        columns={columns}
-                        loading={isLoading}
-                        initialState={{
-                            pagination: {
-                                paginationModel: { page: 0, pageSize: 10 },
-                            },
-                        }}
-                        pageSizeOptions={[5, 10, 20]}
-                        onRowClick={(params) => selectItem(params.row)}
-                        autoHeight={false}
-                        sx={{ height: '100%' }}
-                        getRowClassName={(params) =>
-                            params.id === selectedItem?.id ? 'selected-row' : ''
-                        }
-                    />
-                </Box>
-
-                {/* 预览区 */}
-                <Card sx={{ width: '40%', overflow: 'auto', display: { xs: 'none', md: 'flex' }, flexDirection: 'column' }}>
-                    {selectedItem ? (
-                        <>
-                            <CardContent sx={{ flexGrow: 1, overflow: 'auto' }}>
-                                <Typography variant="h6">{selectedItem.title}</Typography>
-                                <Typography variant="caption" color="text.secondary" display="block" gutterBottom>
-                                    {new Date(selectedItem.published_at).toLocaleString()} · {selectedItem.source} · {selectedItem.category}
-                                </Typography>
-                                <Typography variant="subtitle1" sx={{ mt: 2 }}>摘要</Typography>
-                                <Typography variant="body2" paragraph>
-                                    {selectedItem.summary}
-                                </Typography>
-                                {selectedItem.analysis && (
-                                    <>
-                                        <Typography variant="subtitle1">分析</Typography>
-                                        <Box sx={{ mt: 1, p: 1, bgcolor: '#f5f5f5', borderRadius: 1 }}>
-                                            <Typography variant="body2">
-                                                {selectedItem.analysis}
-                                            </Typography>
-                                        </Box>
-                                    </>
-                                )}
-                            </CardContent>
-                            <CardActions>
-                                <Button
-                                    size="small"
-                                    href={selectedItem.url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                >
-                                    查看原文
-                                </Button>
-                            </CardActions>
-                        </>
-                    ) : (
-                        <CardContent sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
-                            <Typography variant="body2" color="text.secondary">
-                                选择一条新闻查看详情
-                            </Typography>
-                        </CardContent>
-                    )}
-                </Card>
+            <Typography variant="h5" gutterBottom>News Feed</Typography>
+            <Box sx={{ display: 'flex', gap: 2, mb: 2, flexWrap: 'wrap' }}>
+                <Button variant="contained" onClick={handleFetchNewsClick} disabled={isProgressModalOpen}>
+                    Fetch Latest News
+                </Button>
+                <FormControl sx={{ minWidth: 150 }}>
+                    <InputLabel id="category-select-label">Category</InputLabel>
+                    <Select<number | string>
+                        labelId="category-select-label"
+                        id="category-select"
+                        value={selectedCategory ?? ""}
+                        label="Category"
+                        onChange={handleCategoryChange}
+                    >
+                        <MenuItem value=""><em>All Categories</em></MenuItem>
+                        {categories.map((cat: NewsCategory) => (
+                            <MenuItem key={cat.id} value={cat.id}>{cat.name}</MenuItem>
+                        ))}
+                    </Select>
+                </FormControl>
+                <FormControl sx={{ minWidth: 150 }}>
+                    <InputLabel id="source-select-label">Source</InputLabel>
+                    <Select<number | string>
+                        labelId="source-select-label"
+                        id="source-select"
+                        value={selectedSource ?? ""}
+                        label="Source"
+                        onChange={handleSourceChange}
+                    >
+                        <MenuItem value=""><em>All Sources</em></MenuItem>
+                        {sources.map((src: NewsSource) => (
+                            <MenuItem key={src.id} value={src.id}>{src.name}</MenuItem>
+                        ))}
+                    </Select>
+                </FormControl>
+                <TextField
+                    label="Search News"
+                    variant="outlined"
+                    value={localSearch}
+                    onChange={handleSearchChange}
+                    sx={{ flexGrow: 1, minWidth: 200 }}
+                />
             </Box>
 
-            {/* 进度模态窗口 */}
-            <WorkspaceProgressModal
-                open={isProgressModalOpen}
-                onClose={closeProgressModal}
-                title="获取资讯进度"
-                progress={progressData}
-                markdownContent={analysisChunks}
-            />
+            {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
 
-            {/* 错误提示 */}
-            {error && (
-                <Typography color="error" sx={{ mt: 2 }}>
-                    {error}
-                </Typography>
-            )}
+            <Box sx={{ flexGrow: 1, height: 'calc(100% - 150px)' }}>
+                <DataGrid<NewsItem>
+                    rows={items}
+                    columns={columns}
+                    initialState={{
+                        pagination: { paginationModel: { pageSize: 25 } },
+                    }}
+                    pageSizeOptions={[10, 25, 50, 100]}
+                    rowSelectionModel={useNewsStore.getState().selectedItem?.id ? [useNewsStore.getState().selectedItem!.id] : []}
+                    onRowSelectionModelChange={handleRowSelection}
+                    loading={isLoading && !isProgressModalOpen}
+                    sx={{ '--DataGrid-overlayHeight': '300px' }}
+                    getRowId={(row) => row.id}
+                />
+            </Box>
+
+            <FetchProgressModal
+                open={isProgressModalOpen}
+                progressData={lastProgressUpdate}
+                analysisText={storeAnalysisChunks.join('')}
+                onClose={closeProgressModal}
+            />
         </Box>
     );
 };
 
-export default NewsView; 
+export default NewsView;

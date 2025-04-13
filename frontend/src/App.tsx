@@ -1,50 +1,55 @@
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
-import { invoke } from "@tauri-apps/api/core";
-import "./App.css";
+// src/App.tsx
+import React, { useState } from 'react';
+import { Routes, Route, Navigate } from 'react-router-dom';
+import Box from '@mui/material/Box';
+import CssBaseline from '@mui/material/CssBaseline'; // Optional: for baseline styles
+import SideNav from './components/SideNav';
+import NewsView from './views/NewsView';
+import ChatView from './views/ChatView';
+import SettingsView from './views/SettingsView'; // Import the settings view
 
 function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+  // State to control the main content view, could also use router path
+  const [currentView, setCurrentView] = useState<'news' | 'chat'>('news');
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
-  }
+  const handleNavigation = (view: 'news' | 'chat') => {
+    setCurrentView(view);
+  };
 
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vitejs.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://reactjs.org" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
+    <>
+      {/* Use Routes to handle different windows/views */}
+      <Routes>
+        {/* Main application window layout */}
+        <Route
+          path="/"
+          element={
+            <Box sx={{ display: 'flex', height: '100vh' }}>
+              <CssBaseline /> {/* Apply baseline styles */}
+              <SideNav onNavigate={handleNavigation} />
+              <Box
+                component="main"
+                sx={{
+                  flexGrow: 1,
+                  // bgcolor: 'background.default', // Optional background color
+                  overflow: 'auto', // Ensure content panel can scroll if needed
+                  height: '100vh', // Make sure it takes full height
+                }}
+              >
+                {/* Render content based on state */}
+                {currentView === 'news' && <NewsView />}
+                {currentView === 'chat' && <ChatView />}
+              </Box>
+            </Box>
+          }
         />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-    </main>
+        {/* Route for the settings page content (opened in a new window) */}
+        <Route path="/settings" element={<SettingsView />} />
+
+        {/* Optional: Redirect unknown paths to home */}
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </>
   );
 }
 

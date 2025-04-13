@@ -1,33 +1,64 @@
-export interface ApiKey {
-    id: string;
-    service: string;
-    key: string;
-    created_at: string;
-    updated_at: string;
+// temp/frontend/src/types/settings.ts
+// Aligned with backend/api/schemas/settings.py
+
+/**
+ * Represents information about an API key (for listing).
+ * Matches backend schema: ApiKeyInfo
+ */
+export interface ApiKeyInfo {
+    api_name: string;
+    created_date: string;
+    modified_date: string;
 }
 
+/**
+ * Represents the structure for creating/updating an API key via API.
+ * Matches backend schema: ApiKeyCreate
+ */
 export interface ApiKeyCreate {
-    service: string;
-    key: string;
+    api_name: string;
+    api_key: string;
 }
 
-export interface ApiKeyUpdate {
-    key: string;
+/**
+ * Represents the response structure when fetching a single API key's value.
+ * Matches backend GET /api/settings/api-keys/{api_name} response.
+ */
+export interface ApiKeyGetResponse {
+    api_key: string | null;
 }
 
+/**
+ * Represents a single system configuration item.
+ * Matches backend schema: SystemConfig
+ */
 export interface SystemConfig {
-    id: string;
-    key: string;
-    value: any;
-    created_at: string;
-    updated_at: string;
+    config_key: string;
+    config_value: any; // Value can be diverse types (string, number, boolean, object)
+    // Optional: Add description if the backend sends it and frontend needs it
+    description?: string | null;
 }
 
-export interface SystemConfigCreate {
-    key: string;
-    value: any;
-}
-
+/**
+ * Represents the structure for updating a system configuration item via API.
+ * Matches backend schema: SystemConfigUpdate
+ */
 export interface SystemConfigUpdate {
-    value: any;
-} 
+    config_value: any;
+}
+
+/**
+ * Represents the structure for creating a system configuration item (if needed).
+ * Backend currently uses PUT for upsert, but this can be useful for frontend forms.
+ */
+export interface SystemConfigCreate {
+    config_key: string;
+    config_value: any;
+    description?: string | null; // Optional description on creation
+}
+
+/**
+ * Represents the structure for the response when getting all system configs.
+ * Matches backend GET /api/settings/config response.
+ */
+export type AllSystemConfigs = Record<string, any>;
