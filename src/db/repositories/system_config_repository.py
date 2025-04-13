@@ -8,6 +8,7 @@ System Configuration Repository Module
 import logging
 from typing import Dict, Optional
 
+from src.db.schema_constants import SYSTEM_CONFIG_TABLE
 from .base_repository import BaseRepository
 
 logger = logging.getLogger(__name__)
@@ -17,7 +18,7 @@ class SystemConfigRepository(BaseRepository):
 
     def get_config(self, key: str) -> Optional[str]:
         """Gets a system config value by key."""
-        query = "SELECT config_value FROM system_config WHERE config_key = ?"
+        query = f"SELECT config_value FROM {SYSTEM_CONFIG_TABLE} WHERE config_key = ?"
         result = self._fetchone(query, (key,))
         return result[0] if result else None
 
@@ -25,13 +26,14 @@ class SystemConfigRepository(BaseRepository):
         self, key: str, value: str, description: Optional[str] = None
     ) -> bool:
         """Saves or updates a system config value."""
-        query = """
-             INSERT INTO system_config (config_key, config_value, description)
-             VALUES (?, ?, ?)
-             ON CONFLICT(config_key) DO UPDATE SET
-                 config_value = excluded.config_value,
-                 description = COALESCE(excluded.description, description)
-         """
+        query = f"""
+            INSERT INTO {SYSTEM_CONFIG_TABLE} (config_key, config_value, description) 
+            VALUES (?, ?, ?) 
+            ON CONFLICT(config_key) 
+            DO UPDATE SET 
+                config_value = excluded.config_value, 
+                description = COALESCE(excluded.description, description)
+        """
         cursor = self._execute(query, (key, value, description), commit=True)
         saved = cursor is not None
         if saved:
@@ -40,13 +42,13 @@ class SystemConfigRepository(BaseRepository):
 
     def get_all_configs(self) -> Dict[str, str]:
         """Gets all system configurations."""
-        query = "SELECT config_key, config_value FROM system_config"
+        query = f"SELECT config_key, config_value FROM {SYSTEM_CONFIG_TABLE}"
         rows = self._fetchall(query)
         return {row[0]: row[1] for row in rows}
 
     def delete_config(self, key: str) -> bool:
         """Deletes a system config key."""
-        query = "DELETE FROM system_config WHERE config_key = ?"
+        query = f"DELETE FROM {SYSTEM_CONFIG_TABLE} WHERE config_key = ?"
         cursor = self._execute(query, (key,), commit=True)
         deleted = cursor.rowcount > 0 if cursor else False
         if deleted:
@@ -56,8 +58,8 @@ class SystemConfigRepository(BaseRepository):
     def delete_all(self) -> bool:
         """Deletes all system config keys."""
         logger.warning("Attempting to clear all system configuration.")
-        cursor = self._execute("DELETE FROM system_config", commit=True)
+        cursor = self._execute(f"DELETE FROM {SYSTEM_CONFIG_TABLE}", commit=True)
         cleared = cursor is not None
         if cleared:
-            logger.info("Cleared all data from system_config table.")
+            logger.info(f"Cleared all data from {SYSTEM_CONFIG_TABLE} table.")
         return cleared 

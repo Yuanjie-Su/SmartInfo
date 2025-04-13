@@ -17,6 +17,14 @@ import time
 
 # Get paths from unified configuration
 from src.config import get_config
+from src.db.schema_constants import (
+    NEWS_CATEGORY_TABLE,
+    NEWS_SOURCES_TABLE,
+    NEWS_TABLE,
+    API_CONFIG_TABLE,
+    SYSTEM_CONFIG_TABLE,
+    QA_HISTORY_TABLE
+)
 
 logger = logging.getLogger(__name__)
 
@@ -90,38 +98,33 @@ class DatabaseConnectionManager:
 
             # News Category Table
             cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS news_category (
+                f"CREATE TABLE IF NOT EXISTS {NEWS_CATEGORY_TABLE} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT NOT NULL UNIQUE
-                )
-                """
+                )"
             )
 
             # News Sources Table
             cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS news_sources (
+                f"CREATE TABLE IF NOT EXISTS {NEWS_SOURCES_TABLE} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT NOT NULL,
                     url TEXT NOT NULL UNIQUE,
                     category_id INTEGER NOT NULL,
-                    FOREIGN KEY (category_id) REFERENCES news_category(id) ON DELETE CASCADE
-                )
-                """
+                    FOREIGN KEY (category_id) REFERENCES {NEWS_CATEGORY_TABLE}(id) ON DELETE CASCADE
+                )"
             )
             # Add index for performance
             cursor.execute(
-                "CREATE INDEX IF NOT EXISTS idx_news_sources_url ON news_sources (url)"
+                f"CREATE INDEX IF NOT EXISTS idx_news_sources_url ON {NEWS_SOURCES_TABLE} (url)"
             )
             cursor.execute(
-                "CREATE INDEX IF NOT EXISTS idx_news_sources_category_id ON news_sources (category_id)"
+                f"CREATE INDEX IF NOT EXISTS idx_news_sources_category_id ON {NEWS_SOURCES_TABLE} (category_id)"
             )
 
             # News Table
             cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS news (
+                f"CREATE TABLE IF NOT EXISTS {NEWS_TABLE} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     title TEXT NOT NULL,
                     link TEXT NOT NULL UNIQUE,
@@ -132,58 +135,49 @@ class DatabaseConnectionManager:
                     summary TEXT,
                     analysis TEXT,
                     date TEXT,
-                    FOREIGN KEY (source_id) REFERENCES news_sources(id) ON DELETE SET NULL,
-                    FOREIGN KEY (category_id) REFERENCES news_category(id) ON DELETE SET NULL
-                );
-                """
+                    FOREIGN KEY (source_id) REFERENCES {NEWS_SOURCES_TABLE}(id) ON DELETE SET NULL,
+                    FOREIGN KEY (category_id) REFERENCES {NEWS_CATEGORY_TABLE}(id) ON DELETE SET NULL
+                )"
             )
             # Add indexes
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_news_link ON news (link)")
-            cursor.execute(
-                "CREATE INDEX IF NOT EXISTS idx_news_date ON news (date)"
-            )
+            cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_news_link ON {NEWS_TABLE} (link)")
+            cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_news_date ON {NEWS_TABLE} (date)")
 
             # API Configuration Table (for storing API keys - consider security implications)
             # Storing API keys directly in DB might not be the most secure method.
             # Environment variables or a dedicated secrets manager are often preferred.
             cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS api_config (
+                f"CREATE TABLE IF NOT EXISTS {API_CONFIG_TABLE} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     api_name TEXT NOT NULL UNIQUE,
                     api_key TEXT NOT NULL,
                     created_date TEXT NOT NULL,
                     modified_date TEXT NOT NULL
-                )
-                """
+                )"
             )
 
             # System Configuration Table
             cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS system_config (
+                f"CREATE TABLE IF NOT EXISTS {SYSTEM_CONFIG_TABLE} (
                     config_key TEXT PRIMARY KEY NOT NULL,
                     config_value TEXT NOT NULL,
                     description TEXT
-                )
-                """
+                )"
             )
 
             # Q&A History Table
             cursor.execute(
-                """
-                CREATE TABLE IF NOT EXISTS qa_history (
+                f"CREATE TABLE IF NOT EXISTS {QA_HISTORY_TABLE} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     question TEXT NOT NULL,
                     answer TEXT NOT NULL,
-                    context_ids TEXT,            -- Comma-separated string of related news IDs
+                    context_ids TEXT,
                     created_date TEXT NOT NULL
-                )
-                """
+                )"
             )
             # Add index
             cursor.execute(
-                "CREATE INDEX IF NOT EXISTS idx_qa_history_created_date ON qa_history (created_date)"
+                f"CREATE INDEX IF NOT EXISTS idx_qa_history_created_date ON {QA_HISTORY_TABLE} (created_date)"
             )
 
             # Set journal mode to WAL for better concurrency

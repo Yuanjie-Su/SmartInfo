@@ -10,6 +10,7 @@ import logging
 from typing import List, Dict, Optional, Tuple, Any
 from datetime import datetime
 
+from src.db.schema_constants import NEWS_TABLE
 from .base_repository import BaseRepository
 
 logger = logging.getLogger(__name__)
@@ -33,8 +34,8 @@ class NewsRepository(BaseRepository):
             return None
 
         # Prepare data
-        query = """
-            INSERT INTO news (
+        query = f"""
+            INSERT INTO {NEWS_TABLE} (
                 title, link, source_name, category_name, source_id, category_id,
                 summary, analysis, date
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -94,8 +95,8 @@ class NewsRepository(BaseRepository):
         if not params_list:
             return 0, skipped_count
 
-        query = """
-            INSERT INTO news (
+        query = f"""
+            INSERT INTO {NEWS_TABLE} (
                 title, link, source_name, category_name, source_id, category_id,
                 summary, analysis, date
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -116,27 +117,27 @@ class NewsRepository(BaseRepository):
 
     def get_by_id(self, news_id: int) -> Optional[Dict[str, Any]]:
         """Gets a news item by its ID."""
-        query = """
+        query = f"""
             SELECT id, title, link, source_name, category_name, source_id, category_id,
                    summary, analysis, date
-            FROM news WHERE id = ?
+            FROM {NEWS_TABLE} WHERE id = ?
         """
         row = self._fetchone(query, (news_id,))
         return self._row_to_dict(row) if row else None
 
     def get_all(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
         """Gets all news items with pagination."""
-        query = """
+        query = f"""
              SELECT id, title, link, source_name, category_name, source_id, category_id,
                     summary, analysis, date
-             FROM news ORDER BY date DESC, id DESC LIMIT ? OFFSET ?
+             FROM {NEWS_TABLE} ORDER BY date DESC, id DESC LIMIT ? OFFSET ?
          """
         rows = self._fetchall(query, (limit, offset))
         return [self._row_to_dict(row) for row in rows]
 
     def delete(self, news_id: int) -> bool:
         """Deletes a news item."""
-        query = "DELETE FROM news WHERE id = ?"
+        query = f"DELETE FROM {NEWS_TABLE} WHERE id = ?"
         cursor = self._execute(query, (news_id,), commit=True)
         deleted = cursor.rowcount > 0 if cursor else False
         if deleted:
@@ -145,12 +146,12 @@ class NewsRepository(BaseRepository):
 
     def exists_by_link(self, link: str) -> bool:
         """Checks if a news item exists by its link."""
-        query = "SELECT 1 FROM news WHERE link = ? LIMIT 1"
+        query = f"SELECT 1 FROM {NEWS_TABLE} WHERE link = ? LIMIT 1"
         return self._fetchone(query, (link,)) is not None
 
     def get_all_links(self) -> List[str]:
         """Gets all unique links currently in the news table."""
-        query = "SELECT link FROM news"
+        query = f"SELECT link FROM {NEWS_TABLE}"
         rows = self._fetchall(query)
         return [row[0] for row in rows]
 
@@ -159,9 +160,9 @@ class NewsRepository(BaseRepository):
         logger.warning("Attempting to clear all news data.")
         # Reset auto-increment separately if needed after delete
         cursor_seq = self._execute(
-            "DELETE FROM sqlite_sequence WHERE name='news'", commit=False
+            f"DELETE FROM sqlite_sequence WHERE name='{NEWS_TABLE}'", commit=False
         )  # Commit handled by next query
-        cursor_del = self._execute("DELETE FROM news", commit=True)
+        cursor_del = self._execute(f"DELETE FROM {NEWS_TABLE}", commit=True)
         cleared = cursor_del is not None
         if cleared:
             logger.info("Cleared all data from news table.")
