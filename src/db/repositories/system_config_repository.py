@@ -58,8 +58,11 @@ class SystemConfigRepository(BaseRepository):
     def delete_all(self) -> bool:
         """Deletes all system config keys."""
         logger.warning("Attempting to clear all system configuration.")
-        cursor = self._execute(f"DELETE FROM {SYSTEM_CONFIG_TABLE}", commit=True)
-        cleared = cursor is not None
+        cursor_del = self._execute(f"DELETE FROM {SYSTEM_CONFIG_TABLE}", commit=False)
+        cursor_seq = self._execute(f"DELETE FROM sqlite_sequence WHERE name='{SYSTEM_CONFIG_TABLE}'", commit=True)
+        cleared = cursor_del is not None and cursor_seq is not None
         if cleared:
             logger.info(f"Cleared all data from {SYSTEM_CONFIG_TABLE} table.")
+        else:
+            logger.error(f"Failed to clear system configuration from {SYSTEM_CONFIG_TABLE}.")
         return cleared 

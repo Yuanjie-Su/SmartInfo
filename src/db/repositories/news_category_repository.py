@@ -62,6 +62,17 @@ class NewsCategoryRepository(BaseRepository):
         if deleted:
             logger.info(f"Deleted category ID {category_id} (cascade may apply).")
         return deleted
+    
+    def delete_all(self) -> bool:
+        """Deletes all news categories."""
+        cursor_del = self._execute(f"DELETE FROM {NEWS_CATEGORY_TABLE}", commit=False)
+        cursor_seq = self._execute(f"DELETE FROM sqlite_sequence WHERE name='{NEWS_CATEGORY_TABLE}'", commit=True)
+        deleted = cursor_del is not None and cursor_seq is not None
+        if deleted:
+            logger.info(f"Cleared all data from {NEWS_CATEGORY_TABLE} table.")
+        else:
+            logger.error(f"Failed to clear news categories from {NEWS_CATEGORY_TABLE}.")
+        return deleted
 
     def get_with_source_count(self) -> List[Tuple[int, str, int]]:
         """Gets all categories with the count of associated news sources."""

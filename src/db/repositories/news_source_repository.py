@@ -63,6 +63,8 @@ class NewsSourceRepository(BaseRepository):
         updated = cursor.rowcount > 0 if cursor else False
         if updated:
             logger.info(f"Updated news source ID {source_id}.")
+        else:
+            logger.error(f"Failed to update news source ID {source_id}.")
         return updated
 
     def delete(self, source_id: int) -> bool:
@@ -72,4 +74,17 @@ class NewsSourceRepository(BaseRepository):
         deleted = cursor.rowcount > 0 if cursor else False
         if deleted:
             logger.info(f"Deleted news source ID {source_id}.")
-        return deleted 
+        else:
+            logger.error(f"Failed to delete news source ID {source_id}.")
+        return deleted
+    
+    def delete_all(self) -> bool:
+        """Deletes all news sources."""
+        cursor_del = self._execute(f"DELETE FROM {NEWS_SOURCES_TABLE}", commit=False)
+        cursor_seq = self._execute(f"DELETE FROM sqlite_sequence WHERE name='{NEWS_SOURCES_TABLE}'", commit=True)
+        deleted = cursor_del is not None and cursor_seq is not None
+        if deleted:
+            logger.info(f"Cleared all data from {NEWS_SOURCES_TABLE} table.")
+        else:
+            logger.error(f"Failed to clear news sources from {NEWS_SOURCES_TABLE}.")
+        return deleted

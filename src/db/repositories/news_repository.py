@@ -159,13 +159,13 @@ class NewsRepository(BaseRepository):
         """Deletes all news items from the table."""
         logger.warning("Attempting to clear all news data.")
         # Reset auto-increment separately if needed after delete
-        cursor_seq = self._execute(
-            f"DELETE FROM sqlite_sequence WHERE name='{NEWS_TABLE}'", commit=False
-        )  # Commit handled by next query
-        cursor_del = self._execute(f"DELETE FROM {NEWS_TABLE}", commit=True)
-        cleared = cursor_del is not None
+        cursor_del = self._execute(f"DELETE FROM {NEWS_TABLE}", commit=False)
+        cursor_seq = self._execute(f"DELETE FROM sqlite_sequence WHERE name='{NEWS_TABLE}'", commit=True)
+        cleared = cursor_del is not None and cursor_seq is not None
         if cleared:
-            logger.info("Cleared all data from news table.")
+            logger.info(f"Cleared all data from {NEWS_TABLE} table.")
+        else:
+            logger.error(f"Failed to clear news data from {NEWS_TABLE}.")
         return cleared
 
     def _row_to_dict(self, row: Tuple) -> Optional[Dict[str, Any]]:

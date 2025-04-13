@@ -10,7 +10,6 @@ import sys
 import os
 import logging
 import argparse
-import asyncio
 from typing import Any, Dict
 
 # --- Project Setup ---
@@ -20,12 +19,8 @@ if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 # --- Early Imports (Config, Database, Repositories, Services, LLM Client) ---
-from src.config import init_config, get_config, AppConfig
-from src.db.connection import (
-    init_db_connection,
-    get_db_connection_manager,
-    DatabaseConnectionManager,
-)
+from src.config import init_config, AppConfig
+from src.db.connection import init_db_connection
 from src.db.repositories import (
     NewsRepository,
     NewsSourceRepository,
@@ -85,7 +80,7 @@ def setup_logging(level_name: str):
 
 
 def initialize_services(
-    config: AppConfig, db_manager: DatabaseConnectionManager
+    config: AppConfig
 ) -> Dict[str, Any]:
     """Initialize all application services"""
     logger.info("Initializing services...")
@@ -136,8 +131,6 @@ def run_gui(services: Dict[str, Any]):
     # Import GUI elements late to avoid issues if dependencies are missing initially
     try:
         from PySide6.QtWidgets import QApplication
-
-        # IMPORTANT: MainWindow needs refactoring to accept services
         from src.ui.main_window import MainWindow
     except ImportError as e:
         logger.critical(
@@ -148,7 +141,6 @@ def run_gui(services: Dict[str, Any]):
     app = QApplication(sys.argv)
     app.setApplicationName("SmartInfo")
 
-    # Pass services to MainWindow (MainWindow needs modification)
     try:
         window = MainWindow(services)  # Pass services dict
         window.show()
@@ -172,10 +164,10 @@ def main():
 
         # 2. Initialize Database Connection Manager
         # This also ensures DB paths based on config are correct and tables exist
-        db_manager = init_db_connection()
+        init_db_connection()
 
         # 3. Initialize Services
-        services = initialize_services(config, db_manager)
+        services = initialize_services(config)
 
         # --- Handle Command Line Arguments ---
         if args.reset_database:
@@ -192,14 +184,6 @@ def main():
                 NewsRepository().clear_all()
                 NewsSourceRepository().delete_all()
                 NewsCategoryRepository().delete_all()
-                # Clear ChromaDB
-                QAService(
-                    config,
-                    NewsRepository(),
-                    QARepository(),
-                    db_manager.get_chroma_client(),
-                    services["llm_client"],
-                ).clear_all_embeddings()  # Re-init QA service to clear
                 logger.info(
                     "Database reset complete (manual repo calls). Consider dedicated service method."
                 )
@@ -210,11 +194,14 @@ def main():
 
         elif args.reset_sources:
             logger.info("Executing --reset-sources argument...")
-            # Need method in NewsService
-            # services["news_service"].reset_sources_to_default() # Example
-            logger.warning(
-                "Reset sources functionality needs implementation in NewsService."
+            confirm = input(
+                "WARNING: This will delete ALL news sources. Type 'YES' to confirm: "
             )
+            if confirm == "YES":
+                NewsSourceRepository().delete_all()
+                logger.info("All news sources reseted.")
+            else:
+                logger.info("Reset news sources aborted.")
 
         elif args.clear_news:
             logger.warning("Executing --clear-news argument...")
@@ -222,19 +209,8 @@ def main():
                 "WARNING: This will delete ALL news articles and embeddings. Type 'YES' to confirm: "
             )
             if confirm == "YES":
-                # Use NewsService and QAService methods
-                if services["news_service"].clear_all_news():
-                    logger.info("Cleared news data from SQLite.")
-                else:
-                    logger.error("Failed to clear news data from SQLite.")
-
-                if services["qa_service"].clear_all_embeddings():
-                    logger.info(
-                        "Cleared news embeddings from ChromaDB and reset flags."
-                    )
-                else:
-                    logger.error("Failed to clear news embeddings/reset flags.")
-                logger.info("Clear news data operation complete.")
+                NewsRepository().clear_all()
+                logger.info("Cleared news data from SQLite.")
             else:
                 logger.info("Clear news data aborted.")
 

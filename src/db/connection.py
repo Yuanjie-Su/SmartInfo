@@ -97,23 +97,10 @@ class DatabaseConnectionManager:
             cursor = self._sqlite_conn.cursor()
 
             # News Category Table
-            cursor.execute(
-                f"CREATE TABLE IF NOT EXISTS {NEWS_CATEGORY_TABLE} (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL UNIQUE
-                )"
-            )
+            cursor.execute(f"CREATE TABLE IF NOT EXISTS {NEWS_CATEGORY_TABLE} (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE)")
 
             # News Sources Table
-            cursor.execute(
-                f"CREATE TABLE IF NOT EXISTS {NEWS_SOURCES_TABLE} (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL,
-                    url TEXT NOT NULL UNIQUE,
-                    category_id INTEGER NOT NULL,
-                    FOREIGN KEY (category_id) REFERENCES {NEWS_CATEGORY_TABLE}(id) ON DELETE CASCADE
-                )"
-            )
+            cursor.execute(f"CREATE TABLE IF NOT EXISTS {NEWS_SOURCES_TABLE} (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, url TEXT NOT NULL UNIQUE, category_id INTEGER NOT NULL, FOREIGN KEY (category_id) REFERENCES {NEWS_CATEGORY_TABLE}(id) ON DELETE CASCADE)")
             # Add index for performance
             cursor.execute(
                 f"CREATE INDEX IF NOT EXISTS idx_news_sources_url ON {NEWS_SOURCES_TABLE} (url)"
@@ -124,7 +111,8 @@ class DatabaseConnectionManager:
 
             # News Table
             cursor.execute(
-                f"CREATE TABLE IF NOT EXISTS {NEWS_TABLE} (
+                f"""
+                CREATE TABLE IF NOT EXISTS {NEWS_TABLE} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     title TEXT NOT NULL,
                     link TEXT NOT NULL UNIQUE,
@@ -137,7 +125,8 @@ class DatabaseConnectionManager:
                     date TEXT,
                     FOREIGN KEY (source_id) REFERENCES {NEWS_SOURCES_TABLE}(id) ON DELETE SET NULL,
                     FOREIGN KEY (category_id) REFERENCES {NEWS_CATEGORY_TABLE}(id) ON DELETE SET NULL
-                )"
+                )
+            """
             )
             # Add indexes
             cursor.execute(f"CREATE INDEX IF NOT EXISTS idx_news_link ON {NEWS_TABLE} (link)")
@@ -147,33 +136,39 @@ class DatabaseConnectionManager:
             # Storing API keys directly in DB might not be the most secure method.
             # Environment variables or a dedicated secrets manager are often preferred.
             cursor.execute(
-                f"CREATE TABLE IF NOT EXISTS {API_CONFIG_TABLE} (
+                f"""
+                CREATE TABLE IF NOT EXISTS {API_CONFIG_TABLE} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     api_name TEXT NOT NULL UNIQUE,
                     api_key TEXT NOT NULL,
                     created_date TEXT NOT NULL,
                     modified_date TEXT NOT NULL
-                )"
+                )
+            """
             )
 
             # System Configuration Table
             cursor.execute(
-                f"CREATE TABLE IF NOT EXISTS {SYSTEM_CONFIG_TABLE} (
+                f"""
+                CREATE TABLE IF NOT EXISTS {SYSTEM_CONFIG_TABLE} (
                     config_key TEXT PRIMARY KEY NOT NULL,
                     config_value TEXT NOT NULL,
                     description TEXT
-                )"
+                )
+            """
             )
 
             # Q&A History Table
             cursor.execute(
-                f"CREATE TABLE IF NOT EXISTS {QA_HISTORY_TABLE} (
+                f"""
+                CREATE TABLE IF NOT EXISTS {QA_HISTORY_TABLE} (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     question TEXT NOT NULL,
                     answer TEXT NOT NULL,
                     context_ids TEXT,
                     created_date TEXT NOT NULL
-                )"
+                )
+            """
             )
             # Add index
             cursor.execute(

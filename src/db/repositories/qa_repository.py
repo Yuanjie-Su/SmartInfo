@@ -39,10 +39,10 @@ class QARepository(BaseRepository):
     def get_all_qa(self, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
         """Retrieves Q&A history entries with pagination."""
         # Select using schema columns context_ids and created_date
-        sql = f"""SELECT id, question, answer, context_ids, created_date
-                 FROM {QA_HISTORY_TABLE} 
-                 ORDER BY created_date DESC 
-                 LIMIT ? OFFSET ?"""
+        sql = f"""SELECT id, question, answer, context_ids, created_date 
+                   FROM {QA_HISTORY_TABLE} 
+                   ORDER BY created_date DESC 
+                   LIMIT ? OFFSET ?"""
         rows = self._fetchall(sql, (limit, offset))
         history = []
         for row in rows:
@@ -61,11 +61,10 @@ class QARepository(BaseRepository):
         """Deletes all Q&A history and removes references."""
         logger.warning("Attempting to clear all QA history.")
         # Table name is handled by BaseRepository now, if implemented there, or needs to be specified
-        cursor = self._execute(f"DELETE FROM {QA_HISTORY_TABLE}", commit=True)        
+        cursor_del = self._execute(f"DELETE FROM {QA_HISTORY_TABLE}", commit=False)
         # delete the sequence
-        self._execute(f"DELETE FROM sqlite_sequence WHERE name='{QA_HISTORY_TABLE}'", commit=True)
-
-        cleared = cursor is not None
+        cursor_seq = self._execute(f"DELETE FROM sqlite_sequence WHERE name='{QA_HISTORY_TABLE}'", commit=True)
+        cleared = cursor_del is not None and cursor_seq is not None
         if cleared:
             logger.info(f"Cleared all data from {QA_HISTORY_TABLE} table and removed references.")
         else:
