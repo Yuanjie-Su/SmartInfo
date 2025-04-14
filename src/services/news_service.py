@@ -29,9 +29,9 @@ logger = logging.getLogger(__name__)
 
 # Default LLM model for extraction
 DEFAULT_EXTRACTION_MODEL = "deepseek-v3-250324"
-MAX_MARKDOWN_TOKENS = 20480 # 20k
-MAX_OUTPUT_TOKENS = 16384 # 16k
-MAX_INPUT_TOKENS = 131072 - MAX_OUTPUT_TOKENS # updated to 128k - 16k
+MAX_MARKDOWN_TOKENS = 20480  # 20k
+MAX_OUTPUT_TOKENS = 16384  # 16k
+MAX_INPUT_TOKENS = 131072 - MAX_OUTPUT_TOKENS  # updated to 128k - 16k
 
 
 class NewsService:
@@ -109,20 +109,26 @@ class NewsService:
 
         try:
             # --- Process URLs ---
-            async for crawl_result in crawler.process_urls(urls_to_crawl, output_format="markdown", scroll_pages=False):
+            async for crawl_result in crawler.process_urls(
+                urls_to_crawl, output_format="markdown", scroll_pages=False
+            ):
                 processed_url_count += 1
                 url = crawl_result.get("original_url", "")
                 markdown = crawl_result.get("content")
                 source_info = url_to_source_info.get(url)
 
                 if not source_info:
-                     logger.warning(f"Received crawl result for unknown URL: {url}")
-                     continue
+                    logger.warning(f"Received crawl result for unknown URL: {url}")
+                    continue
 
                 # Report crawl status via the *first* callback
                 if on_url_status_update:
                     status = "Crawled - Success" if markdown else "Crawled - Failed"
-                    details = "" if markdown else crawl_result.get("error", "Unknown crawl error")
+                    details = (
+                        ""
+                        if markdown
+                        else crawl_result.get("error", "Unknown crawl error")
+                    )
                     on_url_status_update(url, status, details)
 
                 if markdown:
@@ -138,8 +144,9 @@ class NewsService:
                     )
                     all_extraction_tasks.append(task)
                 else:
-                    logger.warning(f"Failed to get markdown for: {url}, error: {crawl_result.get('error', 'Unknown error')}")
-
+                    logger.warning(
+                        f"Failed to get markdown for: {url}, error: {crawl_result.get('error', 'Unknown error')}"
+                    )
 
         except Exception as crawl_error:
             logger.error(f"Error during crawling phase: {crawl_error}", exc_info=True)
@@ -147,12 +154,16 @@ class NewsService:
             if on_stream_chunk_update:
                 on_stream_chunk_update(f"[ERROR] Crawling failed: {crawl_error}\n")
 
-        logger.info(f"Crawling phase finished. Processed URLs: {processed_url_count}. Waiting for extraction tasks...")
+        logger.info(
+            f"Crawling phase finished. Processed URLs: {processed_url_count}. Waiting for extraction tasks..."
+        )
 
         if all_extraction_tasks:
-            results = await asyncio.gather(*all_extraction_tasks, return_exceptions=True)
+            results = await asyncio.gather(
+                *all_extraction_tasks, return_exceptions=True
+            )
             for i, result in enumerate(results):
-                task_url = f"Task {i}" # Placeholder, ideally get URL from result
+                task_url = f"Task {i}"  # Placeholder, ideally get URL from result
                 saved_count = 0
                 task_exception = None
 
@@ -160,7 +171,9 @@ class NewsService:
                     task_exception = result
                     # Report exception to stream
                     if on_stream_chunk_update:
-                        on_stream_chunk_update(f"[ERROR] Extraction task failed: {task_exception}\n")
+                        on_stream_chunk_update(
+                            f"[ERROR] Extraction task failed: {task_exception}\n"
+                        )
 
                 elif isinstance(result, tuple) and len(result) == 2:
                     task_url, saved_count_or_error = result
@@ -169,32 +182,49 @@ class NewsService:
                         # Report success for this URL to stream (optional)
                         # if on_stream_chunk_update:
                         #    on_stream_chunk_update(f"[DONE] {task_url} - Saved {saved_count} items.\n")
-                    elif isinstance(saved_count_or_error, Exception): # Check if it's an Exception
+                    elif isinstance(
+                        saved_count_or_error, Exception
+                    ):  # Check if it's an Exception
                         task_exception = saved_count_or_error
                         # Report specific error for this URL via URL status callback
                         if on_url_status_update:
-                             on_url_status_update(task_url, "Error", f"Extraction Failed: {task_exception}")
+                            on_url_status_update(
+                                task_url,
+                                "Error",
+                                f"Extraction Failed: {task_exception}",
+                            )
                         # Also report to stream
                         if on_stream_chunk_update:
-                            on_stream_chunk_update(f"[ERROR] Processing {task_url} failed: {task_exception}\n")
-                    else: # Treat other non-int as error string
+                            on_stream_chunk_update(
+                                f"[ERROR] Processing {task_url} failed: {task_exception}\n"
+                            )
+                    else:  # Treat other non-int as error string
                         err_str = str(saved_count_or_error)
                         if on_url_status_update:
-                            on_url_status_update(task_url, "Error", f"Extraction Failed: {err_str}")
+                            on_url_status_update(
+                                task_url, "Error", f"Extraction Failed: {err_str}"
+                            )
                         if on_stream_chunk_update:
-                            on_stream_chunk_update(f"[ERROR] Processing {task_url} failed: {err_str}\n")
+                            on_stream_chunk_update(
+                                f"[ERROR] Processing {task_url} failed: {err_str}\n"
+                            )
 
                 if task_exception:
-                    logger.error(f"Error during extraction/saving task for {task_url}: {task_exception}", exc_info=isinstance(task_exception, Exception))
+                    logger.error(
+                        f"Error during extraction/saving task for {task_url}: {task_exception}",
+                        exc_info=isinstance(task_exception, Exception),
+                    )
                 else:
                     total_saved_count += saved_count
 
         else:
-             logger.info("No extraction tasks were started.")
-             if on_stream_chunk_update:
-                 on_stream_chunk_update("[INFO] No extraction tasks needed.\n")
+            logger.info("No extraction tasks were started.")
+            if on_stream_chunk_update:
+                on_stream_chunk_update("[INFO] No extraction tasks needed.\n")
 
-        logger.info(f"News fetching process completed. Total items saved across all sources: {total_saved_count}")
+        logger.info(
+            f"News fetching process completed. Total items saved across all sources: {total_saved_count}"
+        )
         return total_saved_count
 
     async def _extract_and_save_items_sequentially(
@@ -204,7 +234,7 @@ class NewsService:
         source_info: Dict[str, Any],
         on_url_status_update: Optional[Callable[[str, str, str], None]],
         on_stream_chunk_update: Optional[Callable[[str], None]],
-    ) -> Tuple[str, Any]: # Return URL and (count or error)
+    ) -> Tuple[str, Any]:  # Return URL and (count or error)
         """
         Helper coroutine: Extracts items from markdown using non-streaming LLM,
         collects them, and saves them in a single batch. Reports status updates.
@@ -219,15 +249,19 @@ class NewsService:
             Tuple of (URL, Number of saved items OR Error object/string).
         """
 
-        saved_item_count = 0 # Track of items saved for this URL
-        try: # Wrap the whole process for better error reporting per URL
+        saved_item_count = 0  # Track of items saved for this URL
+        try:  # Wrap the whole process for better error reporting per URL
             if not markdown or not markdown.strip():
-                if on_url_status_update: on_url_status_update(url, "Skipped", "No markdown content")
-                return url, 0 # Return 0 saved
+                if on_url_status_update:
+                    on_url_status_update(url, "Skipped", "No markdown content")
+                return url, 0  # Return 0 saved
 
             # --- Token Check and Chunking (if needed) ---
             token_size = get_token_size(markdown)
-            if on_url_status_update: on_url_status_update(url, "Processing", f"Checking token size ({token_size})")
+            if on_url_status_update:
+                on_url_status_update(
+                    url, "Processing", f"Checking token size ({token_size})"
+                )
             markdown_chunks = [markdown]
             num_chunks = 1
             if token_size > MAX_INPUT_TOKENS:
@@ -236,16 +270,26 @@ class NewsService:
                     markdown_chunks = self._get_chunks(markdown, num_chunks)
                     log_msg = f"Splitting markdown for {url} into {len(markdown_chunks)} chunks ({token_size} tokens)."
                     logger.info(log_msg)
-                    if on_url_status_update: on_url_status_update(url, "Processing", f"Splitting into {len(markdown_chunks)} chunks")
+                    if on_url_status_update:
+                        on_url_status_update(
+                            url,
+                            "Processing",
+                            f"Splitting into {len(markdown_chunks)} chunks",
+                        )
                 except Exception as e:
                     log_msg = f"Error splitting markdown for {url}: {e}. Processing as single chunk."
                     logger.error(log_msg, exc_info=True)
-                    markdown_chunks = [markdown] # Fallback to single chunk
+                    markdown_chunks = [markdown]  # Fallback to single chunk
                     num_chunks = 1
-                    if on_url_status_update: on_url_status_update(url, "Processing", "Split failed, using single chunk")
+                    if on_url_status_update:
+                        on_url_status_update(
+                            url, "Processing", "Split failed, using single chunk"
+                        )
 
             # --- Process Chunks ---
-            all_parsed_results_for_url = [] # Collect results from all chunks for this URL
+            all_parsed_results_for_url = (
+                []
+            )  # Collect results from all chunks for this URL
 
             for i, chunk_content in enumerate(markdown_chunks):
                 if not chunk_content or not chunk_content.strip():
@@ -254,75 +298,112 @@ class NewsService:
 
                 chunk_status_prefix = f"Chunk {i+1}/{num_chunks}"
                 status_msg_llm = f"{chunk_status_prefix} Extracting links..."
-                if on_url_status_update: on_url_status_update(url, "Extracting (LLM)", status_msg_llm)
-                if on_stream_chunk_update: on_stream_chunk_update(f"[INFO] {url} - {status_msg_llm}\n")
-                logger.info(f"Processing chunk {i+1}/{num_chunks} for {url} (Link Extraction)...")
+                if on_url_status_update:
+                    on_url_status_update(url, "Extracting (LLM)", status_msg_llm)
+                if on_stream_chunk_update:
+                    on_stream_chunk_update(f"[INFO] {url} - {status_msg_llm}\n")
+                logger.info(
+                    f"Processing chunk {i+1}/{num_chunks} for {url} (Link Extraction)..."
+                )
 
                 # 1. Extract Links from Chunk
-                link_extraction_prompt = self.build_link_extraction_prompt(url, chunk_content)
+                link_extraction_prompt = self.build_link_extraction_prompt(
+                    url, chunk_content
+                )
                 links_str = await self._llm_client.get_completion_content(
                     model=DEFAULT_EXTRACTION_MODEL,
                     messages=[{"role": "user", "content": link_extraction_prompt}],
                     max_tokens=8192,
-                    temperature=0.0
+                    temperature=0.0,
                 )
 
                 if not links_str or not links_str.strip():
-                    logger.warning(f"LLM returned no links for chunk {i+1}/{num_chunks} ({url}).")
+                    logger.warning(
+                        f"LLM returned no links for chunk {i+1}/{num_chunks} ({url})."
+                    )
                     status_msg = f"{chunk_status_prefix} No links found."
-                    if on_url_status_update: on_url_status_update(url, "Processing", status_msg)
-                    if on_stream_chunk_update: on_stream_chunk_update(f"[INFO] {url} - {status_msg}\n")
-                    continue # Move to the next chunk
+                    if on_url_status_update:
+                        on_url_status_update(url, "Processing", status_msg)
+                    if on_stream_chunk_update:
+                        on_stream_chunk_update(f"[INFO] {url} - {status_msg}\n")
+                    continue  # Move to the next chunk
 
                 # 2. Crawl Extracted Links
-                extracted_links = [urljoin(url, link.strip()) for link in links_str.split('\n') if link.strip()]
+                extracted_links = [
+                    urljoin(url, link.strip())
+                    for link in links_str.split("\n")
+                    if link.strip()
+                ]
                 if not extracted_links:
-                    logger.warning(f"No valid links parsed from LLM output for chunk {i+1}/{num_chunks} ({url}).")
+                    logger.warning(
+                        f"No valid links parsed from LLM output for chunk {i+1}/{num_chunks} ({url})."
+                    )
                     continue
 
                 status_msg_crawl = f"{chunk_status_prefix} Crawling {len(extracted_links)} extracted links..."
-                if on_url_status_update: on_url_status_update(url, "Crawling Links", status_msg_crawl)
-                if on_stream_chunk_update: on_stream_chunk_update(f"[INFO] {url} - {status_msg_crawl}\n")
-                logger.info(f"Crawling {len(extracted_links)} extracted links for chunk {i+1}/{num_chunks} of {url}...")
+                if on_url_status_update:
+                    on_url_status_update(url, "Crawling Links", status_msg_crawl)
+                if on_stream_chunk_update:
+                    on_stream_chunk_update(f"[INFO] {url} - {status_msg_crawl}\n")
+                logger.info(
+                    f"Crawling {len(extracted_links)} extracted links for chunk {i+1}/{num_chunks} of {url}..."
+                )
 
-                crawler = AiohttpCrawler() # Use Aiohttp for sub-crawls
+                crawler = AiohttpCrawler()  # Use Aiohttp for sub-crawls
                 sub_crawl_results = []
                 try:
-                    async for crawl_result in crawler.process_urls(extracted_links, output_format="markdown", markdownify_options={"strip": ["img"]}):
+                    async for crawl_result in crawler.process_urls(
+                        extracted_links,
+                        output_format="markdown",
+                        markdownify_options={"strip": ["img"]},
+                    ):
                         if crawl_result and crawl_result.get("content"):
                             sub_crawl_results.append(crawl_result)
                         elif crawl_result:
                             crawl_err_msg = f"Sub-crawl failed for {crawl_result.get('original_url')}: {crawl_result.get('error', 'No content')}"
                             logger.warning(crawl_err_msg)
                 except Exception as sub_crawl_err:
-                     err_msg = f"{chunk_status_prefix} Error during sub-crawl: {sub_crawl_err}"
-                     logger.error(err_msg, exc_info=True)
-                     if on_url_status_update: on_url_status_update(url, "Error", err_msg)
-                     # Decide whether to continue with next chunk or fail the whole URL? Let's continue for robustness.
-                     continue
+                    err_msg = (
+                        f"{chunk_status_prefix} Error during sub-crawl: {sub_crawl_err}"
+                    )
+                    logger.error(err_msg, exc_info=True)
+                    if on_url_status_update:
+                        on_url_status_update(url, "Error", err_msg)
+                    # Decide whether to continue with next chunk or fail the whole URL? Let's continue for robustness.
+                    continue
 
                 if not sub_crawl_results:
                     status_msg_no_content = f"{chunk_status_prefix} No content found from {len(extracted_links)} extracted links."
                     logger.warning(status_msg_no_content)
-                    if on_url_status_update: on_url_status_update(url, "Processing", status_msg_no_content)
+                    if on_url_status_update:
+                        on_url_status_update(url, "Processing", status_msg_no_content)
                     continue
 
                 # 3. Analyze Crawled Content using Streaming LLM
                 status_msg_analyze = f"{chunk_status_prefix} Analyzing content from {len(sub_crawl_results)} links..."
-                if on_url_status_update: on_url_status_update(url, "Analyzing (LLM)", status_msg_analyze)
+                if on_url_status_update:
+                    on_url_status_update(url, "Analyzing (LLM)", status_msg_analyze)
                 if on_stream_chunk_update:
-                    on_stream_chunk_update(f"---\n[INFO] {url} - {status_msg_analyze}\n---\n") # Add separators for stream clarity
-                logger.info(f"Analyzing content from {len(sub_crawl_results)} links for chunk {i+1}/{num_chunks} of {url}...")
+                    on_stream_chunk_update(
+                        f"---\n[INFO] {url} - {status_msg_analyze}\n---\n"
+                    )  # Add separators for stream clarity
+                logger.info(
+                    f"Analyzing content from {len(sub_crawl_results)} links for chunk {i+1}/{num_chunks} of {url}..."
+                )
 
                 analysis_prompt = self.build_content_analysis_prompt(sub_crawl_results)
                 token_check_analysis = get_token_size(analysis_prompt)
-                logger.debug(f"Analysis prompt token size for chunk {i+1}: {token_check_analysis}")
+                logger.debug(
+                    f"Analysis prompt token size for chunk {i+1}: {token_check_analysis}"
+                )
                 if token_check_analysis > MAX_INPUT_TOKENS:
-                     err_msg = f"{chunk_status_prefix} Analysis prompt too large ({token_check_analysis} tokens), skipping analysis."
-                     logger.error(err_msg)
-                     if on_url_status_update: on_url_status_update(url, "Error", err_msg)
-                     if on_stream_chunk_update: on_stream_chunk_update(f"[ERROR] {url} - {err_msg}\n")
-                     continue
+                    err_msg = f"{chunk_status_prefix} Analysis prompt too large ({token_check_analysis} tokens), skipping analysis."
+                    logger.error(err_msg)
+                    if on_url_status_update:
+                        on_url_status_update(url, "Error", err_msg)
+                    if on_stream_chunk_update:
+                        on_stream_chunk_update(f"[ERROR] {url} - {err_msg}\n")
+                    continue
 
                 # --- Use streaming ---
                 analysis_result_markdown = ""
@@ -330,7 +411,7 @@ class NewsService:
                     model=DEFAULT_EXTRACTION_MODEL,
                     messages=[{"role": "user", "content": analysis_prompt}],
                     max_tokens=MAX_OUTPUT_TOKENS,
-                    temperature=0.8
+                    temperature=0.8,
                 )
 
                 if stream_generator:
@@ -342,75 +423,98 @@ class NewsService:
                     except Exception as stream_err:
                         err_msg = f"{chunk_status_prefix} Error during LLM stream: {stream_err}"
                         logger.error(err_msg, exc_info=True)
-                        if on_url_status_update: on_url_status_update(url, "Error", err_msg)
-                        analysis_result_markdown = "" # Reset on error
+                        if on_url_status_update:
+                            on_url_status_update(url, "Error", err_msg)
+                        analysis_result_markdown = ""  # Reset on error
                 else:
                     # Stream initiation failed (already logged by llm_client)
-                     status_msg = f"{chunk_status_prefix} Failed to start LLM analysis stream."
-                     if on_url_status_update: on_url_status_update(url, "Error", status_msg)
-                     analysis_result_markdown = ""
+                    status_msg = (
+                        f"{chunk_status_prefix} Failed to start LLM analysis stream."
+                    )
+                    if on_url_status_update:
+                        on_url_status_update(url, "Error", status_msg)
+                    analysis_result_markdown = ""
 
                 # 4. Parse and Collect Results for the Chunk
                 if analysis_result_markdown:
                     try:
-                        parsed_items = parse_markdown_analysis_output(analysis_result_markdown)
-                        logger.info(f"Parsed {len(parsed_items)} items from analysis of chunk {i+1}/{num_chunks} ({url}).")
+                        parsed_items = parse_markdown_analysis_output(
+                            analysis_result_markdown
+                        )
+                        logger.info(
+                            f"Parsed {len(parsed_items)} items from analysis of chunk {i+1}/{num_chunks} ({url})."
+                        )
 
                         if parsed_items:
                             items_to_add = [
-                                {**item,
-                                 "source_name": source_info["name"],
-                                 "category_name": source_info["category_name"],
-                                 "source_id": source_info["id"],
-                                 "category_id": source_info["category_id"]}
+                                {
+                                    **item,
+                                    "source_name": source_info["name"],
+                                    "category_name": source_info["category_name"],
+                                    "source_id": source_info["id"],
+                                    "category_id": source_info["category_id"],
+                                }
                                 for item in parsed_items
                             ]
                             all_parsed_results_for_url.extend(items_to_add)
                             status_msg = f"{chunk_status_prefix} Parsed {len(parsed_items)} items."
-                            if on_url_status_update: on_url_status_update(url, "Processing", status_msg)
+                            if on_url_status_update:
+                                on_url_status_update(url, "Processing", status_msg)
                         else:
-                             status_msg = f"{chunk_status_prefix} LLM analysis completed but no items parsed."
-                             logger.warning(status_msg)
-                             if on_url_status_update: on_url_status_update(url, "Processing", status_msg)
+                            status_msg = f"{chunk_status_prefix} LLM analysis completed but no items parsed."
+                            logger.warning(status_msg)
+                            if on_url_status_update:
+                                on_url_status_update(url, "Processing", status_msg)
 
                     except Exception as parse_err:
                         err_msg = f"{chunk_status_prefix} Error parsing LLM analysis output: {parse_err}"
                         logger.error(err_msg, exc_info=True)
-                        if on_url_status_update: on_url_status_update(url, "Error", err_msg)
+                        if on_url_status_update:
+                            on_url_status_update(url, "Error", err_msg)
 
             # --- End Chunk Loop ---
 
             # 5. Save All Collected Results for the URL
             if all_parsed_results_for_url:
                 status_msg_save = f"Saving {len(all_parsed_results_for_url)} items..."
-                if on_url_status_update: on_url_status_update(url, "Saving", status_msg_save)
-                logger.info(f"Saving {len(all_parsed_results_for_url)} items for {url}...")
+                if on_url_status_update:
+                    on_url_status_update(url, "Saving", status_msg_save)
+                logger.info(
+                    f"Saving {len(all_parsed_results_for_url)} items for {url}..."
+                )
 
                 try:
-                    added_count, skipped_count = self._news_repo.add_batch(all_parsed_results_for_url)
-                    saved_item_count = added_count # Store the count for this URL
-                    status_msg_saved = f"Complete - Saved {added_count}, Skipped {skipped_count}"
-                    if on_url_status_update: on_url_status_update(url, "Complete", status_msg_saved)
+                    added_count, skipped_count = self._news_repo.add_batch(
+                        all_parsed_results_for_url
+                    )
+                    saved_item_count = added_count  # Store the count for this URL
+                    status_msg_saved = (
+                        f"Complete - Saved {added_count}, Skipped {skipped_count}"
+                    )
+                    if on_url_status_update:
+                        on_url_status_update(url, "Complete", status_msg_saved)
                 except Exception as db_err:
                     err_msg = f"Database error saving items: {db_err}"
                     logger.error(err_msg, exc_info=True)
-                    if on_url_status_update: on_url_status_update(url, "Error", err_msg)
+                    if on_url_status_update:
+                        on_url_status_update(url, "Error", err_msg)
                     # Return the DB error instead of count
                     return url, db_err
             else:
-                 # No items parsed/collected from any chunk
-                 status_msg_no_items = "Complete - No new items found/parsed."
-                 if on_url_status_update: on_url_status_update(url, "Complete", status_msg_no_items)
+                # No items parsed/collected from any chunk
+                status_msg_no_items = "Complete - No new items found/parsed."
+                if on_url_status_update:
+                    on_url_status_update(url, "Complete", status_msg_no_items)
 
-            return url, saved_item_count # Return successful count for this URL
+            return url, saved_item_count  # Return successful count for this URL
 
         except Exception as e:
-             err_msg = f"Critical error processing URL {url}: {e}"
-             logger.error(err_msg, exc_info=True)
-             # Report error via both callbacks if possible
-             if on_url_status_update: on_url_status_update(url, "Error", f"Processing Failed: {e}")
-             return url, e # Return the exception
-
+            err_msg = f"Critical error processing URL {url}: {e}"
+            logger.error(err_msg, exc_info=True)
+            # Report error via both callbacks if possible
+            if on_url_status_update:
+                on_url_status_update(url, "Error", f"Processing Failed: {e}")
+            return url, e  # Return the exception
 
     def _get_chunks(self, text: str, num_chunks: int) -> List[str]:
         """Splits text into roughly equal chunks based on lines."""
@@ -425,7 +529,9 @@ class NewsService:
         start_line = 0
         for i in range(num_chunks):
             # Calculate end line, ensuring the last chunk takes all remaining lines
-            end_line = start_line + lines_per_chunk if i < num_chunks - 1 else total_lines
+            end_line = (
+                start_line + lines_per_chunk if i < num_chunks - 1 else total_lines
+            )
             # Ensure end_line doesn't exceed total_lines (can happen with integer division)
             end_line = min(end_line, total_lines)
             # Add chunk if start_line is less than end_line
@@ -437,8 +543,9 @@ class NewsService:
             if start_line >= total_lines:
                 break
 
-        return [chunk for chunk in chunks if chunk and chunk.strip()] # Remove empty chunks
-    
+        return [
+            chunk for chunk in chunks if chunk and chunk.strip()
+        ]  # Remove empty chunks
 
     def build_link_extraction_prompt(self, url: str, markdown_content: str) -> str:
         prompt = f"""
@@ -465,8 +572,9 @@ Please list the URLs that should be deeply analyzed:
 """
         return prompt
 
-
-    def build_content_analysis_prompt(self, markdown_contents: List[Dict[str, Any]]) -> str:
+    def build_content_analysis_prompt(
+        self, markdown_contents: List[Dict[str, Any]]
+    ) -> str:
         # 多篇内容聚合分析 markdown 输出 prompt
         prompt = """
 You are an intelligent content summarization assistant.  
@@ -528,8 +636,6 @@ Now process the following articles. For each one, the original link is included 
         prompt += "\n\nPlease summarize and analyze each article in Markdown format, following the structure and style shown above."
         return prompt
 
-
-
     # --- News Management --- (Keep remaining methods as they are)
     # get_news_by_id, get_all_news, delete_news, clear_all_news
     # get_all_categories, get_all_categories_with_counts, add_category, etc.
@@ -553,7 +659,6 @@ Now process the following articles. For each one, the original link is included 
         logger.warning("Executing clear_all_news - All news data will be removed.")
         # Consider coordinating with QA service to clear ChromaDB data as well
         return self._news_repo.clear_all()
-
 
     # --- Category and Source Management ---
 
@@ -585,8 +690,11 @@ Now process the following articles. For each one, the original link is included 
         rows = self._source_repo.get_all()
         return [
             {
-                "id": r[0], "name": r[1], "url": r[2],
-                "category_id": r[3], "category_name": r[4],
+                "id": r[0],
+                "name": r[1],
+                "url": r[2],
+                "category_id": r[3],
+                "category_name": r[4],
             }
             for r in rows
         ]
@@ -594,7 +702,9 @@ Now process the following articles. For each one, the original link is included 
     def get_sources_by_category_id(self, category_id: int) -> List[Dict[str, Any]]:
         """Gets sources for a specific category."""
         rows = self._source_repo.get_by_category(category_id)
-        return [{"id": r[0], "name": r[1], "url": r[2], "category_id": r[3]} for r in rows]
+        return [
+            {"id": r[0], "name": r[1], "url": r[2], "category_id": r[3]} for r in rows
+        ]
 
     def add_source(self, name: str, url: str, category_name: str) -> Optional[int]:
         """Adds a news source. Creates category if it doesn't exist."""
