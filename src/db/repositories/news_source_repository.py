@@ -51,9 +51,9 @@ class NewsSourceRepository(BaseRepository):
         """
         return self._fetchall(query)
 
-    def get_by_category(self, category_id: int) -> List[Tuple[int, str, str]]:
+    def get_by_category(self, category_id: int) -> List[Tuple[int, str, str, int]]:
         """Gets all sources for a specific category ID."""
-        query = f"SELECT id, name, url FROM {NEWS_SOURCES_TABLE} WHERE category_id = ? ORDER BY name"
+        query = f"SELECT id, name, url, category_id FROM {NEWS_SOURCES_TABLE} WHERE category_id = ? ORDER BY name"
         return self._fetchall(query, (category_id,))
 
     def update(self, source_id: int, name: str, url: str, category_id: int) -> bool:

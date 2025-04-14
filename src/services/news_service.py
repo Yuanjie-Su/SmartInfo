@@ -594,7 +594,7 @@ Now process the following articles. For each one, the original link is included 
     def get_sources_by_category_id(self, category_id: int) -> List[Dict[str, Any]]:
         """Gets sources for a specific category."""
         rows = self._source_repo.get_by_category(category_id)
-        return [{"id": r[0], "name": r[1], "url": r[2]} for r in rows]
+        return [{"id": r[0], "name": r[1], "url": r[2], "category_id": r[3]} for r in rows]
 
     def add_source(self, name: str, url: str, category_name: str) -> Optional[int]:
         """Adds a news source. Creates category if it doesn't exist."""
