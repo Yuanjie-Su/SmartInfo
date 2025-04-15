@@ -165,10 +165,27 @@ class MainWindow(QMainWindow):
         )
 
         if reply == QMessageBox.StandardButton.Yes:
-            logger.info("Application exited normally by user.")
-            # Perform any cleanup needed before closing services (DB connection closes via atexit)
-            event.accept()
+            logger.info("User confirmed exit. Performing cleanup...")
+
+            # --- Explicitly call cleanup methods for tabs ---
+            try:
+                if hasattr(self, "news_tab") and hasattr(
+                    self.news_tab, "perform_cleanup"
+                ):
+                    logger.info("Calling NewsTab cleanup...")
+                    if not self.news_tab.perform_cleanup():
+                        # Optional: Handle case where cleanup fails/timeouts
+                        logger.error(
+                            "NewsTab cleanup reported issues. Application might not exit cleanly."
+                        )
+
+            except Exception as cleanup_err:
+                logger.error(f"Error during tab cleanup: {cleanup_err}", exc_info=True)
+
+            logger.info("Cleanup finished. Accepting close event.")
+            event.accept()  # Accept the close event AFTER cleanup attempt
         else:
+            logger.info("User cancelled exit.")
             event.ignore()
 
     def _on_tab_changed(self, index):

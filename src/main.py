@@ -79,9 +79,7 @@ def setup_logging(level_name: str):
     logger.info(f"Logging level set to {level_name.upper()}")
 
 
-def initialize_services(
-    config: AppConfig
-) -> Dict[str, Any]:
+def initialize_services(config: AppConfig) -> Dict[str, Any]:
     """Initialize all application services"""
     logger.info("Initializing services...")
     try:
@@ -108,7 +106,9 @@ def initialize_services(
                 "Volcano Engine API key not configured. LLM-dependent features may fail."
             )
         llm_client = LLMClient(
-            base_url="https://ark.cn-beijing.volces.com/api/v3", api_key=volcengine_api_key, async_mode=True
+            base_url="https://ark.cn-beijing.volces.com/api/v3",
+            api_key=volcengine_api_key,
+            async_mode=True,
         )  # Use async for UI
 
         news_service = NewsService(news_repo, source_repo, category_repo, llm_client)

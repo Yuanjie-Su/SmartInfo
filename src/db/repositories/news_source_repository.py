@@ -13,6 +13,7 @@ from .base_repository import BaseRepository
 
 logger = logging.getLogger(__name__)
 
+
 class NewsSourceRepository(BaseRepository):
     """Repository for news_sources table operations."""
 
@@ -33,12 +34,16 @@ class NewsSourceRepository(BaseRepository):
 
     def get_by_id(self, source_id: int) -> Optional[Tuple[int, str, str, int]]:
         """Gets a source by its ID."""
-        query = f"SELECT id, name, url, category_id FROM {NEWS_SOURCES_TABLE} WHERE id = ?"
+        query = (
+            f"SELECT id, name, url, category_id FROM {NEWS_SOURCES_TABLE} WHERE id = ?"
+        )
         return self._fetchone(query, (source_id,))
 
     def get_by_url(self, url: str) -> Optional[Tuple[int, str, str, int]]:
         """Gets a source by its URL."""
-        query = f"SELECT id, name, url, category_id FROM {NEWS_SOURCES_TABLE} WHERE url = ?"
+        query = (
+            f"SELECT id, name, url, category_id FROM {NEWS_SOURCES_TABLE} WHERE url = ?"
+        )
         return self._fetchone(query, (url,))
 
     def get_all(self) -> List[Tuple[int, str, str, int, str]]:
@@ -51,9 +56,15 @@ class NewsSourceRepository(BaseRepository):
         """
         return self._fetchall(query)
 
-    def get_by_category(self, category_id: int) -> List[Tuple[int, str, str, int]]:
+    def get_by_category(self, category_id: int) -> List[Tuple[int, str, str, int, str]]:
         """Gets all sources for a specific category ID."""
-        query = f"SELECT id, name, url, category_id FROM {NEWS_SOURCES_TABLE} WHERE category_id = ? ORDER BY name"
+        query = f"""
+            SELECT ns.id, ns.name, ns.url, ns.category_id, nc.name as category_name
+            FROM {NEWS_SOURCES_TABLE} ns
+            JOIN {NEWS_CATEGORY_TABLE} nc ON ns.category_id = nc.id
+            WHERE ns.category_id = ?
+            ORDER BY nc.name, ns.name
+        """
         return self._fetchall(query, (category_id,))
 
     def update(self, source_id: int, name: str, url: str, category_id: int) -> bool:
@@ -77,11 +88,14 @@ class NewsSourceRepository(BaseRepository):
         else:
             logger.error(f"Failed to delete news source ID {source_id}.")
         return deleted
-    
+
     def delete_all(self) -> bool:
         """Deletes all news sources."""
         cursor_del = self._execute(f"DELETE FROM {NEWS_SOURCES_TABLE}", commit=False)
-        cursor_seq = self._execute(f"DELETE FROM sqlite_sequence WHERE name='{NEWS_SOURCES_TABLE}'", commit=True)
+        cursor_seq = self._execute(
+            f"DELETE FROM sqlite_sequence WHERE name='{NEWS_SOURCES_TABLE}'",
+            commit=True,
+        )
         deleted = cursor_del is not None and cursor_seq is not None
         if deleted:
             logger.info(f"Cleared all data from {NEWS_SOURCES_TABLE} table.")

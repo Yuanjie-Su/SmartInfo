@@ -263,9 +263,11 @@ class PlaywrightCrawler:
     ) -> Dict[str, str]:
         """Fetch the raw HTML content of a single URL, handling semaphore and retries."""
         await self._ensure_browser_started()
-        if not self.browser:
+        if not self.browser or not self.browser.is_connected():
+            logger.error("Browser is not initialized or not connected.")
             return {
                 "original_url": url,
+                "final_url": url,
                 "content": "",
                 "error": "Browser initialization failed",
             }
@@ -286,6 +288,7 @@ class PlaywrightCrawler:
                     final_url = page.url
                     if scroll_page:
                         await self._scroll_page(page)
+
                     try:
                         await page.wait_for_load_state("domcontentloaded", timeout=5000)
                     except PlaywrightTimeoutError:
@@ -312,9 +315,16 @@ class PlaywrightCrawler:
                     error_message = f"Unexpected error for {url}: {e}"
                 finally:
                     if page:
-                        await page.close()
+                        try:
+                            if not page.is_closed():
+                                await page.close()
+                        except PlaywrightError as e:
+                            logger.warning(f"Error closing page for {url}: {e}")
                     if context:
-                        await context.close()
+                        try:
+                            await context.close()
+                        except PlaywrightError as e:
+                            logger.warning(f"Error closing context for {url}: {e}")
                 logger.error(f"{error_message} (Attempt {attempt+1}/{max_retries})")
                 if attempt < max_retries - 1:
                     await asyncio.sleep(2**attempt)
@@ -365,7 +375,7 @@ class PlaywrightCrawler:
     async def process_urls(
         self,
         urls: List[str],
-        scroll_pages: bool = True,
+        scroll_pages: bool = False,
     ) -> AsyncGenerator[Dict[str, str], None]:
         """Concurrently process a list of URLs and yield them as results (including raw HTML)."""
         if not urls:
