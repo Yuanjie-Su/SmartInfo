@@ -22,16 +22,12 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QLabel,
 )
-from PySide6.QtGui import QAction
-from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtCore import Signal, Slot, Qt
 
-# Import refactored tabs
+# Import tabs
 from .tabs.news_tab import NewsTab
 from .tabs.qa_tab import QATab
 from .settings_window import SettingsWindow
-
-# Assuming service classes are imported in main.py and passed
-# No direct service imports here
 
 logger = logging.getLogger(__name__)
 
@@ -44,21 +40,44 @@ class NavigationBar(QWidget):
         self.setFixedWidth(180)
         self.setObjectName("NavigationBar")
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
-        # 导航按钮
+        layout.setContentsMargins(10, 20, 10, 20)
+        layout.setSpacing(15)
+
+        # 导航按钮 - 顶部按钮（News和Chat）
         self.buttons = []
-        btn_names = ["News", "Chat", "Settings"]
-        for idx, name in enumerate(btn_names):
-            btn = QPushButton(name)
+        top_btn_names = ["News", "Chat"]
+        top_btn_icons = ["📰", "💬"]  # 使用Unicode字符作为图标
+
+        for idx, (name, icon) in enumerate(zip(top_btn_names, top_btn_icons)):
+            btn = QPushButton(f" {icon}  {name}")
             btn.setObjectName(f"NavBtn_{name}")
             btn.setCheckable(True)
             btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-            btn.setMinimumHeight(40)
-            btn.clicked.connect(lambda checked, i=idx: self.on_btn_clicked(i))
+            btn.setMinimumHeight(45)
+            btn.clicked.connect(lambda i=idx: self.on_btn_clicked(i))
             layout.addWidget(btn)
             self.buttons.append(btn)
+
+        # 中间的伸缩空间
         layout.addStretch(1)
+
+        # 导航按钮 - 底部的设置按钮
+        settings_btn = QPushButton(f" ⚙️  Settings")
+        settings_btn.setObjectName("NavBtn_Settings")
+        settings_btn.setCheckable(True)
+        settings_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        settings_btn.setMinimumHeight(45)
+        settings_btn.clicked.connect(
+            lambda checked: self.on_btn_clicked(2)
+        )  # 索引2对应设置
+        layout.addWidget(settings_btn)
+        self.buttons.append(settings_btn)
+
+        # 底部添加版本信息
+        version_label = QLabel("v1.0.0")
+        version_label.setStyleSheet("color: rgba(255, 255, 255, 0.7); font-size: 12px;")
+        layout.addWidget(version_label, 0, Qt.AlignmentFlag.AlignHCenter)
+
         # 默认选中第一个
         self.buttons[0].setChecked(True)
 
@@ -75,9 +94,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.services = services
 
-        self.setWindowTitle(
-            "SmartInfo - Intelligent News Analysis and Knowledge Management Tool"
-        )
+        self.setWindowTitle("SmartInfo - 智能资讯分析和知识管理工具")
         self.setMinimumSize(1200, 800)
 
         # Flag to indicate if news sources or categories changed in settings
@@ -100,8 +117,14 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(self.nav_bar)
 
         # 右侧内容区（StackedWidget）
+        content_container = QWidget()
+        content_layout = QVBoxLayout(content_container)
+        content_layout.setContentsMargins(20, 20, 20, 20)
+
         self.stack = QStackedWidget()
-        main_layout.addWidget(self.stack)
+        content_layout.addWidget(self.stack)
+
+        main_layout.addWidget(content_container)
         main_layout.setStretch(0, 0)
         main_layout.setStretch(1, 1)
 
@@ -146,7 +169,6 @@ class MainWindow(QMainWindow):
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("Ready")
 
-        self._create_menu_bar()
         # 加载全局样式
         self._load_stylesheet()
 
@@ -215,48 +237,12 @@ class MainWindow(QMainWindow):
         if self.stack.currentIndex() == 0:  # Index of NewsTab
             self._refresh_news_tab_filters()
 
-    def _create_menu_bar(self):
-        """Create menu bar"""
-        file_menu = self.menuBar().addMenu("File")
-        export_action = QAction("Export Data", self)
-        export_action.triggered.connect(self._export_data)
-        file_menu.addAction(export_action)
-        exit_action = QAction("Exit", self)
-        exit_action.triggered.connect(self.close)
-        file_menu.addAction(exit_action)
-
-        edit_menu = self.menuBar().addMenu("Edit")
-        # Add edit actions if needed
-
-        help_menu = self.menuBar().addMenu("Help")
-        about_action = QAction("About", self)
-        about_action.triggered.connect(self._show_about)
-        help_menu.addAction(about_action)
-
-    def _export_data(self):
-        """Export data functionality (placeholder)"""
-        # TODO: Implement using service layer if needed
-        self.status_bar.showMessage("Export data feature in development...")
-        QMessageBox.information(
-            self, "Info", "Export data feature not yet implemented."
-        )
-
-    def _show_about(self):
-        """Show about dialog"""
-        QMessageBox.about(
-            self,
-            "About SmartInfo",
-            "SmartInfo - Intelligent News Analysis and Knowledge Management Tool\n"
-            "Version: 1.0.0\n"
-            "An intelligent tool for tech researchers, analysts, and enthusiasts.",
-        )
-
     def closeEvent(self, event):
         """Handle window close event"""
         reply = QMessageBox.question(
             self,
-            "Confirm Exit",
-            "Are you sure you want to exit?",
+            "确认退出",
+            "确定要退出程序吗？",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -312,6 +298,12 @@ class MainWindow(QMainWindow):
         import os
 
         qss_path = os.path.join(os.path.dirname(__file__), "style.qss")
-        if os.path.exists(qss_path):
-            with open(qss_path, "r", encoding="utf-8") as f:
-                self.setStyleSheet(f.read())
+        try:
+            if os.path.exists(qss_path):
+                with open(qss_path, "r", encoding="utf-8") as f:
+                    self.setStyleSheet(f.read())
+                    logger.info(f"加载样式文件成功: {qss_path}")
+            else:
+                logger.warning(f"样式文件不存在: {qss_path}")
+        except Exception as e:
+            logger.error(f"加载样式文件出错: {e}", exc_info=True)

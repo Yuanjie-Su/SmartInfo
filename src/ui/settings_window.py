@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
     QInputDialog,
 )
 from PySide6.QtCore import Qt, Signal, QSize, QModelIndex, QSortFilterProxyModel
-from PySide6.QtGui import QStandardItemModel, QStandardItem
+from PySide6.QtGui import QStandardItemModel, QStandardItem, QIcon
 
 # Assuming services are passed during instantiation
 from src.services.setting_service import SettingService
@@ -59,7 +59,7 @@ class SettingsWindow(QDialog):
         self.available_categories = []  # Cache for category names used in dialogs
 
         self.setWindowTitle("设置")
-        self.setMinimumSize(800, 600)
+        self.setMinimumSize(900, 650)
         self.setModal(True)  # Make it modal for now
 
         self._setup_ui()
@@ -80,25 +80,42 @@ class SettingsWindow(QDialog):
         # --- Left Navigation ---
         nav_widget = QWidget()
         nav_widget.setObjectName("SettingsNav")
-        nav_widget.setFixedWidth(180)  # Adjust width as needed
+        nav_widget.setFixedWidth(200)  # 稍微加宽导航区
         nav_layout = QVBoxLayout(nav_widget)
-        nav_layout.setContentsMargins(10, 10, 10, 10)
-        nav_layout.setSpacing(5)
+        nav_layout.setContentsMargins(15, 20, 15, 20)
+        nav_layout.setSpacing(10)
+
+        # 添加标题
+        settings_title = QLabel("设置")
+        settings_title.setObjectName("SettingsTitle")
+        settings_title.setStyleSheet(
+            "color: white; font-size: 18px; font-weight: bold; margin-bottom: 15px;"
+        )
+        nav_layout.addWidget(settings_title)
 
         self.nav_list = QListWidget()
         self.nav_list.setObjectName("SettingsNavList")
-        # Add navigation items
-        self.nav_list.addItem("API 设置")
-        self.nav_list.addItem("资讯源管理")
-        self.nav_list.addItem("分类配置")
-        self.nav_list.addItem("系统配置")
-        # Style the list widget if needed via QSS
-        self.nav_list.setIconSize(QSize(16, 16))  # Example icon size
+        # Add navigation items with icons
+        nav_items = [
+            {"name": "API 设置", "icon": "🔑"},
+            {"name": "资讯源管理", "icon": "📰"},
+            {"name": "分类配置", "icon": "🗂️"},
+            {"name": "系统配置", "icon": "⚙️"},
+        ]
+
+        for item_data in nav_items:
+            item = QListWidgetItem(f" {item_data['icon']}  {item_data['name']}")
+            self.nav_list.addItem(item)
 
         nav_layout.addWidget(self.nav_list)
         nav_layout.addStretch()  # Pushes list items up
 
         # --- Right Content Area ---
+        content_widget = QWidget()
+        content_widget.setObjectName("SettingsContentContainer")
+        content_layout = QVBoxLayout(content_widget)
+        content_layout.setContentsMargins(25, 25, 25, 25)  # Padding for content area
+
         self.content_stack = QStackedWidget()
         self.content_stack.setObjectName("SettingsContentStack")
 
@@ -113,24 +130,24 @@ class SettingsWindow(QDialog):
         self.content_stack.addWidget(categories_page)
         self.content_stack.addWidget(system_page)
 
-        # --- Bottom Buttons ---
-        button_layout = QHBoxLayout()
-        button_layout.addStretch()
-        self.save_button = QPushButton("保存设置")  # General save for relevant settings
-        self.save_button.setToolTip("保存 API Key, 嵌入模型, 获取频率等设置")
-        self.close_button = QPushButton("关闭")
-        button_layout.addWidget(self.save_button)
-        button_layout.addWidget(self.close_button)
-
-        # Combine content stack and buttons
-        content_layout = QVBoxLayout()
-        content_layout.setContentsMargins(15, 15, 15, 15)  # Padding for content area
         content_layout.addWidget(self.content_stack)
-        content_layout.addLayout(button_layout)
+
+        # --- Bottom Buttons ---
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Close
+        )
+        self.save_button = button_box.button(QDialogButtonBox.StandardButton.Save)
+        self.save_button.setText("保存设置")
+        self.save_button.setToolTip("保存 API Key, 嵌入模型, 获取频率等设置")
+
+        self.close_button = button_box.button(QDialogButtonBox.StandardButton.Close)
+        self.close_button.setText("关闭")
+
+        content_layout.addWidget(button_box, 0, Qt.AlignmentFlag.AlignRight)
 
         # Add nav and content to main layout
         main_layout.addWidget(nav_widget)
-        main_layout.addLayout(content_layout, 1)  # Content takes stretch factor 1
+        main_layout.addWidget(content_widget, 1)  # Content takes stretch factor 1
 
     def _connect_signals(self):
         self.nav_list.currentRowChanged.connect(self.content_stack.setCurrentIndex)

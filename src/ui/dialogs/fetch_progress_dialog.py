@@ -17,8 +17,10 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QSizePolicy,
     QProgressBar,
+    QLabel,
 )
 from PySide6.QtCore import Qt, Signal, Slot
+from PySide6.QtGui import QColor, QFont
 
 logger = logging.getLogger(__name__)
 
@@ -41,23 +43,81 @@ class FetchProgressDialog(QDialog):
 
     def __init__(self, sources: List[Dict[str, Any]], parent=None):
         super().__init__(parent)
-        self.setWindowTitle("News Fetch Progress")
-        self.setMinimumSize(900, 450)
+        self.setWindowTitle("资讯抓取进度")
+        self.setMinimumSize(900, 500)
         self.sources_map: Dict[str, int] = {}  # url -> row_index
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(15)
+
+        # 添加标题和说明
+        header_layout = QHBoxLayout()
+
+        title_label = QLabel("资讯抓取进度")
+        title_label.setStyleSheet("font-size: 18px; font-weight: bold; color: #07c160;")
+        header_layout.addWidget(title_label)
+
+        status_label = QLabel(f"总计: {len(sources)} 个资讯源")
+        status_label.setStyleSheet("color: #6c757d;")
+        header_layout.addStretch()
+        header_layout.addWidget(status_label)
+
+        layout.addLayout(header_layout)
+
+        description = QLabel("系统正在从配置的资讯源获取并分析内容，请耐心等待完成。")
+        description.setStyleSheet("color: #6c757d; margin-bottom: 10px;")
+        layout.addWidget(description)
+
+        # 表格容器
+        table_container = QWidget()
+        table_container.setObjectName("FetchProgressContainer")
+        table_container.setStyleSheet(
+            """
+            #FetchProgressContainer {
+                background-color: #ffffff;
+                border: 1px solid #e0e4e7;
+                border-radius: 8px;
+                padding: 5px;
+            }
+        """
+        )
+        table_layout = QVBoxLayout(table_container)
+        table_layout.setContentsMargins(5, 5, 5, 5)
 
         self.table = QTableWidget()
+        self.table.setObjectName("FetchProgressTable")
         self.table.setColumnCount(5)
         self.table.setHorizontalHeaderLabels(
             [
                 "#",
-                "Source",
+                "资讯源",
                 "URL",
-                "Progress",
-                "Details",
+                "进度",
+                "操作",
             ]
         )
+
+        # 设置表格样式
+        self.table.setStyleSheet(
+            """
+            QHeaderView::section {
+                background-color: #f1f3f7;
+                padding: 8px;
+                border: none;
+                font-weight: bold;
+            }
+            QTableWidget {
+                gridline-color: #e0e4e7;
+                border: none;
+            }
+            QTableWidget::item {
+                padding: 5px;
+                border-bottom: 1px solid #f0f2f5;
+            }
+        """
+        )
+
         # Adjust resizing
         self.table.horizontalHeader().setSectionResizeMode(
             QHeaderView.ResizeMode.Stretch
@@ -80,14 +140,29 @@ class FetchProgressDialog(QDialog):
 
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setWordWrap(False)  # Prevent status wrapping initially
+        self.table.setAlternatingRowColors(True)  # 使用交替行颜色
+        self.table.verticalHeader().setVisible(False)  # 隐藏垂直表头
+        self.table.horizontalHeader().setMinimumHeight(40)  # 设置表头高度
 
         self.populate_table(sources)
-        layout.addWidget(self.table)
+        table_layout.addWidget(self.table)
+        layout.addWidget(table_container, 1)
 
         # url -> status update count
         self.status_history = {s["url"]: 0 for s in sources}
         # url -> is_final_status
         self.final_status_flag = {s["url"]: False for s in sources}
+
+        # 添加关闭按钮
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+
+        close_button = QPushButton("关闭")
+        close_button.setMinimumHeight(35)
+        close_button.clicked.connect(self.hide)
+        button_layout.addWidget(close_button)
+
+        layout.addLayout(button_layout)
 
     def populate_table(self, sources: List[Dict[str, Any]]):
         """Fills the table with the initial source list."""
@@ -101,17 +176,37 @@ class FetchProgressDialog(QDialog):
 
             # Create items
             idx_item = QTableWidgetItem(str(idx + 1))
+            idx_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+
             name_item = QTableWidgetItem(source_info.get("name", "N/A"))
             url_item = QTableWidgetItem(url)
 
-            # 用进度条替换status列
+            # 使用进度条替换status列
             progress = QProgressBar()
+            progress.setObjectName(f"progress_{idx}")
             progress.setRange(
                 0, self.TOTAL_EXPECTED_STEPS
             )  # Set range based on expected steps
             progress.setValue(0)  # Initial value is 0
-            progress.setFormat("Pending")  # Initial text
+            progress.setFormat("等待中")  # Initial text
             progress.setAlignment(Qt.AlignmentFlag.AlignCenter)  # Center text
+            progress.setStyleSheet(
+                """
+                QProgressBar {
+                    border: 1px solid #e0e4e7;
+                    border-radius: 4px;
+                    text-align: center;
+                    background-color: #f5f7fa;
+                    height: 20px;
+                    margin: 5px 10px;
+                }
+                QProgressBar::chunk {
+                    background-color: #07c160;
+                    border-radius: 3px;
+                }
+            """
+            )
+
             self.table.setCellWidget(idx, self.COL_STATUS, progress)
 
             # Set items
@@ -126,7 +221,8 @@ class FetchProgressDialog(QDialog):
             placeholder_layout.setContentsMargins(0, 0, 0, 0)
             placeholder_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
             # Example: Add a disabled button
-            placeholder_button = QPushButton("View")
+            placeholder_button = QPushButton("查看")
+            placeholder_button.setMinimumHeight(28)
             placeholder_button.setEnabled(False)
             placeholder_layout.addWidget(placeholder_button)
             self.table.setCellWidget(idx, self.COL_ACTION, placeholder_widget)
@@ -173,6 +269,38 @@ class FetchProgressDialog(QDialog):
             if is_final_status:
                 self.final_status_flag[url] = True
                 progress_value = self.TOTAL_EXPECTED_STEPS
+
+                # 根据状态更改进度条颜色
+                if "失败" in status or "错误" in status:
+                    progress.setStyleSheet(
+                        """
+                        QProgressBar {
+                            border: 1px solid #e0e4e7;
+                            border-radius: 4px;
+                            text-align: center;
+                            background-color: #f5f7fa;
+                        }
+                        QProgressBar::chunk {
+                            background-color: #dc3545;
+                            border-radius: 3px;
+                        }
+                    """
+                    )
+                elif "成功" in status:
+                    progress.setStyleSheet(
+                        """
+                        QProgressBar {
+                            border: 1px solid #e0e4e7;
+                            border-radius: 4px;
+                            text-align: center;
+                            background-color: #f5f7fa;
+                        }
+                        QProgressBar::chunk {
+                            background-color: #07c160;
+                            border-radius: 3px;
+                        }
+                    """
+                    )
             else:
                 # Ensure value doesn't exceed max before final status
                 progress_value = min(current_step, self.TOTAL_EXPECTED_STEPS)
@@ -214,8 +342,9 @@ class FetchProgressDialog(QDialog):
                     self.table.setCellWidget(row, self.COL_ACTION, button_container)
                 else:
                     # Replace placeholder or unexpected widget
-                    view_button = QPushButton("View")
-                    view_button.setToolTip(f"View analysis result for {url}")
+                    view_button = QPushButton("查看")
+                    view_button.setMinimumHeight(28)
+                    view_button.setToolTip(f"查看 {url} 的分析结果")
                     # Disconnect previous lambda if any before connecting new one
                     try:
                         view_button.clicked.disconnect()
