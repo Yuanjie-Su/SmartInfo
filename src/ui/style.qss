@@ -1,0 +1,275 @@
+QWidget {
+    background-color: #f8f9fa; /* Light background */
+    color: #212529; /* Dark text */
+    font-family: "Segoe UI", Frutiger, "Frutiger Linotype", "Dejavu Sans", "Helvetica Neue", Arial, sans-serif; /* Consistent font */
+    font-size: 10pt; /* Default font size */
+}
+
+QMainWindow, QDialog {
+    background-color: #f8f9fa;
+}
+
+/* Navigation Bar in MainWindow */
+#NavigationBar {
+    background-color: #e9ecef; /* Slightly darker background for nav */
+    border-right: 1px solid #dee2e6;
+}
+
+#NavigationBar QPushButton {
+    background-color: transparent;
+    border: none; /* Flat buttons */
+    color: #495057; /* Standard nav text color */
+    text-align: left;
+    padding: 10px 15px; /* Padding for nav items */
+    border-radius: 4px; /* Slightly rounded corners */
+    margin: 2px 5px; /* Margin around buttons */
+}
+
+#NavigationBar QPushButton:hover {
+    background-color: #dee2e6; /* Hover background */
+    color: #000;
+}
+
+#NavigationBar QPushButton:checked {
+    background-color: #ced4da; /* Selected background */
+    color: #000;
+    font-weight: bold;
+}
+
+/* Settings Window Navigation */
+#SettingsNav {
+    background-color: #e9ecef; /* Consistent with main nav */
+    border-right: 1px solid #dee2e6;
+}
+
+#SettingsNavList {
+    background-color: #e9ecef;
+    border: none; /* Remove list widget border */
+    outline: 0; /* Remove focus outline */
+}
+
+#SettingsNavList::item {
+    padding: 10px 15px;
+    color: #495057;
+    border-radius: 4px;
+     margin: 2px 0px;
+}
+
+#SettingsNavList::item:selected {
+    background-color: #ced4da; /* Selected item background */
+    color: #000; /* Selected item text color */
+    font-weight: bold;
+}
+#SettingsNavList::item:hover:!selected {
+     background-color: #dee2e6; /* Hover background for non-selected items */
+     color: #000;
+}
+
+
+/* Content Area */
+QStackedWidget, #SettingsContentStack {
+    background-color: #f8f9fa; /* Main content background */
+}
+
+/* Buttons */
+QPushButton {
+    background-color: #dee2e6; /* Default button background */
+    color: #212529;
+    border: 1px solid #adb5bd;
+    padding: 8px 15px;
+    border-radius: 4px;
+    min-height: 20px; /* Ensure buttons have reasonable height */
+}
+
+QPushButton:hover {
+    background-color: #ced4da; /* Button hover */
+    border-color: #6c757d;
+}
+
+QPushButton:pressed {
+    background-color: #adb5bd; /* Button pressed */
+}
+
+QPushButton:disabled {
+    background-color: #e9ecef;
+    color: #6c757d;
+    border-color: #ced4da;
+}
+
+/* Primary Action Buttons (e.g., Save) - Optional Styling */
+QPushButton#SaveButton, QPushButton[text="保存所有设置"], QPushButton[text="保存设置"] {
+    background-color: #0d6efd; /* Example blue for primary */
+    color: white;
+    border: none;
+}
+QPushButton#SaveButton:hover, QPushButton[text="保存所有设置"]:hover, QPushButton[text="保存设置"]:hover {
+    background-color: #0b5ed7;
+}
+QPushButton#SaveButton:pressed, QPushButton[text="保存所有设置"]:pressed, QPushButton[text="保存设置"]:pressed {
+    background-color: #0a58ca;
+}
+
+/* Input Fields */
+QLineEdit, QComboBox, QTextEdit {
+    background-color: #ffffff; /* White background for inputs */
+    border: 1px solid #ced4da;
+    padding: 5px;
+    border-radius: 4px;
+    color: #212529;
+}
+QLineEdit:focus, QComboBox:focus, QTextEdit:focus {
+    border-color: #86b7fe; /* Highlight focus */
+    outline: 0; /* Remove default outline */
+    /* box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25); */ /* Optional: Bootstrap-like shadow */
+}
+QLineEdit:read-only {
+    background-color: #e9ecef; /* Indicate read-only */
+    color: #6c757d;
+}
+QComboBox::drop-down {
+    border: none; /* Cleaner dropdown arrow */
+}
+QComboBox::down-arrow {
+     /* Consider using an icon */
+     /* image: url(:/icons/down_arrow.png); */
+     width: 10px;
+     height: 10px;
+}
+
+
+/* Tables */
+QTableView {
+    border: 1px solid #dee2e6;
+    gridline-color: #dee2e6;
+    background-color: #ffffff;
+    alternate-background-color: #f8f9fa; /* Zebra striping */
+    selection-background-color: #cfe2ff; /* Selection background */
+    selection-color: #000; /* Selection text color */
+}
+
+QHeaderView::section {
+    background-color: #e9ecef; /* Header background */
+    padding: 4px;
+    border: 1px solid #dee2e6;
+    font-weight: bold;
+}
+
+/* Tabs (If any remain or are added later) */
+QTabWidget::pane {
+    border: 1px solid #dee2e6;
+    border-top: none;
+    background-color: #f8f9fa;
+     padding: 10px;
+}
+
+QTabBar::tab {
+    background-color: #e9ecef;
+    border: 1px solid #dee2e6;
+    border-bottom: none; /* Connect tab to pane */
+    padding: 8px 15px;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+    color: #495057;
+}
+
+QTabBar::tab:selected {
+    background-color: #f8f9fa; /* Selected tab matches pane */
+    color: #000;
+    font-weight: bold;
+    border-color: #dee2e6;
+}
+QTabBar::tab:!selected:hover {
+     background-color: #dee2e6;
+}
+
+
+/* Scrollbars */
+QScrollBar:vertical {
+    border: 1px solid #dee2e6;
+    background: #f1f3f5;
+    width: 12px;
+    margin: 0px 0px 0px 0px;
+}
+QScrollBar::handle:vertical {
+    background: #adb5bd;
+    min-height: 20px;
+     border-radius: 5px;
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    border: none;
+    background: none;
+    height: 0px;
+    subcontrol-position: top;
+    subcontrol-origin: margin;
+}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+    background: none;
+}
+
+QScrollBar:horizontal {
+    border: 1px solid #dee2e6;
+    background: #f1f3f5;
+    height: 12px;
+    margin: 0px 0px 0px 0px;
+}
+QScrollBar::handle:horizontal {
+    background: #adb5bd;
+    min-width: 20px;
+    border-radius: 5px;
+}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+    border: none;
+    background: none;
+     width: 0px;
+}
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+    background: none;
+}
+
+/* Labels */
+QLabel {
+     background-color: transparent; /* Ensure labels don't obscure background */
+}
+
+/* Status Bar */
+QStatusBar {
+    background-color: #e9ecef;
+    border-top: 1px solid #dee2e6;
+    color: #495057;
+}
+
+/* Menu Bar */
+QMenuBar {
+    background-color: #e9ecef;
+    color: #212529;
+    border-bottom: 1px solid #dee2e6;
+}
+QMenuBar::item {
+    background-color: transparent;
+     padding: 5px 10px;
+}
+QMenuBar::item:selected { /* Hover */
+    background-color: #dee2e6;
+}
+QMenuBar::item:pressed {
+    background-color: #ced4da;
+}
+
+/* Menu */
+QMenu {
+    background-color: #ffffff;
+    border: 1px solid #adb5bd;
+    color: #212529;
+}
+QMenu::item {
+     padding: 5px 20px;
+}
+QMenu::item:selected { /* Hover */
+    background-color: #e9ecef;
+}
+QMenu::separator {
+    height: 1px;
+    background: #dee2e6;
+    margin-left: 10px;
+    margin-right: 5px;
+}

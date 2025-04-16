@@ -8,27 +8,64 @@ Implements the main user interface of the application
 
 import sys
 import logging
-from typing import Dict, Any  # Added for type hinting
+from typing import Dict, Any, Optional  # Added for type hinting
 
 from PySide6.QtWidgets import (
     QMainWindow,
-    QTabWidget,
+    QStackedWidget,
     QWidget,
     QVBoxLayout,
+    QHBoxLayout,
     QStatusBar,
     QMessageBox,
+    QPushButton,
+    QSizePolicy,
+    QLabel,
 )
 from PySide6.QtGui import QAction
+from PySide6.QtCore import Qt, Signal, Slot
 
 # Import refactored tabs
 from .tabs.news_tab import NewsTab
 from .tabs.qa_tab import QATab
-from .tabs.settings_tab import SettingsTab
+from .settings_window import SettingsWindow
 
 # Assuming service classes are imported in main.py and passed
 # No direct service imports here
 
 logger = logging.getLogger(__name__)
+
+
+class NavigationBar(QWidget):
+    page_changed = Signal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedWidth(180)
+        self.setObjectName("NavigationBar")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+        # 导航按钮
+        self.buttons = []
+        btn_names = ["News", "Chat", "Settings"]
+        for idx, name in enumerate(btn_names):
+            btn = QPushButton(name)
+            btn.setObjectName(f"NavBtn_{name}")
+            btn.setCheckable(True)
+            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            btn.setMinimumHeight(40)
+            btn.clicked.connect(lambda checked, i=idx: self.on_btn_clicked(i))
+            layout.addWidget(btn)
+            self.buttons.append(btn)
+        layout.addStretch(1)
+        # 默认选中第一个
+        self.buttons[0].setChecked(True)
+
+    def on_btn_clicked(self, idx):
+        for i, btn in enumerate(self.buttons):
+            btn.setChecked(i == idx)
+        self.page_changed.emit(idx)
 
 
 class MainWindow(QMainWindow):
@@ -51,28 +88,29 @@ class MainWindow(QMainWindow):
 
     def _setup_ui(self):
         """Set up user interface using injected services"""
-        self.central_widget = QWidget()
-        self.setCentralWidget(self.central_widget)
-        main_layout = QVBoxLayout(self.central_widget)
+        # 主体分栏布局
+        central_widget = QWidget()
+        self.setCentralWidget(central_widget)
+        main_layout = QHBoxLayout(central_widget)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
 
-        self.tabs = QTabWidget()
-        main_layout.addWidget(self.tabs)
+        # 左侧导航栏
+        self.nav_bar = NavigationBar()
+        main_layout.addWidget(self.nav_bar)
 
-        # --- Create tabs and inject required services ---
+        # 右侧内容区（StackedWidget）
+        self.stack = QStackedWidget()
+        main_layout.addWidget(self.stack)
+        main_layout.setStretch(0, 0)
+        main_layout.setStretch(1, 1)
+
+        # --- 创建页面 ---
         try:
             # NewsTab needs NewsService and potentially SettingService for initial filter load
             self.news_tab = NewsTab(self.services["news_service"])
             # QATab needs QAService
             self.qa_tab = QATab(self.services["qa_service"])
-            # SettingsTab needs SettingService and NewsService
-            self.settings_tab = SettingsTab(
-                self.services["setting_service"], self.services["news_service"]
-            )
-
-            # Connect signal from settings tab if sources/categories change
-            self.settings_tab.settings_changed_signal.connect(
-                self._handle_settings_change
-            )
 
         except KeyError as e:
             logger.critical(
@@ -95,18 +133,77 @@ class MainWindow(QMainWindow):
             )
             sys.exit(1)
 
-        # Add tabs to the widget
-        self.tabs.addTab(self.news_tab, "News Management")
-        self.tabs.addTab(self.qa_tab, "Q&A")
-        self.tabs.addTab(self.settings_tab, "Settings")
+        # 添加页面到栈
+        self.stack.addWidget(self.news_tab)
+        self.stack.addWidget(self.qa_tab)
+        # 默认显示第一个页面
+        self.stack.setCurrentIndex(0)
 
-        self.tabs.currentChanged.connect(self._on_tab_changed)
+        # 连接导航栏按钮点击信号
+        self.nav_bar.page_changed.connect(self._handle_navigation_request)
 
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("Ready")
 
         self._create_menu_bar()
+        # 加载全局样式
+        self._load_stylesheet()
+
+        self.settings_window_instance: Optional[SettingsWindow] = None
+
+    @Slot(int)
+    def _handle_navigation_request(self, index: int):
+        """处理来自导航栏的页面切换请求"""
+        logger.debug(f"Navigation requested for index: {index}")
+
+        if index == 0:  # News Tab
+            self.stack.setCurrentIndex(0)
+            # 如果设置已更改，刷新 News Tab 的过滤器
+            if self.news_sources_or_categories_changed:
+                self._refresh_news_tab_filters()
+        elif index == 1:  # QA Tab
+            self.stack.setCurrentIndex(1)
+            # 加载 QA 历史记录
+            if hasattr(self, "qa_tab") and self.qa_tab:
+                self.qa_tab.load_history()
+        elif index == 2:  # Settings Dialog
+            logger.info("Settings button clicked. Opening SettingsWindow.")
+            try:
+                # 如果 SettingsWindow 实例不存在或已被关闭，则创建新的实例
+                if (
+                    self.settings_window_instance is None
+                    or not self.settings_window_instance.isVisible()
+                ):
+                    logger.debug("Creating new SettingsWindow instance.")
+                    # 确保传递了正确的 services
+                    self.settings_window_instance = SettingsWindow(
+                        setting_service=self.services["setting_service"],
+                        news_service=self.services["news_service"],
+                        parent=self,  # 设置父窗口为 MainWindow
+                    )
+                    # 将 SettingsWindow 的信号连接回 MainWindow
+                    self.settings_window_instance.settings_changed_signal.connect(
+                        self._handle_settings_change
+                    )
+                else:
+                    logger.debug(
+                        "SettingsWindow instance already exists and is visible."
+                    )
+
+                # 显示模态对话框并等待其关闭
+                self.settings_window_instance.exec()
+
+            except KeyError as e:
+                error_msg = f"无法打开设置：缺少必要的服务 '{e}'。"
+                logger.error(error_msg)
+                QMessageBox.critical(self, "错误", error_msg)
+            except Exception as e:
+                error_msg = f"打开设置窗口时出错: {e}"
+                logger.error(error_msg, exc_info=True)
+                QMessageBox.critical(self, "错误", error_msg)
+        else:
+            logger.warning(f"未处理的导航索引: {index}")
 
     def _handle_settings_change(self):
         """Slot to handle signal from SettingsTab when sources/categories change."""
@@ -115,7 +212,7 @@ class MainWindow(QMainWindow):
         )
         self.news_sources_or_categories_changed = True
         # Check if the NewsTab is currently visible, if so, refresh it immediately
-        if self.tabs.currentIndex() == 0:  # Index of NewsTab
+        if self.stack.currentIndex() == 0:  # Index of NewsTab
             self._refresh_news_tab_filters()
 
     def _create_menu_bar(self):
@@ -209,3 +306,12 @@ class MainWindow(QMainWindow):
             logger.warning(
                 "Attempted to refresh news tab filters, but tab object doesn't exist."
             )
+
+    def _load_stylesheet(self):
+        """加载全局QSS样式文件"""
+        import os
+
+        qss_path = os.path.join(os.path.dirname(__file__), "style.qss")
+        if os.path.exists(qss_path):
+            with open(qss_path, "r", encoding="utf-8") as f:
+                self.setStyleSheet(f.read())

@@ -265,7 +265,7 @@ class QATab(QWidget):
         self.chat_display.ensureCursorVisible()
 
     def _add_message_to_chat(self, sender: str, message: str):
-        """Add a message to the chat display"""
+        """Add a message to the chat display (modern bubble style)"""
         # Basic HTML escaping for the message content
         message = (
             message.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -273,28 +273,47 @@ class QATab(QWidget):
         # Convert newlines to <br> for HTML display
         message = message.replace("\n", "<br />")
 
-        sender_style = ""
+        # 气泡样式
         if "User" in sender:
-            sender_style = "color: #005eff; font-weight: bold;"  # Blue for user
-            message_html = f"<p style='margin-bottom: 5px;'><span style='{sender_style}'>{sender}:</span><br />{message}</p>"
-        elif "System Error" in sender:
-            sender_style = "color: #D50000; font-weight: bold;"  # Red for error
-            message_html = f"<p style='margin-bottom: 5px;'><span style='{sender_style}'>{sender}:</span><br />{message}</p>"
-        else:  # System answer
-            sender_style = "color: #008000; font-weight: bold;"  # Green for system
-            # Add message without extra <p> tag if it's part of answer
-            message_html = (
-                f"<span style='{sender_style}'>{sender}:</span><br />{message}"
+            bubble_style = (
+                "background: #2563eb; color: #fff; border-radius: 14px; padding: 10px 16px; "
+                "max-width: 70%; margin: 8px 0 8px auto; float: right; text-align: left; box-shadow: none;"
             )
+            sender_style = "font-weight: bold; color: #fff;"
+            message_html = f"""
+            <div style='{bubble_style}'>
+                <span style='{sender_style}'>{sender}</span><br />{message}
+            </div><div style='clear:both;'></div>
+            """
+        elif "System Error" in sender:
+            bubble_style = (
+                "background: #ffeaea; color: #d32f2f; border-radius: 14px; padding: 10px 16px; "
+                "max-width: 70%; margin: 8px auto 8px 0; float: left; text-align: left; box-shadow: none;"
+            )
+            sender_style = "font-weight: bold; color: #d32f2f;"
+            message_html = f"""
+            <div style='{bubble_style}'>
+                <span style='{sender_style}'>{sender}</span><br />{message}
+            </div><div style='clear:both;'></div>
+            """
+        else:  # System/AI
+            bubble_style = (
+                "background: #f1f3f7; color: #222; border-radius: 14px; padding: 10px 16px; "
+                "max-width: 70%; margin: 8px auto 8px 0; float: left; text-align: left; box-shadow: none;"
+            )
+            sender_style = "font-weight: bold; color: #2563eb;"
+            message_html = f"""
+            <div style='{bubble_style}'>
+                <span style='{sender_style}'>{sender}</span><br />{message}
+            </div><div style='clear:both;'></div>
+            """
 
         # Append message and ensure visibility
-        # Check if the last block is an empty paragraph, common issue
         cursor = self.chat_display.textCursor()
         cursor.movePosition(cursor.MoveOperation.End)
         self.chat_display.setTextCursor(cursor)
-        if self.chat_display.toPlainText():  # Add separator if not the first message
-            self.chat_display.append("")  # Adds a paragraph break
-
+        if self.chat_display.toPlainText():
+            self.chat_display.append("")
         self.chat_display.insertHtml(message_html)
         self.chat_display.ensureCursorVisible()
 
