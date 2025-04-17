@@ -51,24 +51,6 @@ class FetchProgressDialog(QDialog):
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(15)
 
-        # 添加标题和说明
-        header_layout = QHBoxLayout()
-
-        title_label = QLabel("资讯抓取进度")
-        title_label.setStyleSheet("font-size: 18px; font-weight: bold; color: #07c160;")
-        header_layout.addWidget(title_label)
-
-        status_label = QLabel(f"总计: {len(sources)} 个资讯源")
-        status_label.setStyleSheet("color: #6c757d;")
-        header_layout.addStretch()
-        header_layout.addWidget(status_label)
-
-        layout.addLayout(header_layout)
-
-        description = QLabel("系统正在从配置的资讯源获取并分析内容，请耐心等待完成。")
-        description.setStyleSheet("color: #6c757d; margin-bottom: 10px;")
-        layout.addWidget(description)
-
         # 表格容器
         table_container = QWidget()
         table_container.setObjectName("FetchProgressContainer")

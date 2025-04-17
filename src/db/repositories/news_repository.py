@@ -33,8 +33,8 @@ class NewsRepository(BaseRepository):
             logger.debug(f"News with link {item['link']} already exists, skipping.")
             return None
 
-        # Prepare data
-        query = f"""
+        # Prepare query and params
+        query_str = f"""
             INSERT INTO {NEWS_TABLE} (
                 title, link, source_name, category_name, source_id, category_id,
                 summary, analysis, date
@@ -52,13 +52,28 @@ class NewsRepository(BaseRepository):
             item.get("date"),
         )
 
-        cursor = self._execute(query, params, commit=True)
-        if cursor and cursor.lastrowid:
-            logger.info(
-                f"Added news item '{item.get('title')}' with ID {cursor.lastrowid}."
-            )
-            return cursor.lastrowid
-        return None
+        # Execute using the new base method, commit=True
+        query = self._execute(
+            query_str, params, commit=True
+        )  # _execute now returns QSqlQuery
+
+        if query:
+            last_id = self._get_last_insert_id(query)
+            if last_id is not None:
+                logger.info(f"Added news item '{item.get('title')}' with ID {last_id}.")
+                # Ensure the ID type is appropriate (likely int)
+                return (
+                    int(last_id)
+                    if isinstance(last_id, (int, float)) or str(last_id).isdigit()
+                    else None
+                )
+            else:
+                # This might happen if the table doesn't have AUTOINCREMENT or similar
+                logger.warning(
+                    f"News item '{item.get('title')}' added but could not retrieve lastInsertId."
+                )
+                return None  # Or indicate success differently?
+        return None  # _execute failed
 
     def add_batch(self, items: List[Dict[str, Any]]) -> Tuple[int, int]:
         """Adds multiple news items in a batch. Returns (success_count, skipped_count)."""
@@ -95,78 +110,99 @@ class NewsRepository(BaseRepository):
         if not params_list:
             return 0, skipped_count
 
-        query = f"""
+        query_str = f"""
             INSERT INTO {NEWS_TABLE} (
                 title, link, source_name, category_name, source_id, category_id,
                 summary, analysis, date
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
-        success_count = self._executemany(query, params_list, commit=True)
+        # Use the new _executemany
+        success_count = self._executemany(query_str, params_list, commit=True)
 
-        # Adjust skipped count if execute_many reported fewer inserts than expected (unlikely with IGNORE but possible)
-        # skipped_count = len(items) - success_count # More accurate way
-        if success_count != len(params_list):
-            logger.warning(
-                f"Expected to insert {len(params_list)} items, but DB reported {success_count}. Transaction might have partially failed or links existed."
-            )
-            # Re-query might be needed for absolute accuracy, but this gives an indication.
-            # For simplicity, we return the calculated skipped_count and reported success_count.
+        # The returned success_count from _executemany is now the number of successful inserts
+        final_skipped = len(items) - success_count  # More accurate skipped count
 
-        logger.info(f"Batch add news: {success_count} added, {skipped_count} skipped.")
-        return success_count, skipped_count
+        logger.info(f"Batch add news: {success_count} added, {final_skipped} skipped.")
+        return success_count, final_skipped
 
     def get_by_id(self, news_id: int) -> Optional[Dict[str, Any]]:
         """Gets a news item by its ID."""
-        query = f"""
+        query_str = f"""
             SELECT id, title, link, source_name, category_name, source_id, category_id,
                    summary, analysis, date
             FROM {NEWS_TABLE} WHERE id = ?
         """
-        row = self._fetchone(query, (news_id,))
+        row = self._fetchone(query_str, (news_id,))
         return self._row_to_dict(row) if row else None
 
     def get_all(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
         """Gets all news items with pagination."""
-        query = f"""
+        query_str = f"""
              SELECT id, title, link, source_name, category_name, source_id, category_id,
                     summary, analysis, date
              FROM {NEWS_TABLE} ORDER BY date DESC, id DESC LIMIT ? OFFSET ?
          """
-        rows = self._fetchall(query, (limit, offset))
+        rows = self._fetchall(query_str, (limit, offset))
         return [self._row_to_dict(row) for row in rows]
 
     def delete(self, news_id: int) -> bool:
         """Deletes a news item."""
-        query = f"DELETE FROM {NEWS_TABLE} WHERE id = ?"
-        cursor = self._execute(query, (news_id,), commit=True)
-        deleted = cursor.rowcount > 0 if cursor else False
-        if deleted:
-            logger.info(f"Deleted news item ID {news_id}.")
-        return deleted
+        query_str = f"DELETE FROM {NEWS_TABLE} WHERE id = ?"
+        query = self._execute(query_str, (news_id,), commit=True)
+        if query:
+            rows_affected = self._get_rows_affected(query)
+            deleted = rows_affected > 0
+            if deleted:
+                logger.info(f"Deleted news item ID {news_id}.")
+            return deleted
+        return False
 
     def exists_by_link(self, link: str) -> bool:
         """Checks if a news item exists by its link."""
-        query = f"SELECT 1 FROM {NEWS_TABLE} WHERE link = ? LIMIT 1"
-        return self._fetchone(query, (link,)) is not None
+        query_str = f"SELECT 1 FROM {NEWS_TABLE} WHERE link = ? LIMIT 1"
+        return self._fetchone(query_str, (link,)) is not None
 
     def get_all_links(self) -> List[str]:
         """Gets all unique links currently in the news table."""
-        query = f"SELECT link FROM {NEWS_TABLE}"
-        rows = self._fetchall(query)
+        query_str = f"SELECT link FROM {NEWS_TABLE}"
+        rows = self._fetchall(query_str)
         return [row[0] for row in rows]
 
     def clear_all(self) -> bool:
         """Deletes all news items from the table."""
         logger.warning("Attempting to clear all news data.")
-        # Reset auto-increment separately if needed after delete
-        cursor_del = self._execute(f"DELETE FROM {NEWS_TABLE}", commit=False)
-        cursor_seq = self._execute(f"DELETE FROM sqlite_sequence WHERE name='{NEWS_TABLE}'", commit=True)
-        cleared = cursor_del is not None and cursor_seq is not None
-        if cleared:
-            logger.info(f"Cleared all data from {NEWS_TABLE} table.")
-        else:
-            logger.error(f"Failed to clear news data from {NEWS_TABLE}.")
-        return cleared
+
+        # 开始事务
+        if not self._db.transaction():
+            logger.error("Failed to start transaction for clear_all.")
+            return False
+
+        # 第一个查询：删除所有数据
+        query_del = self._execute(f"DELETE FROM {NEWS_TABLE}", commit=False)
+        if not query_del:
+            logger.error(f"Failed to delete data from {NEWS_TABLE}. Rolling back.")
+            self._db.rollback()
+            return False
+
+        # 第二个查询：重置自增序列
+        query_seq = self._execute(
+            f"DELETE FROM sqlite_sequence WHERE name='{NEWS_TABLE}'", commit=False
+        )
+        if not query_seq:
+            logger.error(f"Failed to reset sequence for {NEWS_TABLE}. Rolling back.")
+            self._db.rollback()
+            return False
+
+        # 提交事务
+        if not self._db.commit():
+            logger.error(
+                f"Failed to commit transaction for clear_all: {self._db.lastError().text()}"
+            )
+            self._db.rollback()
+            return False
+
+        logger.info(f"Cleared all data from {NEWS_TABLE} table.")
+        return True
 
     def _row_to_dict(self, row: Tuple) -> Optional[Dict[str, Any]]:
         """Converts a database row tuple to a dictionary."""

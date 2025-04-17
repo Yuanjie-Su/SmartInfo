@@ -11,6 +11,7 @@ import os
 import logging
 import argparse
 from typing import Any, Dict
+from PySide6.QtWidgets import QApplication
 
 # --- Project Setup ---
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -125,12 +126,11 @@ def initialize_services(config: AppConfig) -> Dict[str, Any]:
         sys.exit(f"Service Initialization Error: {e}")
 
 
-def run_gui(services: Dict[str, Any]):
+def run_gui(app: QApplication, services: Dict[str, Any]):
     """Runs the PyQt GUI application"""
     logger.info("Starting GUI...")
     # Import GUI elements late to avoid issues if dependencies are missing initially
     try:
-        from PySide6.QtWidgets import QApplication
         from src.ui.main_window import MainWindow
     except ImportError as e:
         logger.critical(
@@ -138,7 +138,6 @@ def run_gui(services: Dict[str, Any]):
         )
         sys.exit(f"GUI Import Error: {e}. Please ensure PySide6 is installed.")
 
-    app = QApplication(sys.argv)
     app.setApplicationName("SmartInfo")
 
     try:
@@ -162,11 +161,14 @@ def main():
         # 1. Initialize Configuration
         config = init_config()
 
-        # 2. Initialize Database Connection Manager
+        # 2. Initialize QApplication
+        app = QApplication(sys.argv)
+
+        # 3. Initialize Database Connection Manager
         # This also ensures DB paths based on config are correct and tables exist
         init_db_connection()
 
-        # 3. Initialize Services
+        # 4. Initialize Services
         services = initialize_services(config)
 
         # --- Handle Command Line Arguments ---
@@ -215,7 +217,7 @@ def main():
                 logger.info("Clear news data aborted.")
 
         # --- Run the Application ---
-        run_gui(services)
+        run_gui(app, services)
 
     except Exception as e:
         logger.critical(

@@ -85,14 +85,6 @@ class SettingsWindow(QDialog):
         nav_layout.setContentsMargins(15, 20, 15, 20)
         nav_layout.setSpacing(10)
 
-        # 添加标题
-        settings_title = QLabel("设置")
-        settings_title.setObjectName("SettingsTitle")
-        settings_title.setStyleSheet(
-            "color: white; font-size: 18px; font-weight: bold; margin-bottom: 15px;"
-        )
-        nav_layout.addWidget(settings_title)
-
         self.nav_list = QListWidget()
         self.nav_list.setObjectName("SettingsNavList")
         # Add navigation items with icons
@@ -138,7 +130,7 @@ class SettingsWindow(QDialog):
         )
         self.save_button = button_box.button(QDialogButtonBox.StandardButton.Save)
         self.save_button.setText("保存设置")
-        self.save_button.setToolTip("保存 API Key, 嵌入模型, 获取频率等设置")
+        self.save_button.setToolTip("保存 API Key, 获取频率等设置")
 
         self.close_button = button_box.button(QDialogButtonBox.StandardButton.Close)
         self.close_button.setText("关闭")

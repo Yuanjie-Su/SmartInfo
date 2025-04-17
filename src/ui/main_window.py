@@ -8,7 +8,7 @@ Implements the main user interface of the application
 
 import sys
 import logging
-from typing import Dict, Any, Optional  # Added for type hinting
+from typing import Dict, Any, Optional
 
 from PySide6.QtWidgets import (
     QMainWindow,
@@ -37,11 +37,10 @@ class NavigationBar(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedWidth(180)
         self.setObjectName("NavigationBar")
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 20, 10, 20)
-        layout.setSpacing(15)
+        layout.setContentsMargins(5, 10, 5, 10)
+        layout.setSpacing(10)
 
         # 导航按钮 - 顶部按钮（News和Chat）
         self.buttons = []
@@ -49,12 +48,12 @@ class NavigationBar(QWidget):
         top_btn_icons = ["📰", "💬"]  # 使用Unicode字符作为图标
 
         for idx, (name, icon) in enumerate(zip(top_btn_names, top_btn_icons)):
-            btn = QPushButton(f" {icon}  {name}")
+            btn = QPushButton(f"{icon}  {name}")
             btn.setObjectName(f"NavBtn_{name}")
             btn.setCheckable(True)
             btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-            btn.setMinimumHeight(45)
-            btn.clicked.connect(lambda i=idx: self.on_btn_clicked(i))
+            btn.setStyleSheet("text-align: center;")
+            btn.clicked.connect(lambda checked, i=idx: self.on_btn_clicked(i))
             layout.addWidget(btn)
             self.buttons.append(btn)
 
@@ -62,20 +61,18 @@ class NavigationBar(QWidget):
         layout.addStretch(1)
 
         # 导航按钮 - 底部的设置按钮
-        settings_btn = QPushButton(f" ⚙️  Settings")
+        settings_btn = QPushButton(f"⚙️  Settings")
         settings_btn.setObjectName("NavBtn_Settings")
         settings_btn.setCheckable(True)
         settings_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        settings_btn.setMinimumHeight(45)
-        settings_btn.clicked.connect(
-            lambda checked: self.on_btn_clicked(2)
-        )  # 索引2对应设置
+        settings_btn.setStyleSheet("text-align: center;")
+        settings_btn.clicked.connect(lambda checked: self.on_btn_clicked(2))
         layout.addWidget(settings_btn)
         self.buttons.append(settings_btn)
 
         # 底部添加版本信息
         version_label = QLabel("v1.0.0")
-        version_label.setStyleSheet("color: rgba(255, 255, 255, 0.7); font-size: 12px;")
+        version_label.setObjectName("VersionLabel")  # Added Object Name
         layout.addWidget(version_label, 0, Qt.AlignmentFlag.AlignHCenter)
 
         # 默认选中第一个
@@ -94,8 +91,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.services = services
 
-        self.setWindowTitle("SmartInfo - 智能资讯分析和知识管理工具")
-        self.setMinimumSize(1200, 800)
+        self.setWindowTitle("SmartInfo - Minimalist")  # Updated Title
+        self.setMinimumSize(1100, 700)  # Adjusted minimum size slightly
 
         # Flag to indicate if news sources or categories changed in settings
         self.news_sources_or_categories_changed = False
@@ -105,32 +102,49 @@ class MainWindow(QMainWindow):
 
     def _setup_ui(self):
         """Set up user interface using injected services"""
-        # 主体分栏布局
+        # Central widget and main horizontal layout
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QHBoxLayout(central_widget)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # 左侧导航栏
+        # --- Left Container (Navigation) ---
+        nav_container = QWidget()
+        # Optional: Set object name for styling
+        nav_container.setObjectName("NavigationContainer")
+        nav_container.setFixedWidth(200)
+        nav_layout = QVBoxLayout(nav_container)
+        nav_layout.setContentsMargins(0, 0, 0, 0)
+        nav_layout.setSpacing(0)
+
+        # Instantiate and add the NavigationBar to its container
         self.nav_bar = NavigationBar()
-        main_layout.addWidget(self.nav_bar)
+        nav_layout.addWidget(self.nav_bar)
+        # Add the navigation container to the main layout
+        main_layout.addWidget(nav_container)
 
-        # 右侧内容区（StackedWidget）
+        # --- Right Container (Content Stack) ---
         content_container = QWidget()
+        # Optional: Set object name for styling
+        content_container.setObjectName("ContentContainer")
         content_layout = QVBoxLayout(content_container)
-        content_layout.setContentsMargins(20, 20, 20, 20)
+        content_layout.setContentsMargins(12, 12, 12, 12)
+        content_layout.setSpacing(10)
 
+        # Instantiate and add the QStackedWidget to the content container
         self.stack = QStackedWidget()
         content_layout.addWidget(self.stack)
-
+        # Add the content container to the main layout
         main_layout.addWidget(content_container)
-        main_layout.setStretch(0, 0)
-        main_layout.setStretch(1, 1)
 
-        # --- 创建页面 ---
+        # Set stretch factors: Navigation fixed width, Content expands
+        main_layout.setStretch(0, 0)  # Stretch factor for nav_container
+        main_layout.setStretch(1, 1)  # Stretch factor for content_container
+
+        # --- Create and Add Pages to Stack ---
         try:
-            # NewsTab needs NewsService and potentially SettingService for initial filter load
+            # NewsTab needs NewsService
             self.news_tab = NewsTab(self.services["news_service"])
             # QATab needs QAService
             self.qa_tab = QATab(self.services["qa_service"])
@@ -145,8 +159,7 @@ class MainWindow(QMainWindow):
                 "Initialization Error",
                 f"Required service '{e}' not found. Application cannot start.",
             )
-            # Exit or disable tabs? Exiting is safer.
-            sys.exit(1)  # Or raise an exception
+            sys.exit(1)
         except Exception as e:
             logger.critical(
                 f"Unexpected error initializing UI tabs: {e}", exc_info=True
@@ -156,22 +169,21 @@ class MainWindow(QMainWindow):
             )
             sys.exit(1)
 
-        # 添加页面到栈
+        # Add pages to the stack widget inside the content_container
         self.stack.addWidget(self.news_tab)
         self.stack.addWidget(self.qa_tab)
-        # 默认显示第一个页面
+        # Set default page
         self.stack.setCurrentIndex(0)
 
-        # 连接导航栏按钮点击信号
+        # --- Connect Signals ---
+        # Connect navigation bar signal to handle page changes
         self.nav_bar.page_changed.connect(self._handle_navigation_request)
 
-        self.status_bar = QStatusBar()
-        self.setStatusBar(self.status_bar)
-        self.status_bar.showMessage("Ready")
-
-        # 加载全局样式
+        # --- Load Stylesheet ---
+        # Ensure this happens after all UI elements are created and added
         self._load_stylesheet()
 
+        # --- Settings Window Instance ---
         self.settings_window_instance: Optional[SettingsWindow] = None
 
     @Slot(int)
@@ -180,12 +192,12 @@ class MainWindow(QMainWindow):
         logger.debug(f"Navigation requested for index: {index}")
 
         if index == 0:  # News Tab
-            self.stack.setCurrentIndex(0)
+            self.stack.setCurrentIndex(index)
             # 如果设置已更改，刷新 News Tab 的过滤器
             if self.news_sources_or_categories_changed:
                 self._refresh_news_tab_filters()
         elif index == 1:  # QA Tab
-            self.stack.setCurrentIndex(1)
+            self.stack.setCurrentIndex(index)
             # 加载 QA 历史记录
             if hasattr(self, "qa_tab") and self.qa_tab:
                 self.qa_tab.load_history()
@@ -214,7 +226,7 @@ class MainWindow(QMainWindow):
                     )
 
                 # 显示模态对话框并等待其关闭
-                self.settings_window_instance.exec()
+                self.settings_window_instance.exec()  # Use exec() for modal dialog
 
             except KeyError as e:
                 error_msg = f"无法打开设置：缺少必要的服务 '{e}'。"
@@ -226,6 +238,13 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "错误", error_msg)
         else:
             logger.warning(f"未处理的导航索引: {index}")
+
+        # Ensure the correct nav button remains checked after settings dialog closes
+        # When the modal dialog closes, index will not be 2 anymore on return here if called again
+        current_stack_index = self.stack.currentIndex()
+        for i, btn in enumerate(self.nav_bar.buttons):
+            # Check the button corresponding to the current stack index (or settings if index is 2)
+            btn.setChecked(i == (index if index == 2 else current_stack_index))
 
     def _handle_settings_change(self):
         """Slot to handle signal from SettingsTab when sources/categories change."""
@@ -271,16 +290,7 @@ class MainWindow(QMainWindow):
             logger.info("User cancelled exit.")
             event.ignore()
 
-    def _on_tab_changed(self, index):
-        """Handles tab change event."""
-        logger.debug(f"Tab changed to index {index}")
-        # If switched to News tab AND settings indicated a change, refresh filters
-        if index == 0 and self.news_sources_or_categories_changed:  # Index 0 is NewsTab
-            self._refresh_news_tab_filters()
-
-        # Add actions for other tabs if needed when they become active
-        elif index == 1:  # QA Tab
-            self.qa_tab.load_history()  # Add this method to QATab
+    # Removed _on_tab_changed as it's handled within _handle_navigation_request
 
     def _refresh_news_tab_filters(self):
         """Refreshes filters on the news tab."""
@@ -301,7 +311,8 @@ class MainWindow(QMainWindow):
         try:
             if os.path.exists(qss_path):
                 with open(qss_path, "r", encoding="utf-8") as f:
-                    self.setStyleSheet(f.read())
+                    style_content = f.read()
+                    self.setStyleSheet(style_content)
                     logger.info(f"加载样式文件成功: {qss_path}")
             else:
                 logger.warning(f"样式文件不存在: {qss_path}")
