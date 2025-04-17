@@ -28,6 +28,7 @@ from PySide6.QtCore import Signal, Slot, Qt
 from .tabs.news_tab import NewsTab
 from .tabs.qa_tab import QATab
 from .settings_window import SettingsWindow
+from ..controllers.main_controller import MainController
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,12 @@ class MainWindow(QMainWindow):
     def __init__(self, services: Dict[str, Any]):
         super().__init__()
         self.services = services
+        # 初始化主控制器，注入服务以解耦 UI 与业务逻辑
+        self.main_controller = MainController(
+            self.services["news_service"],
+            self.services["qa_service"],
+            self.services["setting_service"],
+        )
 
         self.setWindowTitle("SmartInfo - Minimalist")  # Updated Title
         self.setMinimumSize(1100, 700)  # Adjusted minimum size slightly
@@ -144,10 +151,8 @@ class MainWindow(QMainWindow):
 
         # --- Create and Add Pages to Stack ---
         try:
-            # NewsTab needs NewsService
-            self.news_tab = NewsTab(self.services["news_service"])
-            # QATab needs QAService
-            self.qa_tab = QATab(self.services["qa_service"])
+            self.news_tab = NewsTab(self.main_controller.news_controller)
+            self.qa_tab = QATab(self.main_controller.qa_controller)
 
         except KeyError as e:
             logger.critical(
@@ -212,12 +217,11 @@ class MainWindow(QMainWindow):
                     logger.debug("Creating new SettingsWindow instance.")
                     # 确保传递了正确的 services
                     self.settings_window_instance = SettingsWindow(
-                        setting_service=self.services["setting_service"],
-                        news_service=self.services["news_service"],
-                        parent=self,  # 设置父窗口为 MainWindow
+                        controller=self.main_controller.settings_controller,
+                        parent=self,
                     )
                     # 将 SettingsWindow 的信号连接回 MainWindow
-                    self.settings_window_instance.settings_changed_signal.connect(
+                    self.main_controller.settings_controller.external_settings_changed.connect(
                         self._handle_settings_change
                     )
                 else:
@@ -307,7 +311,7 @@ class MainWindow(QMainWindow):
         """加载全局QSS样式文件"""
         import os
 
-        qss_path = os.path.join(os.path.dirname(__file__), "style.qss")
+        qss_path = os.path.join(os.path.dirname(__file__), "..", "styles", "style.qss")
         try:
             if os.path.exists(qss_path):
                 with open(qss_path, "r", encoding="utf-8") as f:

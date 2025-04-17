@@ -35,10 +35,9 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QFont, QColor, QIcon
 
 # Import Services needed
-from src.services.qa_service import QAService
-
-# Assuming AsyncTaskRunner is now in ui.async_runner
-from src.ui.async_runner import AsyncTaskRunner
+from src.services.qa_service import QAService  # 保留兼容，后续可移除
+from src.ui.controllers.qa_controller import QAController
+from src.ui.workers.async_runner import AsyncTaskRunner
 
 logger = logging.getLogger(__name__)
 
@@ -46,14 +45,16 @@ logger = logging.getLogger(__name__)
 class QATab(QWidget):
     """Intelligent Q&A Tab (Refactored)"""
 
-    def __init__(self, qa_service: QAService):  # Inject service
+    def __init__(self, controller: QAController):  # Inject controller
         super().__init__()
-        self._qa_service = qa_service
-        self._current_answer_sources: List[Dict] = (
-            []
-        )  # Store sources for current answer
+        self.controller = controller
+        # 连接 Controller 信号
+        self.controller.history_loaded.connect(self._on_history_loaded)
+        self.controller.answer_received.connect(self._on_answer_received)
+        self.controller.error_occurred.connect(self._on_qa_error)
+
         self._setup_ui()
-        self.load_history()  # Load history on init
+        self.controller.load_history()  # Load history on init
 
     def _setup_ui(self):
         """Set up user interface"""
@@ -167,23 +168,19 @@ class QATab(QWidget):
         self._show_welcome_message()
 
     def load_history(self):
-        """Loads Q&A history from the service."""
-        logger.info("Loading QA history...")
-        try:
-            self.history_list.clear()
-            history_items = self._qa_service.get_qa_history(limit=20)  # Get recent 20
-            if history_items:
-                for item in reversed(history_items):  # Show oldest first in list
-                    q_item = QListWidgetItem(item["question"])
-                    # Store full item data in the list item? Or just ID?
-                    q_item.setData(Qt.ItemDataRole.UserRole, item["id"])
-                    # Set tooltip to show answer preview?
-                    q_item.setToolTip(f"回答: {item['answer'][:100]}...")
-                    self.history_list.addItem(q_item)
-            logger.info(f"Loaded {len(history_items)} QA history items.")
-        except Exception as e:
-            logger.error(f"Failed to load QA history: {e}", exc_info=True)
-            QMessageBox.warning(self, "错误", f"加载历史记录失败: {e}")
+        """Trigger history load via controller."""
+        self.controller.load_history()
+
+    @Slot(list)
+    def _on_history_loaded(self, history_items: List[Dict[str, Any]]):
+        """Populate Q&A history list."""
+        self.history_list.clear()
+        for item in reversed(history_items):
+            q_item = QListWidgetItem(item["question"])
+            q_item.setData(Qt.ItemDataRole.UserRole, item["id"])
+            q_item.setToolTip(f"回答: {item['answer'][:100]}...")
+            self.history_list.addItem(q_item)
+        logger.info(f"Loaded {len(history_items)} QA history items.")
 
     def _show_welcome_message(self):
         """Display welcome message"""
@@ -210,7 +207,7 @@ class QATab(QWidget):
 
         self.question_input.clear()
         self._add_message_to_chat("👤 用户", question)  # Add user message immediately
-        self._current_answer_sources = []  # Clear sources from previous answer
+        self.controller.clear_answer_sources()  # Clear sources from previous answer
 
         # --- Update UI State ---
         self.send_button.setEnabled(False)
@@ -224,14 +221,7 @@ class QATab(QWidget):
         QApplication.processEvents()
 
         # --- Run async task ---
-        answer_coro = self._qa_service.answer_question
-        args = (question,)
-
-        self.runner = AsyncTaskRunner(answer_coro, *args)
-        self.runner.setAutoDelete(True)
-        self.runner.signals.finished.connect(self._on_answer_received)
-        self.runner.signals.error.connect(self._on_qa_error)
-        QThreadPool.globalInstance().start(self.runner)
+        self.controller.answer_question(question)
 
     @Slot(object)
     def _on_answer_received(self, result: Dict[str, Any]):
@@ -267,13 +257,13 @@ class QATab(QWidget):
             )
         elif result and result.get("answer"):
             answer = result["answer"]
-            self._current_answer_sources = result.get("sources", [])
+            self.controller.add_answer_sources(result.get("sources", []))
             # Add the actual answer
             self._add_message_to_chat("🤖 系统", answer)
             # Add sources if any
-            if self._current_answer_sources:
+            if self.controller.answer_sources:
                 sources_html = "<div style='margin: 10px 0 0 70px; font-size: 13px; color: #6c757d;'><b>参考来源 (相似度):</b><ul style='margin-top: 5px;'>"
-                for src in self._current_answer_sources:
+                for src in self.controller.answer_sources:
                     title = src.get("title", "未知标题")
                     sim = src.get("similarity", 0)
                     # Make title clickable if we store/retrieve the link? Need service change.
@@ -409,7 +399,7 @@ class QATab(QWidget):
         )
         if reply == QMessageBox.StandardButton.Yes:
             try:
-                if self._qa_service.clear_qa_history():
+                if self.controller.clear_qa_history():
                     self.history_list.clear()
                     self._show_welcome_message()  # Show welcome message again
                     QMessageBox.information(self, "成功", "问答历史记录已清除。")

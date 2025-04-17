@@ -131,7 +131,7 @@ def run_gui(app: QApplication, services: Dict[str, Any]):
     logger.info("Starting GUI...")
     # Import GUI elements late to avoid issues if dependencies are missing initially
     try:
-        from src.ui.main_window import MainWindow
+        from src.ui.views.main_window import MainWindow
     except ImportError as e:
         logger.critical(
             f"Failed to import GUI components (PySide6?): {e}", exc_info=True
@@ -230,9 +230,4 @@ def main():
 
 
 if __name__ == "__main__":
-    # Ensure event loop runs for async operations if services require it at top level
-    # For GUI apps, the Qt event loop usually handles this, but service init might need it.
-    # If using async heavily outside GUI event handlers, consider:
-    # asyncio.run(main())
-    # But for PyQt, direct call is usually correct.
     main()
