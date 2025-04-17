@@ -94,15 +94,15 @@ class NewsRepository(BaseRepository):
                 continue
 
             params = (
-                item.get("title"),
+                item.get("title", ""),
                 link,
-                item.get("source_name"),
-                item.get("category_name"),
+                item.get("source_name", ""),
+                item.get("category_name", ""),
                 item.get("source_id"),
                 item.get("category_id"),
-                item.get("summary"),
-                item.get("analysis"),
-                item.get("date"),
+                item.get("summary", ""),
+                item.get("analysis", ""),
+                item.get("date", ""),
             )
             params_list.append(params)
             processed_links.add(link)  # Add to set to avoid duplicates within the batch

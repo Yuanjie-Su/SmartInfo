@@ -416,55 +416,43 @@ Please list the URLs that should be deeply analyzed:
         prompt = """
 You are an intelligent content summarization assistant.
 You are given a collection of web pages in Markdown format. Each page represents a full article.
-Your job is to extract key information from each article and present it in a **well-structured, human-readable Markdown format** suitable for quick scanning and understanding.
+Your job is to extract key information from each article and present it in a **well‑structured, human‑readable Markdown format** suitable for quick scanning and understanding.
 
 ### Your task:
 
-1. For **each article**, extract and organize the following information:
+1. **Pre‑filtering:**  
+   - If a Markdown block clearly **lacks a title, original link, or substantive content**, treat it as *not a real article* and **skip it completely**—produce no output for that block.
+
+2. For **each valid article**, extract and organize the following information:
    - **Title**: Inferred from the content or heading, must not be empty.
    - **Original Link**: Provided with the article (you will find it right above each markdown block).
-   - **Publication Date**: If a specific date is mentioned in the content, include it in `YYYY-MM-DD` format.
-   - **Summary**: A concise overview within 100 words that captures the core message of the article.
-   - **Analysis**: Provide a **detailed, content‑specific analysis** in Markdown that focuses on the article’s effective information while automatically filtering out irrelevant or promotional details.  
-     - Tailor the analysis to the article’s context (e.g., **academic contributions**, technical innovations, social impact, trends, strategic implications, etc.).  
-     - Avoid a fixed template; let the structure follow the content.  
-     - **Do not include `---` inside the analysis.**
+   - **Publication Date**: If a specific date is mentioned in the content, include it in `YYYY‑MM‑DD` format.
+   - **Summary**: Provide a **detailed**, content‑rich overview (typically 150–200 words) that captures all core messages, context, evidence, and implications of the article.  
+     - Cover important facts, arguments, data, conclusions, and any notable background.  
+     - Omit ads, purely promotional language, UI elements, and other irrelevant details.
 
-2. Markdown formatting guidelines:
+3. Markdown formatting guidelines:
    - Use `###` for the title of each article.
    - Display the link and date using `🔗` and `📅` icons.
-   - Use bold labels `**Summary:**` and `**Analysis:**` for clarity.  
+   - Use the bold label `**Summary:**` for clarity.  
    - Ensure the result is easy to read in both English and Chinese.  
-   - **Write in the same language as the original article.** (If the article is in Chinese, your summary and analysis must also be in Chinese.)  
-   - Omit ads, UI elements, and any irrelevant metadata.
+   - **Write in the same language as the original article.**
 
 ### Example Output (for reference only):
 
 ---
 
-### Huawei Unveils CloudMatrix 384 Super Node  
+### Huawei Unveils CloudMatrix 384 Super Node  
 🔗 https://www.example.com/articles/huawei‑cloudmatrix  
 📅 2025‑04‑10  
-
-**Summary:** Huawei 发布 CloudMatrix 384 超节点，可大规模部署 Ascend AI 基础设施，显著提升模型训练效率。
-
-**Analysis:**
-- **技术突破：** CloudMatrix 384 通过高速互连和模块化设计，将 8 卡节点扩展至 384 卡，满足千亿参数大模型训练需求。
-- **生态影响：** 该平台降低了国内 AI 基础设施门槛，促进医疗、金融、制造等行业加速采用国产 AI 方案。
-- **战略意义：** 在美制裁背景下，此举强化了华为自研算力版图，推动本土 AI 产业链自主可控。
+**Summary:** Huawei 最新发布的 CloudMatrix 384 超节点通过高速互连和模块化设计，将传统 8 GPU 节点无缝扩展至 384 GPU 集群，满足千亿参数大模型的训练需求。该平台集成自研 Ascend AI 芯片，单节点提供高达 2 PFLOPS 的 BF16 算力，并通过 4.8 Tb/s 全互联网络显著降低通信延迟。文章详述了其液冷散热方案、灵活的资源切分机制以及对主流 AI 框架的深度优化，强调对医疗影像、金融风控和自动驾驶等场景的加速价值。作者还分析了在美国制裁背景下，华为通过自研硬件和软硬协同实现技术自主可控的战略意义，并预测该平台将推动国内 AI 基础设施快速升级，降低企业进入大模型时代的门槛。
 
 ---
 
-### Introduction to Self‑Attention in Transformer Models
-🔗 https://www.example.com/tutorial/transformer‑self‑attention
-📅 2024‑11‑22
-
-**Summary:** 这篇教程通过图示与 PyTorch 示例讲解 Transformer 模型中的自注意力机制，面向机器学习初学者。
-
-**Analysis:**
-- **教学价值：** 文中将数学公式与可视化步骤结合，帮助读者直观理解 Query‑Key‑Value 计算过程。
-- **实用示例：** 提供可直接运行的 PyTorch 代码片段，示范如何自定义多头注意力层。
-- **趋势洞察：** 随着多模态 Transformer 的兴起，深入掌握自注意力机制已成为进入生成式 AI 领域的必备技能。
+### Introduction to Self‑Attention in Transformer Models  
+🔗 https://www.example.com/tutorial/transformer‑self‑attention  
+📅 2024‑11‑22  
+**Summary:** 本教程面向机器学习初学者，以图示和示例代码深入讲解 Transformer 模型中的自注意力机制。文章首先通过 Query‑Key‑Value 描述公式，解析如何计算注意力权重；随后借助交互式图形演示多头注意力在捕获序列依赖关系中的优势。作者提供可运行的 PyTorch 代码，展示如何自定义多头注意力层，并对比单头与多头在机器翻译任务上的性能差异。教程还总结了自注意力在多模态任务、长文本处理和大模型微调中的应用趋势，指出熟练掌握该机制已成为进入生成式 AI 领域的核心技能。
 
 ---
 

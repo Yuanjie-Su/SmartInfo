@@ -160,7 +160,7 @@ class NewsTab(QWidget):
         preview_widget = QWidget()
         preview_layout = QVBoxLayout(preview_widget)
         preview_layout.setContentsMargins(0, 0, 0, 0)
-        preview_layout.addWidget(QLabel("Preview/Content:"))
+        preview_layout.addWidget(QLabel("Preview:"))
         self.preview_text = QTextEdit()
         self.preview_text.setReadOnly(True)
         preview_layout.addWidget(self.preview_text)
@@ -912,13 +912,6 @@ class NewsTab(QWidget):
                     + "\n- ".join(errors),
                 )
             elif deleted_count > 0:
-                QMessageBox.information(
-                    self, "Success", f"{deleted_count} news item(s) deleted."
-                )
-            else:
-                QMessageBox.warning(self, "No Action", "No news items were deleted.")
-
-            if deleted_count > 0:
                 logger.info("Refreshing news model after deletion.")
                 if not self.news_model.select():
                     error = self.news_model.lastError()
@@ -930,6 +923,8 @@ class NewsTab(QWidget):
                         "Refresh Failed",
                         f"Failed to refresh list after deletion: {error.text()}",
                     )
+            else:
+                QMessageBox.warning(self, "No Action", "No news items were deleted.")
 
     def _edit_news(self):
         if self._is_fetching:
@@ -966,23 +961,11 @@ class NewsTab(QWidget):
                 if news:
                     preview_html = f"<h3>{news.get('title', 'N/A')}</h3>"
                     preview_html += (
-                        f"<p><b>Source:</b> {news.get('source_name', 'N/A')}<br>"
-                    )
-                    preview_html += (
-                        f"<b>Category:</b> {news.get('category_name', 'N/A')}<br>"
-                    )
-                    date_str = news.get("date", "")
-                    preview_html += (
-                        f"<b>Date:</b> {date_str[:19] if date_str else 'N/A'}<br>"
+                        f"<p>{news.get('source_name', '')} {news.get('date', '')}<br>"
                     )
                     link = news.get("link", "#")
-                    preview_html += f"<b>Link:</b> <a href='{link}'>{link}</a></p><hr>"
-                    preview_html += f"<b>Summary:</b><p>{news.get('summary', 'No summary available.')}</p>"
-                    analysis = news.get("analysis")
-                    if analysis:
-                        # Basic markdown-like formatting to HTML (can be improved)
-                        analysis_html = analysis.replace("\n", "<br>")
-                        preview_html += f"<hr><b>Analysis:</b><p>{analysis_html}</p>"
+                    preview_html += f"<a href='{link}'>{link}</a></p>"
+                    preview_html += f"<p>{news.get('summary', '')}</p>"
                     self.preview_text.setHtml(preview_html)
                 else:
                     self.preview_text.setText(
