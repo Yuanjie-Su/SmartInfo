@@ -330,3 +330,36 @@ QFormLayout {
     min-width: 60px; /* Smaller button */
     padding: 6px 10px;
 }
+
+/* FetchProgressDialog Container Styling */
+#FetchProgressContainer {
+    background-color: #ffffff;
+    border: 1px solid #e0e4e7;
+    border-radius: 8px;
+    padding: 5px;
+}
+
+/* FetchProgressDialog Table Header Styling */
+#FetchProgressTable QHeaderView::section {
+    font-size: 14px;
+    font-weight: bold;
+    text-align: center;
+    padding-top: 20px;
+    padding-bottom: 20px;
+    border: none;
+    border-bottom: 1px solid #D0D0D0;
+    background-color: #ffffff;
+}
+
+/* FetchProgressDialog ProgressBar Styling */
+#FetchProgressContainer QProgressBar {
+    border: none;
+    border-radius: 6px;
+    background-color: #E8E8E8;
+    height: 20px;
+    text-align: center;
+}
+#FetchProgressContainer QProgressBar::chunk {
+    background-color: #9CAE7C;
+    border-radius: 6px;
+}

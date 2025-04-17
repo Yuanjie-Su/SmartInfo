@@ -394,8 +394,9 @@ Your task is to **identify which links if any, require deeper understanding by r
 ### Instructions:
 - Only include links that point to real content pages (e.g., full articles, papers, posts, tutorials).
 - Ignore any non-informational links such as login pages, navigation, ads, search/category pages, or QR codes.
-- Skip any links that are clearly irrelevant or repetitive.
-- If a link is relative (e.g., starts with `/articles/xxx`), please convert it into a full absolute URL using the base: {url}
+- **Deduplicate** identical URLs; skip links that are clearly irrelevant or repetitive.
+- If a link is **relative** (e.g., starts with `/articles/xxx`), convert it to an absolute URL using the base → {url}.
+- As a heuristic, prefer URLs with **two or more path segments** or a clear file extension such as `.html`, `.pdf`, `.md` over bare domain roots.
 - Do **not** summarize or analyze the content.
 - Do **not** output any explanations, formatting, markdown, or JSON.
 - Simply output a list of full URLs, one per line.
@@ -424,41 +425,46 @@ Your job is to extract key information from each article and present it in a **w
    - **Original Link**: Provided with the article (you will find it right above each markdown block).
    - **Publication Date**: If a specific date is mentioned in the content, include it in `YYYY-MM-DD` format.
    - **Summary**: A concise overview within 100 words that captures the core message of the article.
-   - **Analysis**: Provide meaningful insights based on the article content. The angle of analysis should be derived from the context — such as technical innovations, social impact, trends, strategic implications, etc. Do not use a fixed template. Make the analysis content-specific and informative.
+   - **Analysis**: Provide a **detailed, content‑specific analysis** in Markdown that focuses on the article’s effective information while automatically filtering out irrelevant or promotional details.  
+     - Tailor the analysis to the article’s context (e.g., **academic contributions**, technical innovations, social impact, trends, strategic implications, etc.).  
+     - Avoid a fixed template; let the structure follow the content.  
+     - **Do not include `---` inside the analysis.**
 
 2. Markdown formatting guidelines:
    - Use `###` for the title of each article.
    - Display the link and date using `🔗` and `📅` icons.
-   - Use labels like `**Summary:**` and `**Analysis:**` for clear formatting.
-   - Ensure the content is easy to read in both English and Chinese.
-   - Avoid promotional content, ads, irrelevant metadata, or UI elements.
-   - Your output should use **the same language as the original article**.
-     Do not translate or switch languages.
-     If the article is written in Chinese, your summary and analysis should also be in Chinese.
+   - Use bold labels `**Summary:**` and `**Analysis:**` for clarity.  
+   - Ensure the result is easy to read in both English and Chinese.  
+   - **Write in the same language as the original article.** (If the article is in Chinese, your summary and analysis must also be in Chinese.)  
+   - Omit ads, UI elements, and any irrelevant metadata.
 
 ### Example Output (for reference only):
 
 ---
 
-### Huawei Unveils CloudMatrix 384 Super Node
+### Huawei Unveils CloudMatrix 384 Super Node  
+🔗 https://www.example.com/articles/huawei‑cloudmatrix  
+📅 2025‑04‑10  
 
-🔗 https://www.example.com/articles/huawei-cloudmatrix
-📅 2025-04-10
+**Summary:** Huawei 发布 CloudMatrix 384 超节点，可大规模部署 Ascend AI 基础设施，显著提升模型训练效率。
 
-**Summary:** Huawei launched the CloudMatrix 384 super node, enabling scaled deployment of Ascend AI infrastructure and significantly boosting model training efficiency.
-
-**Analysis:** This marks a major step in Huawei’s commitment to building a domestic AI ecosystem. The CloudMatrix platform is poised to drive accelerated adoption of AI in sectors like healthcare, finance, and manufacturing, reinforcing Huawei’s leadership in AI cloud infrastructure.
+**Analysis:**
+- **技术突破：** CloudMatrix 384 通过高速互连和模块化设计，将 8 卡节点扩展至 384 卡，满足千亿参数大模型训练需求。
+- **生态影响：** 该平台降低了国内 AI 基础设施门槛，促进医疗、金融、制造等行业加速采用国产 AI 方案。
+- **战略意义：** 在美制裁背景下，此举强化了华为自研算力版图，推动本土 AI 产业链自主可控。
 
 ---
 
-### Introduction to Self-Attention in Transformer Models
+### Introduction to Self‑Attention in Transformer Models
+🔗 https://www.example.com/tutorial/transformer‑self‑attention
+📅 2024‑11‑22
 
-🔗 https://www.example.com/tutorial/transformer-self-attention
-📅 2024-11-22
+**Summary:** 这篇教程通过图示与 PyTorch 示例讲解 Transformer 模型中的自注意力机制，面向机器学习初学者。
 
-**Summary:** This tutorial explains the concept of self-attention in Transformer models with diagrams and PyTorch examples. It is targeted at ML beginners.
-
-**Analysis:** The article offers a clear pedagogical breakdown of one of the most important deep learning mechanisms. It bridges theoretical concepts and practical code, making it an ideal entry point for those aiming to implement custom Transformer blocks.
+**Analysis:**
+- **教学价值：** 文中将数学公式与可视化步骤结合，帮助读者直观理解 Query‑Key‑Value 计算过程。
+- **实用示例：** 提供可直接运行的 PyTorch 代码片段，示范如何自定义多头注意力层。
+- **趋势洞察：** 随着多模态 Transformer 的兴起，深入掌握自注意力机制已成为进入生成式 AI 领域的必备技能。
 
 ---
 

@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QLabel,
     QLineEdit,
+    QMenu,
     QSplitter,
     QTextEdit,
     QHeaderView,
@@ -122,13 +123,6 @@ class NewsTab(QWidget):
         self.fetch_button.clicked.connect(self._fetch_news_handler)
         toolbar_layout.addWidget(self.fetch_button)
 
-        # Add a Cancel button (initially hidden/disabled)
-        self.cancel_button = QPushButton("Cancel Fetch")
-        self.cancel_button.setToolTip("Attempt to cancel the ongoing fetch operation.")
-        self.cancel_button.clicked.connect(self._cancel_fetch_handler)
-        self.cancel_button.setVisible(False)  # Start hidden
-        toolbar_layout.addWidget(self.cancel_button)
-
         # --- Filters ---
         toolbar_layout.addWidget(QLabel("Category:"))
         self.category_filter = QComboBox()
@@ -174,34 +168,6 @@ class NewsTab(QWidget):
 
         splitter.setSizes([600, 200])
 
-        # --- Bottom Toolbar ---
-        bottom_toolbar = QHBoxLayout()
-        main_layout.addLayout(bottom_toolbar)
-
-        self.refresh_button = QPushButton("Refresh List")
-        self.refresh_button.clicked.connect(self._refresh_all)
-        bottom_toolbar.addWidget(self.refresh_button)
-
-        bottom_toolbar.addStretch(1)
-
-        self.analyze_button = QPushButton("Analyze Selected")
-        self.analyze_button.setToolTip(
-            "Analysis now happens automatically during Fetch News."
-        )
-        self.analyze_button.setEnabled(False)
-        bottom_toolbar.addWidget(self.analyze_button)
-
-        self.edit_button = QPushButton("Edit")
-        self.edit_button.setToolTip("Edit the selected news item (Not Implemented).")
-        self.edit_button.setEnabled(False)
-        bottom_toolbar.addWidget(self.edit_button)
-
-        self.delete_button = QPushButton("Delete Selected")
-        self.delete_button.setToolTip("Delete the selected news item(s).")
-        self.delete_button.clicked.connect(self._delete_news)
-        self.delete_button.setEnabled(False)
-        bottom_toolbar.addWidget(self.delete_button)
-
         # --- Connect Signals ---
         self.category_filter.currentIndexChanged.connect(
             self._on_category_filter_changed
@@ -211,6 +177,9 @@ class NewsTab(QWidget):
         self.news_table.selectionModel().selectionChanged.connect(
             self._on_selection_changed
         )
+        # 添加右键菜单
+        self.news_table.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.news_table.customContextMenuRequested.connect(self._show_context_menu)
 
     def _setup_table_model(self):
         db = get_db()
@@ -434,7 +403,6 @@ class NewsTab(QWidget):
             self.analysis_results_cache.clear()
             self.fetch_button.setText("Fetching...")
             self.fetch_button.setEnabled(False)  # Disable fetch button
-            self.cancel_button.setVisible(True)  # Show cancel button
             self._total_sources_to_process = len(selected_sources)
             self._initial_crawl_finished_flag = False
             self._processing_tasks_finished_count = 0
@@ -486,36 +454,6 @@ class NewsTab(QWidget):
                 self, "Error", f"Failed to initiate news fetch: {str(e)}"
             )
 
-    def _cancel_fetch_handler(self):
-        """Handles clicks on the Cancel Fetch button."""
-        if not self._is_fetching:
-            logger.warning("Cancel fetch requested, but no fetch is active.")
-            return
-
-        logger.info("User requested fetch cancellation.")
-        self.cancel_button.setEnabled(False)  # Prevent double clicks
-        self.cancel_button.setText("Cancelling...")
-
-        # --- Signal Cancellation to Workers ---
-        # 1. Cancel Initial Crawler Worker (if active)
-        if self._active_initial_crawler:
-            logger.info("Requesting cancellation for InitialCrawlerWorker...")
-            self._active_initial_crawler.cancel()
-            # Note: We don't immediately know if it succeeded, rely on flags/counts
-
-        # 2. Cancel Processing Worker Tasks (indirectly via its stop/cancel mechanism)
-        # The ProcessingWorker's stop method already handles cancelling its internal futures.
-        # We don't call stop() here, as that's for full cleanup.
-        # If we wanted finer control, ProcessingWorker could have a specific `cancel_pending_tasks` method.
-        # For now, rely on the fact that html_ready won't be emitted for cancelled crawls.
-
-        # Update progress dialog?
-        if self.fetch_progress_dialog:
-            self.fetch_progress_dialog.setWindowTitle("News Fetch - Cancelling...")
-
-        # The state reset will happen when workers acknowledge cancellation or finish.
-        # We might want to force a reset after a timeout if workers don't respond.
-
     def _reset_fetch_state(self, final_message: Optional[str] = None):
         """Resets the UI state after fetching finishes, fails, or is cancelled."""
         # Check if called from worker thread and queue if necessary
@@ -550,9 +488,6 @@ class NewsTab(QWidget):
         self._is_fetching = False
         self.fetch_button.setText("Fetch News")
         self.fetch_button.setEnabled(True)
-        self.cancel_button.setVisible(False)  # Hide cancel button
-        self.cancel_button.setText("Cancel Fetch")  # Reset text
-        self.cancel_button.setEnabled(True)  # Re-enable for next time
 
         if self.fetch_progress_dialog and final_message:
             try:
@@ -797,6 +732,39 @@ class NewsTab(QWidget):
             logger.debug(f"LLM result dialog for {url} closed.")
             del self.llm_stream_dialogs[url]
 
+    def _show_context_menu(self, pos):
+        menu = QMenu(self)
+        # 刷新列表
+        act_refresh = menu.addAction("Refresh List")
+        act_refresh.triggered.connect(self._refresh_all)
+        # 获取选中行
+        indexes = self.news_table.selectionModel().selectedRows()
+        # 分析功能
+        act_analyze = menu.addAction("Analyze Selected")
+        act_analyze.setEnabled(bool(indexes))
+        act_analyze.triggered.connect(self._analyze_selected)
+        # 编辑
+        act_edit = menu.addAction("Edit")
+        act_edit.setEnabled(len(indexes) == 1)
+        act_edit.triggered.connect(self._edit_news)
+        # 删除
+        act_delete = menu.addAction("Delete Selected")
+        act_delete.setEnabled(bool(indexes))
+        act_delete.triggered.connect(self._delete_news)
+        menu.exec(self.news_table.viewport().mapToGlobal(pos))
+
+    def _analyze_selected(self):
+        indexes = self.news_table.selectionModel().selectedRows()
+        if not indexes:
+            return
+        for idx in indexes:
+            src = self.proxy_model.mapToSource(idx)
+            col_id = self.news_model.fieldIndex("id")
+            nid = self.news_model.data(self.news_model.index(src.row(), col_id))
+            news = self._news_service.get_news_by_id(nid)
+            if news and news.get("link"):
+                self._show_llm_stream_dialog(news.get("link"))
+
     # --- Helper Methods (_get_selected_source_info_for_fetch remains the same) ---
     def _get_selected_source_info_for_fetch(self) -> List[Dict[str, Any]]:
         selected_sources: List[Dict[str, Any]] = []
@@ -972,8 +940,6 @@ class NewsTab(QWidget):
 
     def _on_selection_changed(self, selected, deselected):
         indexes = self.news_table.selectionModel().selectedRows()
-        enable_buttons = bool(indexes)
-        self.delete_button.setEnabled(enable_buttons)
 
         if not indexes:
             self.preview_text.clear()
@@ -986,7 +952,6 @@ class NewsTab(QWidget):
         if id_col_index == -1:
             logger.error("Could not find 'id' column in news model.")
             self.preview_text.setText("Error: Unable to find ID column.")
-            self.delete_button.setEnabled(False)
             return
 
         news_id_variant = self.news_model.data(
@@ -1033,7 +998,6 @@ class NewsTab(QWidget):
             self.preview_text.setText(
                 f"Unable to retrieve valid ID for selected row (Row: {source_index.row()})"
             )
-            self.delete_button.setEnabled(False)
 
     def _apply_filters(self):
         """
