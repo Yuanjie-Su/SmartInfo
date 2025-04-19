@@ -28,7 +28,11 @@ from src.db.repositories import (
 from src.services.llm_client import LLMClient
 
 # Utility for parsing structured output from LLM analysis
-from src.utils.markdown_utils import clean_markdown_links
+from src.utils.markdown_utils import (
+    clean_markdown_links,
+    strip_markdown_divider,
+    strip_markdown_links,
+)
 from src.utils.parse import parse_markdown_analysis_output
 
 # Utility for measuring token counts for LLM input/output constraints
@@ -36,6 +40,12 @@ from src.utils.token_utils import get_token_size
 
 # HTML cleaning and conversion to Markdown
 from src.utils.html_utils import clean_and_format_html
+
+# system prompt
+from src.utils.prompt import (
+    EXTRACT_ARTICLE_LINKS_SYSTEM_PROMPT,
+    EXTRACT_SUMMARIZE_ARTICLE_BATCH_SYSTEM_PROMPT,
+)
 
 # Configure module-level logger
 logger = logging.getLogger(__name__)
@@ -45,7 +55,7 @@ DEFAULT_EXTRACTION_MODEL = "deepseek-v3-250324"
 # Maximum tokens allowed in LLM's output response
 MAX_OUTPUT_TOKENS = 16384
 # Maximum tokens allowed in LLM's input prompt
-MAX_INPUT_TOKENS = 131072 - MAX_OUTPUT_TOKENS
+MAX_INPUT_TOKENS = 131072 - 2 * MAX_OUTPUT_TOKENS
 
 
 class NewsService:
@@ -283,7 +293,10 @@ class NewsService:
         link_prompt = self.build_link_extraction_prompt(base_url, markdown_content)
         links_str = await self._llm_client.get_completion_content(
             model=DEFAULT_EXTRACTION_MODEL,
-            messages=[{"role": "user", "content": link_prompt}],
+            messages=[
+                {"role": "system", "content": EXTRACT_ARTICLE_LINKS_SYSTEM_PROMPT},
+                {"role": "user", "content": link_prompt},
+            ],
             max_tokens=4096,  # Sufficient for a list of links
             temperature=0.0,  # Low temp for deterministic extraction
         )
@@ -343,7 +356,8 @@ class NewsService:
                     continue
 
                 # Remove remaining inline Markdown links for cleaner analysis input
-                cleaned_content = re.sub(r"\[[^\[]*\]\([^)]*\)", "", sub_markdown)
+                cleaned_content = strip_markdown_links(sub_markdown)
+                cleaned_content = strip_markdown_divider(cleaned_content)
                 sub_content_map[sub_url] = cleaned_content.strip()
 
         except Exception as sub_err:
@@ -384,7 +398,30 @@ class NewsService:
             # Handle prompt chunking if it exceeds input limit
             if prompt_tokens > MAX_INPUT_TOKENS:
                 num_prompt_chunks = (prompt_tokens // MAX_INPUT_TOKENS) + 1
-                prompt_chunks = self._get_chunks(analysis_prompt, num_prompt_chunks)
+                # 将 sub_content_map 的 key 均分到 num_prompt_chunks 个子字典中，并重建每个子字典对应的 prompt
+                chunk_maps: List[Dict[str, str]] = []
+                keys = list(sub_content_map.keys())
+                total = len(keys)
+                if total < num_prompt_chunks:
+                    logger.warning(
+                        f"Not enough content to chunk for {url} ({status_prefix}), skipping chunking."
+                    )
+                    return (
+                        "",
+                        "Token limit exceeded, not enough content to chunk for {url} ({status_prefix}), skipping chunking.",
+                    )
+                size = total // num_prompt_chunks
+                for i in range(num_prompt_chunks):
+                    start = i * size
+                    end = start + size if i < num_prompt_chunks - 1 else total
+                    part_keys = keys[start:end]
+                    if not part_keys:
+                        continue
+                    chunk_maps.append({k: sub_content_map[k] for k in part_keys})
+                # 根据每个子字典重建 prompt 列表
+                prompt_chunks = [
+                    self.build_content_analysis_prompt(chunk) for chunk in chunk_maps
+                ]
                 logger.info(
                     f"Analysis prompt chunking for {url} ({status_prefix}): {len(prompt_chunks)} parts."
                 )
@@ -400,7 +437,13 @@ class NewsService:
                     )
                     chunk_result = await self._llm_client.get_completion_content(
                         model=DEFAULT_EXTRACTION_MODEL,
-                        messages=[{"role": "user", "content": p_chunk}],
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": EXTRACT_SUMMARIZE_ARTICLE_BATCH_SYSTEM_PROMPT,
+                            },
+                            {"role": "user", "content": p_chunk},
+                        ],
                         max_tokens=MAX_OUTPUT_TOKENS,
                         temperature=0.8,  # Higher temp for creative summarization
                     )
@@ -416,13 +459,17 @@ class NewsService:
                 )  # Combine results
             else:
                 # Analyze in one go
-                analysis_result_markdown = (
-                    await self._llm_client.get_completion_content(
-                        model=DEFAULT_EXTRACTION_MODEL,
-                        messages=[{"role": "user", "content": analysis_prompt}],
-                        max_tokens=MAX_OUTPUT_TOKENS,
-                        temperature=0.8,
-                    )
+                analysis_result_markdown = await self._llm_client.get_completion_content(
+                    model=DEFAULT_EXTRACTION_MODEL,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": EXTRACT_SUMMARIZE_ARTICLE_BATCH_SYSTEM_PROMPT,
+                        },
+                        {"role": "user", "content": analysis_prompt},
+                    ],
+                    max_tokens=MAX_OUTPUT_TOKENS,
+                    temperature=0.8,
                 )
 
             # Check final result
@@ -562,48 +609,10 @@ class NewsService:
 
     def build_link_extraction_prompt(self, url: str, markdown_content: str) -> str:
         """Constructs the prompt for LLM link extraction."""
-        # (Prompt content remains the same as original)
         prompt = f"""
-You are an intelligent link extraction assistant specializing in identifying valuable content for deep reading.
-
-You are provided a markdown-formatted document crawled from a web page. It may contain various types of links: articles, tutorials, blogs, advertisements, navigation, author profiles, open-source project pages, etc.
-
-Your job is to carefully select **only the links that point to full, informative, deep-reading content**, and output them as clean plain-text URLs — one per line.
-
----
-
-### Extraction Rules:
-
-- **Must Include**:
-    - Full-length articles, papers, detailed blog posts, technical tutorials.
-    - Long-form news, research reports, scientific summaries.
-- **Must Exclude**:
-    - Homepages, author profile pages, personal blogs without article context.
-    - Ad banners, course promotions, tool/software recommendations.
-    - Navigation pages, tag/category overview pages.
-    - Lists like "Top Projects", "Recommended Tools", "Most Popular Posts".
-    - Any links ending without sufficient path depth (e.g., `/user/xxx`, `/tag/xxx`) unless it's a full article.
-
-- **Heuristics**:
-    - Prefer links with **two or more path segments** (e.g., `/articles/2025/04/18/title`) or containing explicit filenames (`.html`, `.pdf`, `.md`).
-    - Links with **very short paths** like `/user/abc`, `/tag/ai` are likely irrelevant — skip them.
-    - If a link is **relative** (e.g., `/article/12345`), automatically **expand** it into an absolute URL using the base: {url}.
-
-- **Output Format**:
-    - Plain text only.
-    - One URL per line.
-    - No extra commentary, markdown, or JSON.
-    - No duplicate URLs.
-
----
-
-Here is the markdown document:
-
+Base URL: {url}
+Markdown:
 {markdown_content}
-
----
-
-Please now output only the selected URLs (one per line):
 """
         return prompt
 
@@ -613,63 +622,14 @@ Please now output only the selected URLs (one per line):
         if not content_map:
             return ""
 
-        prompt = """
-You are an intelligent content summarization assistant.
-You are given a collection of web pages in Markdown format. Each page represents a full article.
-Your job is to extract key information from each article and present it in a **well‑structured, human‑readable Markdown format** suitable for quick scanning and understanding.
-
-### Your task:
-
-1. **Pre‑filtering:**
-   - If a Markdown block clearly **lacks substantive content**, treat it as *not a real article* and **skip it completely**—produce no output for that block.
-
-2. For **each valid article**, extract and organize the following information:
-   - **Title**: Inferred from the content or heading, must not be empty.
-   - **Original Link**: Provided with the article (you will find it right above each markdown block).
-   - **Publication Date**: If a specific date is mentioned in the content, include it in `YYYY‑MM‑DD` format.
-   - **Summary**: Provide a **detailed**, content‑rich overview (typically 150–200 words) that captures all core messages, context, evidence, and implications of the article.
-     - Cover important facts, arguments, data, conclusions, and any notable background.
-     - Omit ads, purely promotional language, UI elements, and other irrelevant details.
-
-### Markdown Formatting Rules:
-
-- Use `###` for the article title.
-- Show original link and date with icons:
-  - 🔗 for the link
-  - 📅 for the date
-- Label the summary section with `**Summary:**`.
-- Ensure excellent readability in **both English and Chinese**.
-- **Always write in the original language** of the article.
-
-### Example Output (for reference only):
-\"\"\"
----
-
-### Huawei Unveils CloudMatrix 384 Super Node
-🔗 https://www.example.com/articles/huawei‑cloudmatrix
-📅 2025‑04‑10
-**Summary:** Huawei 最新发布的 CloudMatrix 384 超节点通过高速互连和模块化设计，将传统 8 GPU 节点无缝扩展至 384 GPU 集群，满足千亿参数大模型的训练需求。该平台集成自研 Ascend AI 芯片，单节点提供高达 2 PFLOPS 的 BF16 算力，并通过 4.8 Tb/s 全互联网络显著降低通信延迟。文章详述了其液冷散热方案、灵活的资源切分机制以及对主流 AI 框架的深度优化，强调对医疗影像、金融风控和自动驾驶等场景的加速价值。作者还分析了在美国制裁背景下，华为通过自研硬件和软硬协同实现技术自主可控的战略意义，并预测该平台将推动国内 AI 基础设施快速升级，降低企业进入大模型时代的门槛。
-
----
-
-### Introduction to Self‑Attention in Transformer Models
-🔗 https://www.example.com/tutorial/transformer‑self‑attention
-📅 2024‑11‑22
-**Summary:** 本教程面向机器学习初学者，以图示和示例代码深入讲解 Transformer 模型中的自注意力机制。文章首先通过 Query‑Key‑Value 描述公式，解析如何计算注意力权重；随后借助交互式图形演示多头注意力在捕获序列依赖关系中的优势。作者提供可运行的 PyTorch 代码，展示如何自定义多头注意力层，并对比单头与多头在机器翻译任务上的性能差异。教程还总结了自注意力在多模态任务、长文本处理和大模型微调中的应用趋势，指出熟练掌握该机制已成为进入生成式 AI 领域的核心技能。
-
----
-\"\"\"
-
-### 🔥 Articles to Process:
-\"\"\"
-"""
-        for i, (url, content) in enumerate(content_map.items(), start=1):
-            prompt += f"\n\n--- Article ---\n"
+        prompt = ""
+        for url, content in content_map.items():
+            prompt += f"<Article>\n"
             prompt += f"Original Link: {url}\n"
             prompt += f"Markdown Content:\n{content}\n"
-            prompt += f"--- End Article ---\n"
+            prompt += f"</Article>\n\n"
 
-        prompt += '\n"""\nPlease summarize and analyze each article in Markdown format, following the structure and style shown above.'
+        prompt += "Please summarize each article in Markdown format, following the structure and style shown above."
         return prompt
 
     # -------------------------------------------------------------------------

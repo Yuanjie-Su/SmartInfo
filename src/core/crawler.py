@@ -290,7 +290,8 @@ class PlaywrightCrawler:
                         await self._scroll_page(page)
 
                     try:
-                        await page.wait_for_load_state("domcontentloaded", timeout=5000)
+                        # await page.wait_for_load_state("domcontentloaded", timeout=5000)
+                        await page.wait_for_load_state("networkidle", timeout=10000)
                     except PlaywrightTimeoutError:
                         logger.warning(
                             f"Network idle wait timed out for {final_url}. Continuing."

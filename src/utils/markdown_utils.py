@@ -149,5 +149,29 @@ def strip_image_links(raw_text: str) -> str:
     if not raw_text:
         return ""
 
-    image_pattern = r"!\[[^\]]*\]\([^)]*\)"
-    return re.sub(image_pattern, "", raw_text)
+    return re.sub(r"!\[[^\]]*\]\([^)]*\)", "", raw_text)
+
+
+def strip_markdown_divider(raw_text: str) -> str:
+    """
+    去除 Markdown 文本中的分割线
+    """
+    if not raw_text:
+        return ""
+
+    return re.sub(r"^\s*([-*_]\s*){3,}\s*$", "", raw_text, flags=re.MULTILINE)
+
+
+def strip_markdown_links(raw_text: str) -> str:
+    """
+    去除 Markdown 文本中的链接
+    """
+    if not raw_text:
+        return ""
+
+    text_without_images = strip_image_links(raw_text)
+
+    if not text_without_images:
+        return ""
+
+    return re.sub(r"\[[^\]]*\]\([^)]*\)", "", text_without_images)
