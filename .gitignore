@@ -53,3 +53,9 @@ logs/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# 测试数据
+test_data/
+profiling_script
+extract_and_clean.py
+

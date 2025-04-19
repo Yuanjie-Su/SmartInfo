@@ -37,8 +37,8 @@ class NewsRepository(BaseRepository):
         query_str = f"""
             INSERT INTO {NEWS_TABLE} (
                 title, link, source_name, category_name, source_id, category_id,
-                summary, analysis, date
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                summary, analysis, date, content
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         params = (
             item.get("title"),
@@ -50,6 +50,7 @@ class NewsRepository(BaseRepository):
             item.get("summary"),
             item.get("analysis"),
             item.get("date"),
+            item.get("content"),
         )
 
         # Execute using the new base method, commit=True
@@ -103,6 +104,7 @@ class NewsRepository(BaseRepository):
                 item.get("summary", ""),
                 item.get("analysis", ""),
                 item.get("date", ""),
+                item.get("content", ""),
             )
             params_list.append(params)
             processed_links.add(link)  # Add to set to avoid duplicates within the batch
@@ -113,8 +115,8 @@ class NewsRepository(BaseRepository):
         query_str = f"""
             INSERT INTO {NEWS_TABLE} (
                 title, link, source_name, category_name, source_id, category_id,
-                summary, analysis, date
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                summary, analysis, date, content
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         # Use the new _executemany
         success_count = self._executemany(query_str, params_list, commit=True)
@@ -129,7 +131,7 @@ class NewsRepository(BaseRepository):
         """Gets a news item by its ID."""
         query_str = f"""
             SELECT id, title, link, source_name, category_name, source_id, category_id,
-                   summary, analysis, date
+                   summary, analysis, date, content
             FROM {NEWS_TABLE} WHERE id = ?
         """
         row = self._fetchone(query_str, (news_id,))
@@ -139,7 +141,7 @@ class NewsRepository(BaseRepository):
         """Gets all news items with pagination."""
         query_str = f"""
              SELECT id, title, link, source_name, category_name, source_id, category_id,
-                    summary, analysis, date
+                    summary, analysis, date, content
              FROM {NEWS_TABLE} ORDER BY date DESC, id DESC LIMIT ? OFFSET ?
          """
         rows = self._fetchall(query_str, (limit, offset))
@@ -220,4 +222,5 @@ class NewsRepository(BaseRepository):
             "summary": row[7],
             "analysis": row[8],
             "date": row[9],
+            "content": row[10],
         }

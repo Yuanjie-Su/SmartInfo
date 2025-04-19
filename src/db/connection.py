@@ -224,6 +224,7 @@ class DatabaseConnectionManager:
                 summary TEXT,
                 analysis TEXT,
                 date TEXT,
+                content TEXT,
                 FOREIGN KEY (source_id) REFERENCES {NEWS_SOURCES_TABLE}(id) ON DELETE SET NULL,
                 FOREIGN KEY (category_id) REFERENCES {NEWS_CATEGORY_TABLE}(id) ON DELETE SET NULL
             )

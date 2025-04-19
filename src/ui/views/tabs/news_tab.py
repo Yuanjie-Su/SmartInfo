@@ -145,6 +145,7 @@ class NewsTab(QWidget):
             "analysis",
             "source_id",
             "category_id",
+            "content",
         ]
         for col_name in columns_to_hide:
             col_index = model.fieldIndex(col_name)

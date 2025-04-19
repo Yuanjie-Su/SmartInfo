@@ -153,7 +153,7 @@ class InitialCrawlerWorker(QRunnable):
 
         try:
             async for result in self._crawler_instance.process_urls(
-                urls_to_crawl, scroll_pages=True
+                urls_to_crawl, scroll_pages=False
             ):
                 if self.is_cancelled():
                     logger.info(
