@@ -11,7 +11,7 @@ NewsService Module
 import logging
 import asyncio
 import re
-from typing import List, Dict, Optional, Tuple, Callable, Any
+from typing import AsyncGenerator, List, Dict, Optional, Tuple, Callable, Any
 from urllib.parse import urljoin
 
 # Crawler for asynchronous HTTP requests
@@ -738,3 +738,62 @@ Markdown:
     def delete_source(self, source_id: int) -> bool:
         """Delete a news source by its ID."""
         return self._source_repo.delete(source_id)
+
+    # --- 新增方法：单条新闻分析 ---
+    async def analyze_single_content(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        api_key: str,
+        base_url: str
+    ) -> AsyncGenerator[str, None]:
+        """
+        使用LLM对单条内容进行分析，以流的方式返回结果。
+        
+        Args:
+            system_prompt: 系统提示文本
+            user_prompt: 用户提示文本（包含要分析的内容）
+            api_key: LLM API密钥
+            base_url: LLM API基础URL
+            
+        Yields:
+            生成的文本块
+        """
+        from src.services.llm_client import LLMClient
+        
+        try:
+            # 创建一个临时的LLM客户端
+            llm_client = LLMClient(api_key=api_key, base_url=base_url)
+            
+            # 获取流式生成结果
+            async for chunk in llm_client.stream_completion_content(
+                model=DEFAULT_EXTRACTION_MODEL,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                max_tokens=MAX_OUTPUT_TOKENS,
+                temperature=0.7,  # 适中的创造性
+            ):
+                yield chunk
+                
+        except Exception as e:
+            logger.error(f"LLM流式分析出错: {e}", exc_info=True)
+            yield f"\n\n分析过程发生错误: {str(e)}"
+            
+    def update_news_analysis(self, news_id: int, analysis_text: str) -> bool:
+        """
+        更新新闻条目的分析字段。
+        
+        Args:
+            news_id: 要更新的新闻ID
+            analysis_text: 分析结果文本
+            
+        Returns:
+            更新是否成功
+        """
+        try:
+            return self._news_repo.update_analysis(news_id, analysis_text)
+        except Exception as e:
+            logger.error(f"更新新闻ID {news_id} 的分析字段时出错: {e}", exc_info=True)
+            return False

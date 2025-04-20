@@ -31,6 +31,7 @@ from PySide6.QtGui import QAction
 from src.ui.controllers.news_controller import NewsController
 from src.ui.views.dialogs.fetch_progress_dialog import FetchProgressDialog
 from src.ui.views.dialogs.llm_stream_dialog import LlmStreamDialog
+from src.ui.views.dialogs.analysis_detail_dialog import AnalysisDetailDialog
 
 logger = logging.getLogger(__name__)
 
@@ -457,31 +458,86 @@ class NewsTab(QWidget):
         menu.exec(self.news_table.viewport().mapToGlobal(pos))
 
     def _show_analysis_for_selected(self, proxy_index: QModelIndex):
-        """Gets the URL for the selected item and shows the analysis dialog."""
-        if (
-            not self.controller.proxy_model
-            or not self.controller.news_model
-            or not proxy_index.isValid()
-        ):
-            return
-        source_index = self.controller.proxy_model.mapToSource(proxy_index)
-        link_col = self.controller.news_model.fieldIndex("link")
-        if link_col == -1:
-            self._show_error_message(
-                "Error", "Cannot find 'link' column to show analysis."
-            )
+        """
+        处理右键菜单 "View Analysis" 的点击事件。
+        打开一个新的对话框显示详情，并在需要时触发 LLM 分析。
+        """
+        if not self.controller.proxy_model or not self.controller.news_model or not proxy_index.isValid():
+            logger.warning("无法显示分析：模型或索引无效。")
+            self._show_error_message("错误", "无法获取所选项目的数据。")
             return
 
-        link_variant = self.controller.news_model.data(
-            self.controller.news_model.index(source_index.row(), link_col)
-        )
-        url = str(link_variant)
-        if url:
-            self._show_llm_stream_dialog(url)
-        else:
-            self._show_error_message(
-                "Error", "Selected item does not have a valid URL."
+        # --- 从模型获取所需要的数据 ---
+        source_index = self.controller.proxy_model.mapToSource(proxy_index)
+        news_details = self.controller.get_news_details(proxy_index)
+        
+        if not news_details:
+            self._show_error_message("错误", "无法获取新闻详情。")
+            return
+            
+        news_id = news_details.get("id")
+        title = news_details.get("title", "")
+        link = news_details.get("link", "")
+        date = news_details.get("date", "")
+        summary = news_details.get("summary", "")
+        source_name = news_details.get("source_name", "")
+        existing_analysis = news_details.get("analysis", "")
+        content = news_details.get("content", "")
+
+        # --- 创建并显示 AnalysisDetailDialog ---
+        try:
+            # 检查是否已有此对话框实例 (希望每个分析只打开一个窗口)
+            dialog_key = f"analysis_{news_id}" # 使用 news_id 作为唯一标识符
+            if dialog_key in self.llm_stream_dialogs and self.llm_stream_dialogs[dialog_key].isVisible():
+                 existing_dialog = self.llm_stream_dialogs[dialog_key]
+                 existing_dialog.raise_()
+                 existing_dialog.activateWindow()
+                 logger.debug(f"Analysis dialog for ID {news_id} already open.")
+                 return # 不重复打开
+
+
+            logger.info(f"为新闻 ID {news_id} 打开分析详情对话框。")
+            analysis_dialog = AnalysisDetailDialog(
+                news_id=news_id,
+                controller=self.controller, # 将控制器传递给对话框，用于连接信号
+                parent=self # 设置父窗口
             )
+            self.llm_stream_dialogs[dialog_key] = analysis_dialog # 跟踪打开的对话框
+            analysis_dialog.finished.connect(lambda result, key=dialog_key: self._analysis_dialog_closed(key))
+
+
+            analysis_dialog.set_details(title, link, date, summary, source_name)
+
+            if existing_analysis and existing_analysis.strip():
+                logger.debug(f"新闻 ID {news_id} 已有分析结果，直接显示。")
+                analysis_dialog.set_analysis_content(existing_analysis) # 假设对话框有此方法
+            else:
+                logger.debug(f"新闻 ID {news_id} 无分析结果，将触发 LLM 分析。")
+                analysis_dialog.set_analysis_content("⏳ 正在生成分析，请稍候...") # 初始提示
+                if not content or not content.strip():
+                     logger.warning(f"无法为新闻 ID {news_id} 生成分析，因为原文内容为空。")
+                     analysis_dialog.set_analysis_content("❌ 无法生成分析：原文内容缺失。")
+                else:
+                    # --- 调用 Controller 触发 LLM 分析 ---
+                    # 这个调用应该是异步的，Controller 内部会处理线程/异步任务
+                    # 对话框 AnalysisDetailDialog 内部需要连接 Controller 发出的流式信号
+                    self.controller.trigger_single_item_analysis(news_id, content)
+
+            analysis_dialog.show()
+
+        except Exception as e:
+            logger.error(f"创建或显示分析对话框时出错: {e}", exc_info=True)
+            self._show_error_message("界面错误", f"无法打开分析窗口: {e}")
+
+    # --- 新增: 对话框关闭处理 ---
+    @Slot(str) # 参数是之前设置的 dialog_key
+    def _analysis_dialog_closed(self, dialog_key: str):
+        """当分析详情对话框关闭时，从跟踪字典中移除它。"""
+        if dialog_key in self.llm_stream_dialogs:
+            logger.debug(f"Analysis detail dialog for key '{dialog_key}' closed.")
+            del self.llm_stream_dialogs[dialog_key]
+        else:
+            logger.warning(f"Attempted to remove non-tracked dialog key: {dialog_key}")
 
     # --- Dialog Management ---
     def _show_llm_stream_dialog(self, url: str):

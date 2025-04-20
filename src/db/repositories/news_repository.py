@@ -224,3 +224,27 @@ class NewsRepository(BaseRepository):
             "date": row[9],
             "content": row[10],
         }
+
+    def update_analysis(self, news_id: int, analysis_text: str) -> bool:
+        """
+        更新新闻条目的分析字段。
+        
+        Args:
+            news_id: 要更新的新闻ID
+            analysis_text: 分析结果文本
+            
+        Returns:
+            更新是否成功
+        """
+        query_str = f"UPDATE {NEWS_TABLE} SET analysis = ? WHERE id = ?"
+        query = self._execute(query_str, (analysis_text, news_id), commit=True)
+        
+        if query:
+            rows_affected = self._get_rows_affected(query)
+            updated = rows_affected > 0
+            if updated:
+                logger.info(f"已更新新闻ID {news_id} 的分析内容。")
+            else:
+                logger.warning(f"未能更新新闻ID {news_id} 的分析内容，可能ID不存在。")
+            return updated
+        return False
