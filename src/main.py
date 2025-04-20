@@ -112,7 +112,7 @@ def initialize_services(config: AppConfig) -> Dict[str, Any]:
             async_mode=True,
         )  # Use async for UI
 
-        news_service = NewsService(news_repo, source_repo, category_repo, llm_client)
+        news_service = NewsService(news_repo, source_repo, category_repo)
         qa_service = QAService(qa_repo, llm_client)
 
         logger.info("Services initialized successfully.")

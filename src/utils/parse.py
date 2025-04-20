@@ -33,8 +33,8 @@ def parse_markdown_analysis_output(markdown_text: str) -> List[Dict[str, str]]:
             elif line.startswith("📅 "):
                 article_data["date"] = line[len("📅 ") :].strip()
                 in_summary = False
-            elif line.startswith("**Summary:**"):
-                summary_lines.append(line[len("**Summary:**") :].strip())
+            elif line.startswith("📝 "):
+                summary_lines.append(line[len("📝 ") :].strip())
                 in_summary = True
             elif in_summary:
                 # Handle multi-line summaries if they occur

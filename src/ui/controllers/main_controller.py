@@ -33,7 +33,7 @@ class MainController(QObject):
         self.qa_service = qa_service
         self.setting_service = setting_service
         # 生成子控制器
-        self.news_controller = NewsController(self.news_service)
+        self.news_controller = NewsController(self.news_service, self.setting_service)
         self.settings_controller = SettingsController(
             self.setting_service, self.news_service
         )

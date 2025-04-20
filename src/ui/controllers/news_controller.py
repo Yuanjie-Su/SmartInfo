@@ -23,6 +23,7 @@ from PySide6.QtSql import QSqlTableModel  # Or use QAbstractTableModel if prefer
 from PySide6.QtCore import QSortFilterProxyModel
 
 from src.services.news_service import NewsService
+from src.services.setting_service import SettingService
 from src.db.connection import get_db  # Needed for QSqlTableModel
 from src.db.schema_constants import NEWS_TABLE
 from src.ui.workers.news_fetch_workers import (
@@ -47,9 +48,10 @@ class NewsController(QObject):
     )  # Final status message (e.g., "Finished", "Cancelled")
     error_occurred = Signal(str, str)  # title, message
 
-    def __init__(self, news_service: NewsService, parent=None):
+    def __init__(self, news_service: NewsService, setting_service: SettingService, parent=None):
         super().__init__(parent)
         self._news_service = news_service
+        self._setting_service = setting_service
         self._is_fetching = False
         self._active_initial_crawler: Optional[InitialCrawlerWorker] = None
         self._processing_worker: Optional[ProcessingWorker] = None
@@ -78,6 +80,8 @@ class NewsController(QObject):
         self._total_sources_to_process = 0
         self._initial_crawl_finished_flag = False
         self._processing_tasks_finished_count = 0
+
+        self._cancellation_in_progress = False
 
     def _setup_table_model(self):
         """Initializes the QSqlTableModel and proxy model."""
@@ -199,9 +203,9 @@ class NewsController(QObject):
 
     def refresh_news(self):
         """Reloads data from the database."""
-        if self._is_fetching:
-            self.error_occurred.emit("Busy", "Cannot refresh while fetching.")
-            return
+        # if self._is_fetching:
+        #     self.error_occurred.emit("Busy", "Cannot refresh while fetching.")
+        #     return
         if self._news_model:
             if self._news_model.select():
                 self.news_data_updated.emit()
@@ -314,10 +318,22 @@ class NewsController(QObject):
         self._processing_tasks_finished_count = 0
         self._active_initial_crawler = None
 
+        # 获取LLM配置信息
+        volcengine_api_key = self._setting_service.get_api_key("volcengine")
+        if not volcengine_api_key:
+            logger.warning("Volcano Engine API key not configured. LLM-dependent features may fail.")
+            self.error_occurred.emit(
+                "API Key Error", "Volcano Engine API key not configured. Please check your settings."
+            )
+            self._reset_fetch_state("API Key not configured")
+            return
+            
+        llm_base_url = "https://ark.cn-beijing.volces.com/api/v3"
+
         # Start the ProcessingWorker thread if not running
         if self._processing_worker is None:
             self._processing_worker = ProcessingWorker(
-                self._news_service, self._worker_signals
+                self._news_service, self._worker_signals, llm_base_url, volcengine_api_key
             )
             self._processing_worker.start()
             try:
@@ -339,13 +355,34 @@ class NewsController(QObject):
         logger.info("InitialCrawlerWorker submitted to thread pool.")
 
     def cancel_fetch(self):
-        if not self._is_fetching:
+        if not self._is_fetching or self._cancellation_in_progress:
             return
+        self._cancellation_in_progress = True
         logger.info("Controller requesting fetch cancellation.")
-        if self._active_initial_crawler:
-            self._active_initial_crawler.cancel()  # This should trigger the cascade
-        # The _check_if_all_fetching_done will handle the reset when appropriate
-        # TODO：stop the processing worker
+        
+        # 1. InitialCrawlerWorker
+        try:
+            if self._active_initial_crawler:
+                self._active_initial_crawler.cancel()  # This should trigger the cascade
+            self._active_initial_crawler = None
+        except Exception as e:
+            logger.error(f"Error cancelling fetch: {e}", exc_info=True)
+
+        # 2. ProcessingWorker (QThread)
+        if self._processing_worker and self._processing_worker.isRunning():
+            logger.info("Stopping NewsController's ProcessingWorker...")
+            self._processing_worker.stop()
+            self._processing_worker.quit()
+            if not self._processing_worker.wait(5000):
+                logger.warning("ProcessingWorker did not stop gracefully.")
+            self._processing_worker = None
+
+        # 3. Reset internal state and notify the interface
+        self._reset_fetch_state("Cancelled")
+        self.fetch_process_finished.emit("Cancelled")
+        self.refresh_news()
+
+        self._cancellation_in_progress = False
 
     def get_sources_matching_filters(
         self, category_id: int, source_name: str
@@ -358,6 +395,14 @@ class NewsController(QObject):
         if source_name == "All":
             return sources
         return [s for s in sources if s["name"] == source_name]
+
+    def get_source_names_by_category(self, category_id: int) -> List[str]:
+        """获取指定分类的所有新闻源名称"""
+        if category_id == -1:
+            sources = self._news_service.get_all_sources()
+        else:
+            sources = self._news_service.get_sources_by_category_id(category_id)
+        return sorted(list(set(s["name"] for s in sources if s.get("name"))))
 
     def get_analysis_result(self, url: str) -> Optional[str]:
         """Retrieves cached analysis result for a URL."""
@@ -374,7 +419,6 @@ class NewsController(QObject):
             if not self._processing_worker.wait(5000):
                 logger.warning("ProcessingWorker did not stop gracefully.")
         self._processing_worker = None  # Release reference
-        # QThreadPool is global, don't shut it down here
         logger.info("NewsController cleanup finished.")
 
     # --- Internal Slots for Worker Signals ---

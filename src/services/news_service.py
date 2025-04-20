@@ -75,14 +75,11 @@ class NewsService:
         news_repo: NewsRepository,
         source_repo: NewsSourceRepository,
         category_repo: NewsCategoryRepository,
-        llm_client: LLMClient,
     ):
         # Database repositories
         self._news_repo = news_repo
         self._source_repo = source_repo
         self._category_repo = category_repo
-        # LLM client for content extraction and analysis
-        self._llm_client = llm_client
 
     # -------------------------------------------------------------------------
     # Main Orchestration Method (Called by Worker/Controller)
@@ -94,6 +91,7 @@ class NewsService:
         html_content: str,
         source_info: Dict[str, Any],
         on_status_update: Optional[Callable[[str, str, str], None]],
+        llm_client: LLMClient,
     ) -> Tuple[int, str, Optional[Exception]]:
         """
         Processes HTML content from a single news source URL. This is the main
@@ -115,6 +113,7 @@ class NewsService:
             source_info: Dictionary containing metadata about the source (id, name, category_id, etc.).
             on_status_update: Optional callback function for reporting progress updates.
                               Expected signature: on_status_update(url, status_message, details)
+            llm_client: LLMClient instance to use for API calls.
 
         Returns:
             Tuple[int, str, Optional[Exception]]
@@ -176,7 +175,7 @@ class NewsService:
 
                 # Step 3a: Extract and crawl links
                 sub_content_map, chunk_error = await self._extract_and_crawl_links(
-                    url, chunk_content, status_prefix, _status_update
+                    url, chunk_content, status_prefix, _status_update, llm_client
                 )
                 if chunk_error:
                     processing_error = chunk_error  # Store first error encountered
@@ -185,7 +184,7 @@ class NewsService:
 
                 # Step 3b: Analyze the collected sub-content
                 chunk_analysis_result, analyze_error = await self._analyze_content(
-                    url, sub_content_map, status_prefix, _status_update
+                    url, sub_content_map, status_prefix, _status_update, llm_client
                 )
                 if analyze_error:
                     processing_error = (
@@ -284,6 +283,7 @@ class NewsService:
         markdown_content: str,
         status_prefix: str,
         _status_update: Callable[[str, str], None],
+        llm_client: LLMClient,
     ) -> Tuple[Dict[str, str], Optional[Exception]]:
         """Extracts links using LLM, crawls them, and returns processed sub-content."""
         sub_content_map: Dict[str, str] = {}
@@ -291,7 +291,7 @@ class NewsService:
 
         _status_update(f"{status_prefix} Link Ext", "Invoking LLM for links")
         link_prompt = self.build_link_extraction_prompt(base_url, markdown_content)
-        links_str = await self._llm_client.get_completion_content(
+        links_str = await llm_client.get_completion_content(
             model=DEFAULT_EXTRACTION_MODEL,
             messages=[
                 {"role": "system", "content": EXTRACT_ARTICLE_LINKS_SYSTEM_PROMPT},
@@ -379,6 +379,7 @@ class NewsService:
         sub_content_map: Dict[str, str],
         status_prefix: str,
         _status_update: Callable[[str, str], None],
+        llm_client: LLMClient,
     ) -> Tuple[str, Optional[Exception]]:
         """Analyzes the collected sub-content using LLM, handling chunking if needed."""
         analysis_result_markdown = ""
@@ -386,9 +387,6 @@ class NewsService:
 
         _status_update(f"{status_prefix} Analyzing", f"{len(sub_content_map)} items")
         analysis_prompt = self.build_content_analysis_prompt(sub_content_map)
-        print(len(sub_content_map))
-        with open(f"analysis_prompt.txt", "w", encoding="utf-8") as f:
-            f.write(analysis_prompt)
         prompt_tokens = get_token_size(analysis_prompt)
         logger.debug(
             f"Analysis prompt tokens for {url} ({status_prefix}): {prompt_tokens}"
@@ -435,7 +433,7 @@ class NewsService:
                         f"{status_prefix} Analyzing {j}/{len(prompt_chunks)}",
                         "LLM analysis",
                     )
-                    chunk_result = await self._llm_client.get_completion_content(
+                    chunk_result = await llm_client.get_completion_content(
                         model=DEFAULT_EXTRACTION_MODEL,
                         messages=[
                             {
@@ -459,7 +457,7 @@ class NewsService:
                 )  # Combine results
             else:
                 # Analyze in one go
-                analysis_result_markdown = await self._llm_client.get_completion_content(
+                analysis_result_markdown = await llm_client.get_completion_content(
                     model=DEFAULT_EXTRACTION_MODEL,
                     messages=[
                         {

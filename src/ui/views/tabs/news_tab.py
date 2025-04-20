@@ -157,8 +157,8 @@ class NewsTab(QWidget):
         """Connect UI signals to internal slots or controller slots."""
         # UI Actions -> Internal Trigger Methods -> Controller Actions
         self.fetch_button.clicked.connect(self._trigger_fetch_news)
-        self.cancel_fetch_button.clicked.connect(self.controller.cancel_fetch)
-        self.category_filter.currentIndexChanged.connect(self._trigger_filter_apply)
+        self.cancel_fetch_button.clicked.connect(self._trigger_cancel_fetch)
+        self.category_filter.currentIndexChanged.connect(self._handle_category_change)
         self.source_filter.currentIndexChanged.connect(self._trigger_filter_apply)
         self.search_input.textChanged.connect(self._trigger_filter_apply)
         self.news_table.selectionModel().selectionChanged.connect(
@@ -208,6 +208,11 @@ class NewsTab(QWidget):
         # Call controller to start fetch
         self.controller.start_fetch(selected_sources)
 
+    def _trigger_cancel_fetch(self):
+        """Triggers the cancellation of the ongoing fetch operation."""
+        self.cancel_fetch_button.setEnabled(False)
+        self.controller.cancel_fetch()
+
     def _trigger_filter_apply(self):
         """Gathers filter values and tells controller to apply them."""
         category_id = (
@@ -226,6 +231,25 @@ class NewsTab(QWidget):
 
         search_text = self.search_input.text().strip()
         self.controller.apply_filters(category_id, source_name, search_text)
+
+    def _handle_category_change(self):
+        """处理分类选择改变，更新对应的数据源过滤列表"""
+        category_id = self.category_filter.currentData()
+        
+        # 获取当前选中的分类对应的所有新闻源
+        source_names = self.controller.get_source_names_by_category(category_id)
+        
+        # 更新新闻源下拉框
+        self.source_filter.blockSignals(True)
+        self.source_filter.clear()
+        self.source_filter.addItem("All", "All")
+        for name in source_names:
+            self.source_filter.addItem(name, name)
+        self.source_filter.setCurrentIndex(0)  # 默认选中"All"
+        self.source_filter.blockSignals(False)
+        
+        # 应用过滤器更新表格
+        self._trigger_filter_apply()
 
     def _trigger_selection_changed(self):
         """Handles selection change in the table to update the preview."""
@@ -326,28 +350,17 @@ class NewsTab(QWidget):
         self.category_filter.blockSignals(False)
 
         # --- Source Filter ---
-        # It's simpler if controller provides only names needed for current category context
-        # But if controller provides all names, view filters based on category selection.
-        # Let's assume controller provides all names for now.
-        current_source_name = self.source_filter.currentData()
+        # 初始加载时，使用所有来源填充source_filter
         self.source_filter.blockSignals(True)
         self.source_filter.clear()
-        self.source_filter.addItem("All", "All")  # Use name "All" as data too
-        restored_src_index = 0
-        # Filter sources based on selected category (or show all if "All" category)
-        selected_cat_id = self.category_filter.currentData()
-        # We need the full source list from the controller if filtering here,
-        # or controller needs to send filtered source names.
-        # Let's just add all names received for simplicity now.
-        for i, name in enumerate(source_names):
-            self.source_filter.addItem(name, name)  # Use name as data
-            if name == current_source_name:
-                restored_src_index = i + 1
-        self.source_filter.setCurrentIndex(restored_src_index)
+        self.source_filter.addItem("All", "All")
+        for name in source_names:
+            self.source_filter.addItem(name, name)
+        self.source_filter.setCurrentIndex(0)  # 默认选择"All"
         self.source_filter.blockSignals(False)
 
-        # Trigger initial filter application if needed (or rely on currentIndexChanged)
-        # self._trigger_filter_apply()
+        # 初始过滤器应用
+        self._trigger_filter_apply()
 
     @Slot(str, str, bool)
     def _update_fetch_progress(self, url: str, status: str, is_final: bool):
@@ -385,9 +398,9 @@ class NewsTab(QWidget):
         if self.fetch_progress_dialog:
             # Update dialog title, keep it open for review
             self.fetch_progress_dialog.setWindowTitle(f"News Fetch - {final_message}")
-            # Maybe add a close button activation here if it was disabled during fetch
+
         # Trigger a refresh of news list implicitly by controller
-        # self.controller.refresh_news() # Controller should do this
+        self.controller.refresh_news() # Controller should do this
 
     @Slot(str, str)
     def _show_error_message(self, title: str, message: str):

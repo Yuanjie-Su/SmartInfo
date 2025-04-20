@@ -29,9 +29,6 @@ class WorkerSignals(QObject):
         str, str, str, str
     )  # url, final_status, details, analysis_result
 
-    # Signal to indicate ALL processing tasks are completed (can be useful)
-    # all_processing_complete = Signal() # 可选，如果需要一个总完成信号
-
 
 # --- Runnable for Initial Crawling ---
 class InitialCrawlerWorker(QRunnable):
@@ -51,24 +48,11 @@ class InitialCrawlerWorker(QRunnable):
         self.signals = parent_signals
         self._cancel_event = threading.Event()
         self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._crawler_instance: Optional[PlaywrightCrawler] = None
         self._main_task: Optional[asyncio.Task] = None
 
     def is_cancelled(self):
         """Check if cancellation has been requested."""
         return self._cancel_event.is_set()
-
-    async def _shutdown_crawler(self):
-        """Gracefully shuts down the crawler instance."""
-        if self._crawler_instance:
-            logger.info(
-                f"InitialCrawlerWorker ({threading.get_ident()}) shutting down Playwright crawler..."
-            )
-            await self._crawler_instance.shutdown()
-            self._crawler_instance = None
-            logger.info(
-                f"InitialCrawlerWorker ({threading.get_ident()}) Playwright crawler shut down."
-            )
 
     def run(self):
         worker_id = threading.get_ident()
@@ -79,26 +63,16 @@ class InitialCrawlerWorker(QRunnable):
         try:
             self._loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self._loop)
-            self._crawler_instance = (
-                PlaywrightCrawler()
-            )  # Initialize PlaywrightCrawler here
-
             self._main_task = self._loop.create_task(self._crawl_tasks_async())
             self._loop.run_until_complete(self._main_task)
 
         except asyncio.CancelledError:
             logger.info(f"InitialCrawlerWorker ({worker_id}) main task was cancelled.")
-            if self._loop and self._loop.is_running():
-                self._loop.run_until_complete(self._shutdown_crawler())
-
         except Exception as e:
             logger.error(
                 f"({worker_id}) Exception running InitialCrawlerWorker event loop: {e}",
                 exc_info=True,
             )
-            if self._loop and self._loop.is_running():
-                self._loop.run_until_complete(self._shutdown_crawler())
-
         finally:
             # --- Loop Cleanup ---
             if self._loop:
@@ -141,52 +115,48 @@ class InitialCrawlerWorker(QRunnable):
             logger.info(f"InitialCrawlerWorker ({worker_id}) run method finished.")
 
     async def _crawl_tasks_async(self):
-        """The main async method that performs crawling."""
+        """The main async method that performs crawling using context management."""
         worker_id = threading.get_ident()
-        if not self._crawler_instance:
-            logger.error(f"({worker_id}) Crawler instance not available.")
-            return
 
         urls_to_crawl = [info["url"] for info in self.urls_with_info]
         source_map = {info["url"]: info for info in self.urls_with_info}
         tasks_processed_count = 0
 
         try:
-            async for result in self._crawler_instance.process_urls(
-                urls_to_crawl, scroll_pages=False
-            ):
-                if self.is_cancelled():
-                    logger.info(
-                        f"Initial crawl ({worker_id}) cancelled during processing loop."
-                    )
-                    raise asyncio.CancelledError()
+            # 使用上下文管理，自动启动和关闭 PlaywrightCrawler
+            async with PlaywrightCrawler() as crawler:
+                async for result in crawler.process_urls(
+                    urls_to_crawl, scroll_pages=False
+                ):
+                    if self.is_cancelled():
+                        logger.info(
+                            f"Initial crawl ({worker_id}) cancelled during processing loop."
+                        )
+                        raise asyncio.CancelledError()
 
-                tasks_processed_count += 1
-                url = result.get("original_url")
-                html = result.get("content")
-                error = result.get("error")
-                source_info = source_map.get(url)
+                    tasks_processed_count += 1
+                    url = result.get("original_url")
+                    html = result.get("content")
+                    error = result.get("error")
+                    source_info = source_map.get(url)
 
-                if not source_info:
-                    logger.warning(
-                        f"({worker_id}) Crawler returned result for unknown URL: {url}"
-                    )
-                    continue
+                    if not source_info:
+                        logger.warning(
+                            f"({worker_id}) Crawler returned result for unknown URL: {url}"
+                        )
+                        continue
 
-                if self.is_cancelled():
-                    break
-
-                if error:
-                    self.signals.initial_crawl_status.emit(
-                        url, f"Crawled - Failed: {error}"
-                    )
-                elif html:
-                    self.signals.initial_crawl_status.emit(url, "Crawled - Success")
-                    self.signals.html_ready.emit(url, html, source_info)
-                else:
-                    self.signals.initial_crawl_status.emit(
-                        url, "Crawled - Failed: No content"
-                    )
+                    if error:
+                        self.signals.initial_crawl_status.emit(
+                            url, f"Crawled - Failed: {error}"
+                        )
+                    elif html:
+                        self.signals.initial_crawl_status.emit(url, "Crawled - Success")
+                        self.signals.html_ready.emit(url, html, source_info)
+                    else:
+                        self.signals.initial_crawl_status.emit(
+                            url, "Crawled - Failed: No content"
+                        )
 
         except asyncio.CancelledError:
             logger.info(f"({worker_id}) _crawl_tasks_async caught CancelledError.")
@@ -195,9 +165,8 @@ class InitialCrawlerWorker(QRunnable):
                 f"({worker_id}) Error in _crawl_tasks_async: {e}", exc_info=True
             )
         finally:
-            await self._shutdown_crawler()
             logger.info(
-                f"({worker_id}) Initial crawl task generator finished/cancelled after {tasks_processed_count} results."
+                f"({worker_id}) Initial crawl loop finished after {tasks_processed_count} results."
             )
 
     def cancel(self):
@@ -229,24 +198,36 @@ class ProcessingWorker(QThread):
     Dedicated QThread that runs an asyncio event loop to process analysis tasks concurrently.
     """
 
-    def __init__(self, news_service: NewsService, signals: WorkerSignals, parent=None):
+    def __init__(self, news_service: NewsService, signals: WorkerSignals, llm_base_url: str, llm_api_key: str, parent=None):
         super().__init__(parent)
         self.news_service = news_service
         self.signals = signals
+        self.llm_base_url = llm_base_url
+        self.llm_api_key = llm_api_key
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self._is_ready = threading.Event()
+        self._cancel_event = threading.Event()
         self._futures = set()
+        self.llm_semaphore = None  # 将在 run 方法中初始化
         logger.info("ProcessingWorker (QThread) initialized.")
 
     def run(self):
         thread_id = threading.get_ident()
         logger.info(f"ProcessingWorker ({thread_id}) thread starting...")
         try:
+            # 1) 创建并注册事件循环
             self.loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self.loop)
-            self._is_ready.set()
+
+            # 2) 初始化 LLM 并发控制信号量
+            self.llm_semaphore = asyncio.Semaphore(3)
+
+            # 3) 告知主线程：循环已就绪
+            self.loop.call_soon(self._is_ready.set)
+
             logger.info(f"ProcessingWorker ({thread_id}) event loop running...")
             self.loop.run_forever()
+
         except Exception as e:
             logger.error(
                 f"ProcessingWorker ({thread_id}) event loop error: {e}", exc_info=True
@@ -334,11 +315,23 @@ class ProcessingWorker(QThread):
                 ):
                     self.signals.processing_status.emit(u, f"{s}: {d}")
 
-            saved_count, analysis_result_md, error_obj = (
-                await self.news_service._process_html_and_analyze(
-                    url, html_content, source_info, status_callback
+            # 使用信号量控制并发 LLM 客户端的数量
+            async with self.llm_semaphore:
+                # 动态创建 LLM 客户端
+                from src.services.llm_client import LLMClient
+                llm_client = LLMClient(
+                    base_url=self.llm_base_url,
+                    api_key=self.llm_api_key,
+                    async_mode=True,
                 )
-            )
+                logger.debug(f"Created LLM client for task {task_id}")
+                
+                # 使用动态创建的 LLM 客户端执行任务
+                saved_count, analysis_result_md, error_obj = (
+                    await self.news_service._process_html_and_analyze(
+                        url, html_content, source_info, status_callback, llm_client
+                    )
+                )
 
             if asyncio.current_task().cancelled():
                 logger.info(f"Processing task for {url} cancelled after service call.")
@@ -401,20 +394,15 @@ class ProcessingWorker(QThread):
         thread_id = threading.get_ident()
         logger.info(f"Stop requested for ProcessingWorker ({thread_id}).")
         if self.loop and self.loop.is_running():
-            logger.debug(
-                f"Requesting cancellation of {len(self._futures)} tracked futures ({thread_id})."
-            )
-            cancelled_count = 0
+            # 1) 设置退出标志
+            self._cancel_eventZ@X#$.set()
+
+            # 2) 取消仍在排队/执行的 future，避免 “loop closed” 异常
             for future in list(self._futures):
                 if not future.done():
                     future.cancel()
-                    cancelled_count += 1
-            if cancelled_count > 0:
-                logger.info(f"Requested cancellation for {cancelled_count} futures.")
 
-            logger.debug(
-                f"Requesting event loop stop via call_soon_threadsafe ({thread_id})."
-            )
+            # 3) 停止事件循环
             self.loop.call_soon_threadsafe(self.loop.stop)
         else:
             logger.warning(

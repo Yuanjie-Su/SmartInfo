@@ -7,3 +7,4 @@ markdownify
 playwright
 openai
 aiohttp
+psutil
