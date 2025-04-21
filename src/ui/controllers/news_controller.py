@@ -1,4 +1,4 @@
-# src/ui/controllers/news_controller.py
+# src/ui/controllers/news_controller.py (Updated Version)
 
 """
 NewsController orchestrates the business logic and UI updates for the News Tab.
@@ -317,6 +317,10 @@ class NewsController(QObject):
 
     # --- Fetching Logic ---
     def start_fetch(self, sources_to_fetch: List[Dict[str, Any]]):
+        """
+        Starts the fetch process for selected news sources.
+        This has been updated to use the modified InitialCrawlerWorker that creates individual tasks for each URL.
+        """
         if self._is_fetching:
             self.error_occurred.emit(
                 "Busy", "A fetch operation is already in progress."
@@ -363,7 +367,8 @@ class NewsController(QObject):
                 self._reset_fetch_state("Worker start failed")
                 return
 
-        # Start the InitialCrawlerWorker runnable
+        # Start the InitialCrawlerWorker runnable with our modified implementation
+        # that creates individual tasks for each URL instead of using process_urls
         self._active_initial_crawler = InitialCrawlerWorker(
             sources_to_fetch, self._worker_signals
         )

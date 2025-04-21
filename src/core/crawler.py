@@ -284,6 +284,7 @@ class PlaywrightCrawler:
             page_timeout: int = 10000,  # ms
             browser_args: Optional[Dict[str, Any]] = None,
             user_agent: Optional[str] = None,
+            user_agent_rotation: bool = True, 
             max_retries: int = DEFAULT_MAX_RETRY_ATTEMPTS,
         ):
             self.headless = headless
@@ -291,10 +292,12 @@ class PlaywrightCrawler:
             self.max_retries = max_retries
             self.browser_args = browser_args or {}
             self.user_agent = user_agent
+            self.user_agent_rotation = user_agent_rotation
             self.semaphore = asyncio.Semaphore(max_concurrent_pages)
             self.pw_instance: Optional[Playwright] = None
             self.browser: Optional[Browser] = None
             self._start_lock = asyncio.Lock()
+            self._browser_initialized = False
             
             # Add performance optimizations
             self.context_pool = []
@@ -305,6 +308,9 @@ class PlaywrightCrawler:
             self.domain_timestamps = {}
             self.domain_locks: Dict[str, asyncio.Lock] = {}
 
+            # Initialize user agent list for rotation
+            self.user_agents = self._initialize_user_agents(user_agent)
+
     async def __aenter__(self):
         """Async enter method for context manager support."""
         await self._ensure_browser_started()
@@ -314,12 +320,112 @@ class PlaywrightCrawler:
         """Async exit method for context manager support."""
         await self.shutdown()
         return False  # Don't suppress exceptions
+    
+    def _initialize_user_agents(self, default_user_agent: Optional[str]) -> List[str]:
+        """Initialize a list of user agents for rotation"""
+        # Common user agents representing different browsers and devices
+        common_user_agents = [
+            # Chrome on Windows
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Safari/537.36",
+            # Firefox on Windows
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:88.0) Gecko/20100101 Firefox/88.0",
+            # Safari on macOS
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1 Safari/605.1.15",
+            # Chrome on macOS
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.93 Safari/537.36",
+            # Edge on Windows
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.93 Safari/537.36 Edg/90.0.818.51",
+            # Chrome on Android
+            "Mozilla/5.0 (Linux; Android 11; SM-G975F) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.91 Mobile Safari/537.36",
+            # Safari on iOS
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 14_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1 Mobile/15E148 Safari/604.1",
+        ]
+        
+        # If a default user agent is provided, add it to the beginning of the list
+        if default_user_agent:
+            return [default_user_agent] + common_user_agents
+        
+        # Use a custom user agent as the default if none is provided
+        default = "SmartInfo/1.0 (Playwright)"
+        return [default] + common_user_agents
+    
+    def _get_random_user_agent(self) -> str:
+        """Get a random user agent from the list"""
+        if not self.user_agent_rotation or len(self.user_agents) <= 1:
+            return self.user_agents[0]
+        
+        return random.choice(self.user_agents)
+    
+    async def _initialize_context_pool(self):
+        """Initialize a pool of browser contexts with diverse user agents for performance"""
+        async with self.context_pool_lock:
+            logger.info(f"Initializing context pool with {self.context_pool_size} contexts")
+            for i in range(self.context_pool_size):
+                # Get a user agent - either the fixed one or a random one if rotation is enabled
+                user_agent = self._get_random_user_agent()
+                
+                # Create device descriptor with a unique fingerprint
+                viewport = {"width": 1280, "height": 720}
+                if i % 3 == 1:  # Small variation in viewport sizes
+                    viewport = {"width": 1366, "height": 768}
+                elif i % 3 == 2:
+                    viewport = {"width": 1920, "height": 1080}
+                
+                # Create a context with this user agent and viewport
+                context = await self.browser.new_context(
+                    user_agent=user_agent,
+                    viewport=viewport,
+                    java_script_enabled=True,
+                    # Add a small amount of randomization to make each context slightly different
+                    # locale=random.choice(["en-US", "en-GB", "en-CA"]),
+                    # timezone_id=random.choice(["America/New_York", "Europe/London", "Asia/Shanghai"]),
+                )
+                
+                # Store the user agent with the context
+                self.context_pool.append({
+                    "context": context, 
+                    "in_use": False,
+                    "user_agent": user_agent,
+                    "viewport": viewport
+                })
+                
+            logger.info("Context pool initialized with diverse browser profiles")
+
+    async def _get_context_from_pool(self):
+        """Get an available context from the pool or create a new one if needed"""
+        async with self.context_pool_lock:
+            # Try to find an available context
+            for item in self.context_pool:
+                if not item["in_use"]:
+                    item["in_use"] = True
+                    return item
+            
+            # If all contexts are in use, create a new one
+            logger.info("All contexts in use, creating a new one")
+            context = await self.browser.new_context(user_agent=self.user_agent)
+            new_item = {"context": context, "in_use": True}
+            self.context_pool.append(new_item)
+            return new_item
+
+    async def _return_context_to_pool(self, context_item):
+        """Return a context to the pool"""
+        async with self.context_pool_lock:
+            for item in self.context_pool:
+                if item["context"] == context_item["context"]:
+                    item["in_use"] = False
+                    break
 
     async def _ensure_browser_started(self):
         """Use a lock to ensure Playwright and the browser are started (if not already running)."""
+        # Quick check without acquiring the lock
+        if self._browser_initialized and self.browser and self.browser.is_connected():
+            return
+
         async with self._start_lock:
-            if self.browser and self.browser.is_connected():
+            # Double-check after acquiring the lock (double-checked locking pattern)
+            if self._browser_initialized and self.browser and self.browser.is_connected():
                 return
+                
             if self.pw_instance is None:
                 try:
                     logger.info("Starting Playwright...")
@@ -352,46 +458,13 @@ class PlaywrightCrawler:
                 
                 # Initialize context pool
                 await self._initialize_context_pool()
+                
+                # Set the initialization flag
+                self._browser_initialized = True
+                
             except Exception as e:
                 await self.shutdown()
                 raise RuntimeError(f"Unable to start browser: {e}") from e
-
-    async def _initialize_context_pool(self):
-        """Initialize a pool of browser contexts for performance"""
-        async with self.context_pool_lock:
-            logger.info(f"Initializing context pool with {self.context_pool_size} contexts")
-            for _ in range(self.context_pool_size):
-                context = await self.browser.new_context(
-                    user_agent=self.user_agent,
-                    viewport={"width": 1280, "height": 720},
-                    java_script_enabled=True,
-                )
-                self.context_pool.append({"context": context, "in_use": False})
-            logger.info("Context pool initialized")
-
-    async def _get_context_from_pool(self):
-        """Get an available context from the pool or create a new one if needed"""
-        async with self.context_pool_lock:
-            # Try to find an available context
-            for item in self.context_pool:
-                if not item["in_use"]:
-                    item["in_use"] = True
-                    return item
-            
-            # If all contexts are in use, create a new one
-            logger.info("All contexts in use, creating a new one")
-            context = await self.browser.new_context(user_agent=self.user_agent)
-            new_item = {"context": context, "in_use": True}
-            self.context_pool.append(new_item)
-            return new_item
-
-    async def _return_context_to_pool(self, context_item):
-        """Return a context to the pool"""
-        async with self.context_pool_lock:
-            for item in self.context_pool:
-                if item["context"] == context_item["context"]:
-                    item["in_use"] = False
-                    break
 
     async def shutdown(self):
         """Close the browser and Playwright instance."""
@@ -459,15 +532,17 @@ class PlaywrightCrawler:
         # Enforce rate limiting
         await self._enforce_domain_rate_limit(url)
             
-        await self._ensure_browser_started()
-        if not self.browser or not self.browser.is_connected():
-            logger.error("Browser is not initialized or not connected.")
-            return {
-                "original_url": url,
-                "final_url": url,
-                "content": "",
-                "error": "Browser initialization failed",
-            }
+        # Only ensure browser is started if needed
+        if not self._browser_initialized or not self.browser or not self.browser.is_connected():
+            await self._ensure_browser_started()
+            if not self.browser or not self.browser.is_connected():
+                logger.error("Browser is not initialized or not connected.")
+                return {
+                    "original_url": url,
+                    "final_url": url,
+                    "content": "",
+                    "error": "Browser initialization failed",
+                }
             
         html_content = ""
         error_message = ""
@@ -527,6 +602,17 @@ class PlaywrightCrawler:
                 except PlaywrightError as e:
                     error_message = f"Playwright error for {url}: {str(e).splitlines()[0]}"
                     logger.error(f"{error_message} (Attempt {attempt+1}/{max_retries})")
+                    
+                    # Check for browser disconnection and try to recover
+                    if "Target closed" in str(e) or "Browser closed" in str(e):
+                        logger.warning("Browser connection lost, attempting to recover...")
+                        self._browser_initialized = False
+                        try:
+                            await self._ensure_browser_started()
+                            context_item = None  # Force getting a new context
+                        except Exception as init_err:
+                            logger.error(f"Failed to recover browser: {init_err}")
+                            
                 except Exception as e:
                     error_message = f"Unexpected error for {url}: {e}"
                     logger.error(f"{error_message} (Attempt {attempt+1}/{max_retries})")

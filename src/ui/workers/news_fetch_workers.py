@@ -115,7 +115,7 @@ class InitialCrawlerWorker(QRunnable):
             logger.info(f"InitialCrawlerWorker ({worker_id}) run method finished.")
 
     async def _crawl_tasks_async(self):
-        """The main async method that performs crawling using context management."""
+        """The main async method that performs crawling by creating individual tasks for each URL."""
         worker_id = threading.get_ident()
 
         urls_to_crawl = [info["url"] for info in self.urls_with_info]
@@ -125,49 +125,67 @@ class InitialCrawlerWorker(QRunnable):
         try:
             # Use context management to automatically start and shut down PlaywrightCrawler
             async with PlaywrightCrawler() as crawler:
-                async for result in crawler.process_urls(
-                    urls_to_crawl, scroll_pages=False
-                ):
+                # Create individual tasks for each URL instead of using process_urls
+                tasks = []
+                for url in urls_to_crawl:
                     if self.is_cancelled():
-                        logger.info(
-                            f"Initial crawl ({worker_id}) cancelled during processing loop."
-                        )
+                        logger.info(f"Initial crawl ({worker_id}) cancelled before creating tasks.")
                         raise asyncio.CancelledError()
+                    
+                    # Create task for each URL using _fetch_single directly
+                    task = asyncio.create_task(
+                        crawler._fetch_single(url, scroll_page=True),
+                        name=f"fetch_{url[:50]}"
+                    )
+                    tasks.append(task)
+                
+                # Process completed tasks
+                for future in asyncio.as_completed(tasks):
+                    if self.is_cancelled():
+                        logger.info(f"Initial crawl ({worker_id}) cancelled during task processing.")
+                        raise asyncio.CancelledError()
+                    
+                    try:
+                        result = await future
+                        tasks_processed_count += 1
+                        url = result.get("original_url")
+                        html = result.get("content")
+                        error = result.get("error")
+                        source_info = source_map.get(url)
 
-                    tasks_processed_count += 1
-                    url = result.get("original_url")
-                    html = result.get("content")
-                    error = result.get("error")
-                    source_info = source_map.get(url)
+                        if not source_info:
+                            logger.warning(f"({worker_id}) Crawler returned result for unknown URL: {url}")
+                            continue
 
-                    if not source_info:
-                        logger.warning(
-                            f"({worker_id}) Crawler returned result for unknown URL: {url}"
+                        if error:
+                            self.signals.initial_crawl_status.emit(url, f"Crawled - Failed: {error}")
+                        elif html:
+                            self.signals.initial_crawl_status.emit(url, "Crawled - Success")
+                            self.signals.html_ready.emit(url, html, source_info)
+                        else:
+                            self.signals.initial_crawl_status.emit(url, "Crawled - Failed: No content")
+                    
+                    except Exception as e:
+                        task_name = future.get_name() if hasattr(future, "get_name") else "unknown_task"
+                        logger.error(f"Task {task_name} raised an unexpected exception: {e}", exc_info=True)
+                        
+                        # Try to extract URL from task name to report failure
+                        original_url = (
+                            task_name.replace("fetch_", "") if task_name.startswith("fetch_") else "unknown_url"
                         )
-                        continue
-
-                    if error:
-                        self.signals.initial_crawl_status.emit(
-                            url, f"Crawled - Failed: {error}"
-                        )
-                    elif html:
-                        self.signals.initial_crawl_status.emit(url, "Crawled - Success")
-                        self.signals.html_ready.emit(url, html, source_info)
-                    else:
-                        self.signals.initial_crawl_status.emit(
-                            url, "Crawled - Failed: No content"
-                        )
+                        
+                        source_info = source_map.get(original_url)
+                        if source_info:
+                            self.signals.initial_crawl_status.emit(
+                                original_url, f"Crawled - Failed: Task execution error: {e}"
+                            )
 
         except asyncio.CancelledError:
             logger.info(f"({worker_id}) _crawl_tasks_async caught CancelledError.")
         except Exception as e:
-            logger.error(
-                f"({worker_id}) Error in _crawl_tasks_async: {e}", exc_info=True
-            )
+            logger.error(f"({worker_id}) Error in _crawl_tasks_async: {e}", exc_info=True)
         finally:
-            logger.info(
-                f"({worker_id}) Initial crawl loop finished after {tasks_processed_count} results."
-            )
+            logger.info(f"({worker_id}) Initial crawl loop finished after {tasks_processed_count} results.")
 
     def cancel(self):
         """Requests cancellation of the worker."""

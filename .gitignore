@@ -1,4 +1,4 @@
-# Python虚拟环境
+# Python virtual environments
 venv/
 .venv/
 env/
@@ -6,7 +6,7 @@ ENV/
 virtualenv/
 .virtualenv/
 
-# Python编译文件
+# Python compiled files
 __pycache__/
 *.py[cod]
 *$py.class
@@ -28,34 +28,32 @@ wheels/
 .installed.cfg
 *.egg
 
-# Cursor编辑器文件
+# Cursor editor files
 .cursor/
 .cursorignore
 
-# IDE配置文件
+# IDE configuration files
 .idea/
 .vscode/
 *.swp
 *.swo
 .DS_Store
 
-# 日志文件
+# Log files
 *.log
 logs/
 
-# 本地配置文件
+# Local configuration files
 # Ensure .env files are ignored
 .env*
 !.env.example
 
-# 缓存文件
+# Cache files
 .cache/
 .pytest_cache/
 .coverage
 htmlcov/
 
-# 测试数据
+# Test data
 test_data/
-profiling_script
-extract_and_clean.py
-
+stastic.py
