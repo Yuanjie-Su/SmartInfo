@@ -300,7 +300,7 @@ class MainWindow(QMainWindow):
         """Refreshes filters on the news tab."""
         if hasattr(self, "news_tab") and self.news_tab:
             logger.info("Refreshing news tab filters due to settings change.")
-            self.news_tab._load_filters()  # Call the filter loading method directly
+            self.news_tab.controller.load_filter_options()  # 调用控制器的方法加载过滤器
             self.news_sources_or_categories_changed = False  # Reset flag
         else:
             logger.warning(

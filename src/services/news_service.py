@@ -39,7 +39,7 @@ from src.utils.parse import parse_markdown_analysis_output
 from src.utils.token_utils import get_token_size
 
 # HTML cleaning and conversion to Markdown
-from src.utils.html_utils import clean_and_format_html
+from src.utils.html_utils import clean_and_format_html, extract_metadata_from_article_html
 
 # system prompt
 from src.utils.prompt import (
@@ -174,17 +174,17 @@ class NewsService:
                     continue
 
                 # Step 3a: Extract and crawl links
-                sub_content_map, chunk_error = await self._extract_and_crawl_links(
+                sub_structure_data_map, chunk_error = await self._extract_and_crawl_links(
                     url, chunk_content, status_prefix, _status_update, llm_client
                 )
                 if chunk_error:
                     processing_error = chunk_error  # Store first error encountered
-                if not sub_content_map:
+                if not sub_structure_data_map:
                     continue  # Skip analysis if no sub-content found or crawl failed
 
                 # Step 3b: Analyze the collected sub-content
                 chunk_analysis_result, analyze_error = await self._analyze_content(
-                    url, sub_content_map, status_prefix, _status_update, llm_client
+                    url, sub_structure_data_map, status_prefix, _status_update, llm_client
                 )
                 if analyze_error:
                     processing_error = (
@@ -195,21 +195,20 @@ class NewsService:
 
                 # Aggregate analysis results if chunking occurred
                 if num_chunks > 1:
-                    analysis_result_markdown += (
-                        f"\n\n--- Chunk {i} Analysis ---\n{chunk_analysis_result}"
-                    )
+                    analysis_result_markdown += chunk_analysis_result
                 else:
                     analysis_result_markdown = chunk_analysis_result
-
+                print(chunk_analysis_result)
                 # Step 3c: Parse results from this chunk's analysis
                 parsed_items, parse_error = self._parse_analysis_results(
                     url,
                     chunk_analysis_result,
-                    sub_content_map,
+                    sub_structure_data_map,
                     source_info,
                     status_prefix,
                     _status_update,
                 )
+                print(parsed_items)
                 if parse_error:
                     processing_error = (
                         processing_error or parse_error
@@ -286,7 +285,7 @@ class NewsService:
         llm_client: LLMClient,
     ) -> Tuple[Dict[str, str], Optional[Exception]]:
         """Extracts links using LLM, crawls them, and returns processed sub-content."""
-        sub_content_map: Dict[str, str] = {}
+        sub_structure_data_map: Dict[str, str] = {}
         error = None
 
         _status_update(f"{status_prefix} Link Ext", "Invoking LLM for links")
@@ -304,7 +303,7 @@ class NewsService:
         if not links_str or not links_str.strip():
             logger.warning(f"No links returned by LLM for {base_url} ({status_prefix})")
             _status_update(f"{status_prefix} No Links", "")
-            return sub_content_map, None  # Not an error, just no links
+            return sub_structure_data_map, None  # Not an error, just no links
 
         # Parse and normalize URLs
         extracted_links = [
@@ -317,7 +316,7 @@ class NewsService:
                 f"LLM link output produced no valid URLs for {base_url} ({status_prefix})"
             )
             _status_update(f"{status_prefix} No Links", "Parsing failed")
-            return sub_content_map, None
+            return sub_structure_data_map, None
 
         _status_update(f"{status_prefix} Crawling", f"{len(extracted_links)} URLs")
         logger.info(
@@ -344,21 +343,14 @@ class NewsService:
                     continue
 
                 # Clean sub-page HTML to Markdown, stripping images and links
-                sub_markdown = clean_and_format_html(
+                structure_data = extract_metadata_from_article_html(
                     html_content=crawl_result["content"],
                     base_url=sub_url,
-                    output_format="markdown",
-                    markdownify_options={
-                        "strip": ["img"]
-                    },  # Strip images during conversion
                 )
-                if not sub_markdown:
+                if not structure_data:
                     continue
 
-                # Remove remaining inline Markdown links for cleaner analysis input
-                cleaned_content = strip_markdown_links(sub_markdown)
-                cleaned_content = strip_markdown_divider(cleaned_content)
-                sub_content_map[sub_url] = cleaned_content.strip()
+                sub_structure_data_map[sub_url] = structure_data
 
         except Exception as sub_err:
             logger.error(
@@ -368,15 +360,15 @@ class NewsService:
             _status_update(f"{status_prefix} CrawlErr", str(sub_err))
             error = sub_err  # Propagate crawl error
 
-        if not sub_content_map:
+        if not sub_structure_data_map:
             _status_update(f"{status_prefix} No Sub-Content", "")
 
-        return sub_content_map, error
+        return sub_structure_data_map, error
 
     async def _analyze_content(
         self,
         url: str,
-        sub_content_map: Dict[str, str],
+        sub_structure_data_map: Dict[str, str],
         status_prefix: str,
         _status_update: Callable[[str, str], None],
         llm_client: LLMClient,
@@ -385,8 +377,8 @@ class NewsService:
         analysis_result_markdown = ""
         error = None
 
-        _status_update(f"{status_prefix} Analyzing", f"{len(sub_content_map)} items")
-        analysis_prompt = self.build_content_analysis_prompt(sub_content_map)
+        _status_update(f"{status_prefix} Analyzing", f"{len(sub_structure_data_map)} items")
+        analysis_prompt = self.build_content_analysis_prompt(sub_structure_data_map)
         prompt_tokens = get_token_size(analysis_prompt)
         logger.debug(
             f"Analysis prompt tokens for {url} ({status_prefix}): {prompt_tokens}"
@@ -398,7 +390,7 @@ class NewsService:
                 num_prompt_chunks = (prompt_tokens // MAX_INPUT_TOKENS) + 1
                 # 将 sub_content_map 的 key 均分到 num_prompt_chunks 个子字典中，并重建每个子字典对应的 prompt
                 chunk_maps: List[Dict[str, str]] = []
-                keys = list(sub_content_map.keys())
+                keys = list(sub_structure_data_map.keys())
                 total = len(keys)
                 if total < num_prompt_chunks:
                     logger.warning(
@@ -415,7 +407,7 @@ class NewsService:
                     part_keys = keys[start:end]
                     if not part_keys:
                         continue
-                    chunk_maps.append({k: sub_content_map[k] for k in part_keys})
+                    chunk_maps.append({k: sub_structure_data_map[k] for k in part_keys})
                 # 根据每个子字典重建 prompt 列表
                 prompt_chunks = [
                     self.build_content_analysis_prompt(chunk) for chunk in chunk_maps
@@ -495,7 +487,7 @@ class NewsService:
         self,
         url: str,
         analysis_result_markdown: str,
-        sub_content_map: Dict[str, str],
+        sub_structure_data_map: Dict[str, Dict[str, Any]],
         source_info: Dict[str, Any],
         status_prefix: str,
         _status_update: Callable[[str, str], None],
@@ -506,6 +498,7 @@ class NewsService:
 
         try:
             parsed_items = parse_markdown_analysis_output(analysis_result_markdown)
+            print(parsed_items)
             logger.info(
                 f"Parsed {len(parsed_items)} items from {url} ({status_prefix}) analysis."
             )
@@ -513,17 +506,17 @@ class NewsService:
             if parsed_items:
                 items_to_add = [
                     {
-                        **item,  # Contains title, link, date, summary
-                        "content": sub_content_map.get(
-                            item["link"], ""
-                        ),  # Add original content
+                        **item,  # Contains title, url, date, summary
+                        "content": sub_structure_data_map.get(
+                            item["url"], {}
+                        ).get("content", ""),  # Add original content
                         "source_name": source_info["name"],
                         "category_name": source_info["category_name"],
                         "source_id": source_info["id"],
                         "category_id": source_info["category_id"],
                     }
                     for item in parsed_items
-                    if item.get("link")  # Ensure link exists
+                    if item.get("url")  # Ensure url exists
                 ]
                 parsed_items_list.extend(items_to_add)
                 _status_update(
@@ -614,17 +607,19 @@ Markdown:
 """
         return prompt
 
-    def build_content_analysis_prompt(self, content_map: Dict[str, str]) -> str:
+    def build_content_analysis_prompt(self, structure_data_map: Dict[str, str]) -> str:
         """Constructs the prompt for LLM content analysis."""
         # (Prompt content remains the same as original)
-        if not content_map:
+        if not structure_data_map:
             return ""
 
         prompt = ""
-        for url, content in content_map.items():
+        for url, structure_data in structure_data_map.items():
             prompt += f"<Article>\n"
-            prompt += f"Original Link: {url}\n"
-            prompt += f"Markdown Content:\n{content}\n"
+            prompt += f"Title: {structure_data['title']}\n"
+            prompt += f"Url: {structure_data['url']}\n"
+            prompt += f"Date: {structure_data['date']}\n"
+            prompt += f"Content:\n{structure_data['content']}\n"
             prompt += f"</Article>\n\n"
 
         prompt += "Please summarize each article in Markdown format, following the structure and style shown above."

@@ -1,9 +1,9 @@
 EXTRACT_ARTICLE_LINKS_SYSTEM_PROMPT = """
 # Role:
-You are a Link Extraction Assistant.
+You are a Link Prefix Extraction Assistant.
 
 # Goal:
-Identify and extract **only** valuable "deep reading" links from a given markdown-formatted document. 
+Identify and extract **only** the common path prefixes of “deep reading” links in a given markdown-formatted document, according to the link-extraction rules. 
 The document may contain links to articles, tutorials, blogs, advertisements, navigation pages, author profiles, open-source projects, and other types.
 
 # Task Instructions:
@@ -126,20 +126,20 @@ EXTRACT_SUMMARIZE_ARTICLE_BATCH_SYSTEM_PROMPT = """
 You are an intelligent content summarization assistant.
 
 # Goal:
-Given a collection of web pages in Markdown format (each representing a full article), extract and present the key information in a concise, well‑structured, human‑readable Markdown format for quick scanning and understanding.
+Given a series of articles provided as <Article> ... </Article> blocks (each block containing a Title, Date, Url, and Content section), extract and present the key information in a concise, well‑structured, human‑readable Markdown format for quick scanning and understanding.
 
 # Task Instructions:
 1. **Pre‑filtering:**
-   - Skip any Markdown block that clearly lacks substantive content (i.e., not a real article).
+   - Skip any <Article> block that clearly lacks substantive content (i.e., not a real article).
 
 2. **Extraction (for each valid article):**
-   - **Title**: Infer from the content or heading; must not be empty.
-   - **Original Link**: Provided immediately above the markdown block.
-   - **Publication Date**: If mentioned, format as YYYY‑MM‑DD.
+   - **Title**: Taken directly from the Title: line; it must not be empty.
+   - **Url**: If a URL is provided immediately before or within the block, include it.
+   - **Date**: Taken from the Date: line; format as YYYY‑MM‑DD.
    - **Summary**: Write a detailed, content‑rich overview (150–200 words) covering core messages, context, evidence, and implications. Omit ads, promotional language, UI elements, and irrelevant details.
 
 # Heuristics:
-- Treat very short blocks or lists without narrative as non‑articles.
+- Treat very short <Article> blocks or lists without narrative as non‑articles.
 - If multiple headings exist, choose the most descriptive as the title.
 - When dates are ambiguous, look for explicit year/month/day patterns.
 - Ensure summaries capture arguments, data points, and conclusions.
@@ -155,14 +155,14 @@ Given a collection of web pages in Markdown format (each representing a full art
 ---
 
 ### [Article Title]
-🔗 [Original Link]
+🔗 [Url]
 📅 [YYYY‑MM‑DD]
 📝 [Detailed summary in original language]
 
 ---
 \"\"\"
 - Use `###` for the article title.
-- Prepend links with 🔗, dates with 📅 and summaries with 📝.
+- Prepend Url with 🔗, Date with 📅 and Summary with 📝.
 
 # Examples Output:
 \"\"\"

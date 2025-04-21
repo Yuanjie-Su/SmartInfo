@@ -22,27 +22,27 @@ class NewsRepository(BaseRepository):
     def add(self, item: Dict[str, Any]) -> Optional[int]:
         """Adds a single news item. Returns new ID or None if failed/exists."""
         # Basic validation
-        if not item.get("title") or not item.get("link"):
+        if not item.get("title") or not item.get("url"):
             logger.warning(
-                f"Skipping news item due to missing title or link: {item.get('link')}"
+                f"Skipping news item due to missing title or url: {item.get('url')}"
             )
             return None
 
-        # Check for duplicates by link
-        if self.exists_by_link(item["link"]):
-            logger.debug(f"News with link {item['link']} already exists, skipping.")
+        # Check for duplicates by url
+        if self.exists_by_url(item["url"]):
+            logger.debug(f"News with url {item['url']} already exists, skipping.")
             return None
 
         # Prepare query and params
         query_str = f"""
             INSERT INTO {NEWS_TABLE} (
-                title, link, source_name, category_name, source_id, category_id,
+                title, url, source_name, category_name, source_id, category_id,
                 summary, analysis, date, content
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         params = (
             item.get("title"),
-            item.get("link"),
+            item.get("url"),
             item.get("source_name"),
             item.get("category_name"),
             item.get("source_id"),
@@ -83,20 +83,20 @@ class NewsRepository(BaseRepository):
 
         params_list = []
         skipped_count = 0
-        processed_links = set(self.get_all_links())  # Get existing links efficiently
+        processed_urls = set(self.get_all_urls())  # Get existing urls efficiently
 
         for item in items:
-            link = item.get("link")
-            if not item.get("title") or not link:
+            url = item.get("url")
+            if not item.get("title") or not url:
                 skipped_count += 1
                 continue
-            if link in processed_links:
+            if url in processed_urls:
                 skipped_count += 1
                 continue
 
             params = (
                 item.get("title", ""),
-                link,
+                url,
                 item.get("source_name", ""),
                 item.get("category_name", ""),
                 item.get("source_id"),
@@ -107,14 +107,14 @@ class NewsRepository(BaseRepository):
                 item.get("content", ""),
             )
             params_list.append(params)
-            processed_links.add(link)  # Add to set to avoid duplicates within the batch
+            processed_urls.add(url)  # Add to set to avoid duplicates within the batch
 
         if not params_list:
             return 0, skipped_count
 
         query_str = f"""
             INSERT INTO {NEWS_TABLE} (
-                title, link, source_name, category_name, source_id, category_id,
+                title, url, source_name, category_name, source_id, category_id,
                 summary, analysis, date, content
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
@@ -130,7 +130,7 @@ class NewsRepository(BaseRepository):
     def get_by_id(self, news_id: int) -> Optional[Dict[str, Any]]:
         """Gets a news item by its ID."""
         query_str = f"""
-            SELECT id, title, link, source_name, category_name, source_id, category_id,
+            SELECT id, title, url, source_name, category_name, source_id, category_id,
                    summary, analysis, date, content
             FROM {NEWS_TABLE} WHERE id = ?
         """
@@ -140,7 +140,7 @@ class NewsRepository(BaseRepository):
     def get_all(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
         """Gets all news items with pagination."""
         query_str = f"""
-             SELECT id, title, link, source_name, category_name, source_id, category_id,
+             SELECT id, title, url, source_name, category_name, source_id, category_id,
                     summary, analysis, date, content
              FROM {NEWS_TABLE} ORDER BY date DESC, id DESC LIMIT ? OFFSET ?
          """
@@ -159,14 +159,14 @@ class NewsRepository(BaseRepository):
             return deleted
         return False
 
-    def exists_by_link(self, link: str) -> bool:
-        """Checks if a news item exists by its link."""
-        query_str = f"SELECT 1 FROM {NEWS_TABLE} WHERE link = ? LIMIT 1"
-        return self._fetchone(query_str, (link,)) is not None
+    def exists_by_url(self, url: str) -> bool:
+        """Checks if a news item exists by its url."""
+        query_str = f"SELECT 1 FROM {NEWS_TABLE} WHERE url = ? LIMIT 1"
+        return self._fetchone(query_str, (url,)) is not None
 
-    def get_all_links(self) -> List[str]:
-        """Gets all unique links currently in the news table."""
-        query_str = f"SELECT link FROM {NEWS_TABLE}"
+    def get_all_urls(self) -> List[str]:
+        """Gets all unique urls currently in the news table."""
+        query_str = f"SELECT url FROM {NEWS_TABLE}"
         rows = self._fetchall(query_str)
         return [row[0] for row in rows]
 
@@ -214,7 +214,7 @@ class NewsRepository(BaseRepository):
         return {
             "id": row[0],
             "title": row[1],
-            "link": row[2],
+            "url": row[2],
             "source_name": row[3],
             "category_name": row[4],
             "source_id": row[5],

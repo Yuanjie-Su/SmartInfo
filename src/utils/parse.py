@@ -28,7 +28,7 @@ def parse_markdown_analysis_output(markdown_text: str) -> List[Dict[str, str]]:
                 article_data["title"] = line[len("### ") :].strip()
                 in_summary = False
             elif line.startswith("🔗 "):
-                article_data["link"] = line[len("🔗 ") :].strip()
+                article_data["url"] = line[len("🔗 ") :].strip()
                 in_summary = False
             elif line.startswith("📅 "):
                 article_data["date"] = line[len("📅 ") :].strip()
@@ -43,7 +43,7 @@ def parse_markdown_analysis_output(markdown_text: str) -> List[Dict[str, str]]:
         article_data["summary"] = " ".join(summary_lines)
 
         # Only add to results if all keys are present
-        if all(key in article_data for key in ["title", "link", "date", "summary"]):
+        if all(key in article_data for key in ["title", "url", "date", "summary"]):
             articles.append(article_data)
 
     return articles

@@ -38,7 +38,7 @@ _app = QApplication.instance() or QApplication([])
 # --- Test Data (Keep as before) ---
 SAMPLE_NEWS_1: Dict[str, Any] = {
     "title": "Test Article 1",
-    "link": "http://example.com/test1",
+    "url": "http://example.com/test1",
     "source_name": "TestSource",
     "category_name": "TestCategory",
     "source_id": 10,
@@ -49,7 +49,7 @@ SAMPLE_NEWS_1: Dict[str, Any] = {
 }
 SAMPLE_NEWS_2: Dict[str, Any] = {
     "title": "Test Article 2",
-    "link": "http://example.com/test2",
+    "url": "http://example.com/test2",
     "source_name": "TestSource",
     "category_name": "TestCategory",
     "source_id": 10,
@@ -60,7 +60,7 @@ SAMPLE_NEWS_2: Dict[str, Any] = {
 }
 SAMPLE_NEWS_3: Dict[str, Any] = {
     "title": "Test Article 3",
-    "link": "http://example.com/test3",
+    "url": "http://example.com/test3",
     "source_name": "AnotherSource",
     "category_name": "AnotherCategory",
     "source_id": 11,
@@ -69,13 +69,13 @@ SAMPLE_NEWS_3: Dict[str, Any] = {
     "analysis": "Analysis 3",
     "date": "2025-04-16 12:00:00",
 }
-INVALID_NEWS_NO_LINK: Dict[str, Any] = {
-    "title": "Invalid Article No Link",
+INVALID_NEWS_NO_URL: Dict[str, Any] = {
+    "title": "Invalid Article No URL",
     "source_name": "TestSource",
     "category_name": "TestCategory",
 }
 INVALID_NEWS_NO_TITLE: Dict[str, Any] = {
-    "link": "http://example.com/no-title",
+    "url": "http://example.com/no-title",
     "source_name": "TestSource",
     "category_name": "TestCategory",
 }
@@ -250,9 +250,8 @@ class TestNewsRepository(unittest.TestCase):
         """Adds a sample news item and returns its ID."""
         new_id = self.repo.add(sample_data)
         self.assertIsNotNone(
-            new_id, f"Failed to add sample news: {sample_data.get('link')}"
+            new_id, f"Failed to add sample news: {sample_data.get('url')}"
         )
-        self.assertIsInstance(new_id, int)
         return new_id
 
     def _get_row_count(self) -> int:
@@ -272,77 +271,75 @@ class TestNewsRepository(unittest.TestCase):
 
     def test_01_add_single_valid(self):
         """Test adding a single valid news item."""
-        print(f"Running {self._testMethodName}...")
-        initial_count = self._get_row_count()
-        self.assertEqual(initial_count, 0)
-
+        # Verify the table is initially empty
+        self.assertEqual(self._get_row_count(), 0)
+        # Add a single news item
         new_id = self.repo.add(SAMPLE_NEWS_1)
-
         self.assertIsNotNone(new_id)
+        self.assertIsInstance(new_id, int)
+        # Verify the item is added
         self.assertEqual(self._get_row_count(), 1)
-        # ID check depends on whether previous tests ran and cleared sequence
-        self.assertEqual(new_id, 1)  # Less reliable across test runs
-
-        # Verify content (optional but good)
+        # Verify the item can be retrieved correctly
         retrieved = self.repo.get_by_id(new_id)
         self.assertIsNotNone(retrieved)
         self.assertEqual(retrieved["title"], SAMPLE_NEWS_1["title"])
-        self.assertEqual(retrieved["link"], SAMPLE_NEWS_1["link"])
+        self.assertEqual(retrieved["url"], SAMPLE_NEWS_1["url"])
         self.assertEqual(retrieved["summary"], SAMPLE_NEWS_1["summary"])
 
-    def test_02_add_single_duplicate_link(self):
-        """Test adding a news item with a duplicate link should be skipped."""
-        print(f"Running {self._testMethodName}...")
+    def test_02_add_single_duplicate_url(self):
+        """Test adding a news item with a duplicate url should be skipped."""
+        # Setup
         self._add_sample_news(SAMPLE_NEWS_1)  # Add the first item
+        self.assertEqual(self._get_row_count(), 1)  # Verify one item added
+
+        # Try adding again with the same url
+        new_id_duplicate = self.repo.add(SAMPLE_NEWS_1)
+        # Should return None for duplicate
+        self.assertIsNone(new_id_duplicate, "Adding duplicate url should return None.")
+        # Verify no additional item was added
         self.assertEqual(self._get_row_count(), 1)
 
-        # Try adding again with the same link
-        new_id_duplicate = self.repo.add(SAMPLE_NEWS_1)
-
-        self.assertIsNone(new_id_duplicate, "Adding duplicate link should return None.")
-        self.assertEqual(
-            self._get_row_count(), 1, "Row count should not increase for duplicate."
-        )
-
     def test_03_add_single_invalid_data(self):
-        """Test adding news items with missing required fields (title/link)."""
-        print(f"Running {self._testMethodName}...")
+        """Test adding news items with missing required fields (title/url)."""
+        self.assertEqual(self._get_row_count(), 0)  # Start with empty table
+
+        # Test missing URL
+        id_no_url = self.repo.add(INVALID_NEWS_NO_URL)
+        self.assertIsNone(id_no_url, "Adding item with no url should return None.")
         self.assertEqual(self._get_row_count(), 0)
 
-        id_no_link = self.repo.add(INVALID_NEWS_NO_LINK)
-        self.assertIsNone(id_no_link, "Adding item with no link should return None.")
-        self.assertEqual(
-            self._get_row_count(), 0, "Row count should not increase for invalid item."
-        )
-
+        # Test missing title
         id_no_title = self.repo.add(INVALID_NEWS_NO_TITLE)
         self.assertIsNone(id_no_title, "Adding item with no title should return None.")
-        self.assertEqual(
-            self._get_row_count(), 0, "Row count should not increase for invalid item."
-        )
+        self.assertEqual(self._get_row_count(), 0)
 
     def test_04_add_batch_valid(self):
         """Test adding a batch of valid, unique news items."""
-        print(f"Running {self._testMethodName}...")
-        self.assertEqual(self._get_row_count(), 0)
-        batch_items = [SAMPLE_NEWS_1, SAMPLE_NEWS_2, SAMPLE_NEWS_3]
+        self.assertEqual(self._get_row_count(), 0)  # Start with empty table
 
+        # Add batch of 3 unique items
+        batch_items = [SAMPLE_NEWS_1, SAMPLE_NEWS_2, SAMPLE_NEWS_3]
         added_count, skipped_count = self.repo.add_batch(batch_items)
 
-        self.assertEqual(added_count, 3, "Should add all 3 valid items.")
-        self.assertEqual(skipped_count, 0, "Should skip 0 items.")
-        self.assertEqual(
-            self._get_row_count(), 3, "Row count should be 3 after batch add."
-        )
+        # Verify results
+        self.assertEqual(added_count, 3)  # All 3 should be added
+        self.assertEqual(skipped_count, 0)  # None should be skipped
+        self.assertEqual(self._get_row_count(), 3)  # Verify table row count
 
-        # Verify one item (optional)
-        # Need to get ID reliably - let's retrieve by link instead
-        retrieved = self.repo.get_all(limit=10)  # Get all and find the one we want
+        # Verify each item exists
+        all_items = self.repo.get_all(limit=10)
+        self.assertEqual(len(all_items), 3)
+
+        # Verify specific item attributes from batch
+        # Get item by URL for more reliable results than by ID
+        retrieved = all_items
         found = next(
-            (item for item in retrieved if item["link"] == SAMPLE_NEWS_2["link"]), None
+            (item for item in retrieved if item["url"] == SAMPLE_NEWS_2["url"]), None
         )
         self.assertIsNotNone(found)
-        self.assertEqual(found["link"], SAMPLE_NEWS_2["link"])
+        # Verify a few attributes
+        self.assertEqual(found["url"], SAMPLE_NEWS_2["url"])
+        self.assertEqual(found["title"], SAMPLE_NEWS_2["title"])
 
     def test_05_add_batch_with_duplicates_in_batch(self):
         """Test adding a batch where some items are duplicates within the batch itself."""
@@ -376,7 +373,7 @@ class TestNewsRepository(unittest.TestCase):
     def test_07_add_batch_with_invalid(self):
         """Test adding a batch containing invalid items."""
         print(f"Running {self._testMethodName}...")
-        batch_items = [SAMPLE_NEWS_1, INVALID_NEWS_NO_LINK, SAMPLE_NEWS_2]
+        batch_items = [SAMPLE_NEWS_1, INVALID_NEWS_NO_URL, SAMPLE_NEWS_2]
 
         added_count, skipped_count = self.repo.add_batch(batch_items)
 
@@ -401,12 +398,12 @@ class TestNewsRepository(unittest.TestCase):
         retrieved1 = self.repo.get_by_id(id1)
         self.assertIsNotNone(retrieved1)
         self.assertEqual(retrieved1["id"], id1)
-        self.assertEqual(retrieved1["link"], SAMPLE_NEWS_1["link"])
+        self.assertEqual(retrieved1["url"], SAMPLE_NEWS_1["url"])
 
         retrieved2 = self.repo.get_by_id(id2)
         self.assertIsNotNone(retrieved2)
         self.assertEqual(retrieved2["id"], id2)
-        self.assertEqual(retrieved2["link"], SAMPLE_NEWS_2["link"])
+        self.assertEqual(retrieved2["url"], SAMPLE_NEWS_2["url"])
 
         non_existent = self.repo.get_by_id(999)
         self.assertIsNone(non_existent, "Getting non-existent ID should return None.")
@@ -462,30 +459,31 @@ class TestNewsRepository(unittest.TestCase):
         self.assertFalse(not_deleted, "Deleting non-existent ID should return False.")
         self.assertEqual(self._get_row_count(), 1, "Row count should remain unchanged.")
 
-    def test_12_exists_by_link(self):
-        """Test checking for news existence by link."""
-        print(f"Running {self._testMethodName}...")
+    def test_12_exists_by_url(self):
+        """Test checking for news existence by url."""
         self._add_sample_news(SAMPLE_NEWS_1)
+        # Test true case
+        self.assertTrue(self.repo.exists_by_url(SAMPLE_NEWS_1["url"]))
+        # Test false case
+        self.assertFalse(self.repo.exists_by_url("http://does.not.exist/url"))
 
-        self.assertTrue(self.repo.exists_by_link(SAMPLE_NEWS_1["link"]))
-        self.assertFalse(self.repo.exists_by_link("http://does.not.exist/link"))
-
-    def test_13_get_all_links(self):
-        """Test retrieving all unique links."""
-        print(f"Running {self._testMethodName}...")
+    def test_13_get_all_urls(self):
+        """Test retrieving all unique urls."""
+        # Add two items with different urls
         self._add_sample_news(SAMPLE_NEWS_1)
         self._add_sample_news(SAMPLE_NEWS_2)
-
-        links = self.repo.get_all_links()
-        self.assertIsInstance(links, list)
-        self.assertEqual(len(links), 2)
-        self.assertIn(SAMPLE_NEWS_1["link"], links)
-        self.assertIn(SAMPLE_NEWS_2["link"], links)
-
-        # Test empty
-        self.assertTrue(self.repo.clear_all())
-        empty_links = self.repo.get_all_links()
-        self.assertEqual(len(empty_links), 0)
+        
+        # Test retrieval
+        urls = self.repo.get_all_urls()
+        self.assertIsInstance(urls, list)
+        self.assertEqual(len(urls), 2)
+        self.assertIn(SAMPLE_NEWS_1["url"], urls)
+        self.assertIn(SAMPLE_NEWS_2["url"], urls)
+        
+        # Test empty case too
+        self.repo.clear_all()
+        empty_urls = self.repo.get_all_urls()
+        self.assertEqual(len(empty_urls), 0)
 
     def test_14_clear_all(self):
         """Test clearing all news items."""

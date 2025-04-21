@@ -141,7 +141,7 @@ class NewsTab(QWidget):
 
         columns_to_hide = [
             "id",
-            "link",
+            "url",
             "summary",
             "analysis",
             "source_id",
@@ -272,8 +272,8 @@ class NewsTab(QWidget):
         if news_details:
             preview_html = f"<h3>{news_details.get('title', 'N/A')}</h3>"
             preview_html += f"<p>{news_details.get('source_name', '')} {news_details.get('date', '')}<br>"
-            link = news_details.get("link", "#")
-            preview_html += f"<a href='{link}'>{link}</a></p><hr>"  # Added HR
+            url = news_details.get("url", "#")
+            preview_html += f"<a href='{url}'>{url}</a></p><hr>"  # Added HR
             # Display summary first, then analysis if available
             summary = news_details.get("summary", "")
             analysis = news_details.get(
@@ -477,7 +477,7 @@ class NewsTab(QWidget):
             
         news_id = news_details.get("id")
         title = news_details.get("title", "")
-        link = news_details.get("link", "")
+        url = news_details.get("url", "")
         date = news_details.get("date", "")
         summary = news_details.get("summary", "")
         source_name = news_details.get("source_name", "")
@@ -506,7 +506,7 @@ class NewsTab(QWidget):
             analysis_dialog.finished.connect(lambda result, key=dialog_key: self._analysis_dialog_closed(key))
 
 
-            analysis_dialog.set_details(title, link, date, summary, source_name)
+            analysis_dialog.set_details(title, url, date, summary, source_name)
 
             if existing_analysis and existing_analysis.strip():
                 logger.debug(f"新闻 ID {news_id} 已有分析结果，直接显示。")

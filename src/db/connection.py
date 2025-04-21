@@ -191,7 +191,7 @@ class DatabaseConnectionManager:
             CREATE TABLE IF NOT EXISTS {NEWS_SOURCES_TABLE} (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, 
                 name TEXT NOT NULL, 
-                url TEXT NOT NULL UNIQUE, 
+                url TEXT NOT NULL UNIQUE,
                 category_id INTEGER NOT NULL, 
                 FOREIGN KEY (category_id) REFERENCES {NEWS_CATEGORY_TABLE}(id) ON DELETE CASCADE
             )
@@ -216,7 +216,7 @@ class DatabaseConnectionManager:
             CREATE TABLE IF NOT EXISTS {NEWS_TABLE} (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 title TEXT NOT NULL,
-                link TEXT NOT NULL UNIQUE,
+                url TEXT NOT NULL UNIQUE,
                 source_name TEXT NOT NULL,
                 category_name TEXT NOT NULL,
                 source_id INTEGER,
@@ -233,7 +233,7 @@ class DatabaseConnectionManager:
 
         self._execute_schema_query(
             f"""
-            CREATE INDEX IF NOT EXISTS idx_news_link ON {NEWS_TABLE} (link)
+            CREATE INDEX IF NOT EXISTS idx_news_url ON {NEWS_TABLE} (url)
         """
         )
 

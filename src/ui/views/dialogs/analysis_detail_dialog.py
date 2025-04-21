@@ -88,7 +88,7 @@ class AnalysisDetailDialog(QDialog):
         self.link_button = QPushButton("点击打开原文链接")
         self.link_button.setStyleSheet("text-align: left;")
         self.link_button.clicked.connect(self._open_link)
-        self.news_link = ""  # 存储链接URL
+        self.news_url = ""  # 存储链接URL
         link_layout.addWidget(link_label)
         link_layout.addWidget(self.link_button, 1)
         details_layout.addLayout(link_layout)
@@ -144,13 +144,13 @@ class AnalysisDetailDialog(QDialog):
         else:
             logger.error("控制器缺少必要的信号: analysis_chunk_received")
 
-    def set_details(self, title: str, link: str, date: str, summary: str, source_name: str):
+    def set_details(self, title: str, url: str, date: str, summary: str, source_name: str):
         """设置新闻详情（标题、链接等）"""
         self.title_label.setText(title)
         self.source_label.setText(f"来源: {source_name}")
         self.date_label.setText(f"日期: {date}")
-        self.news_link = link
-        self.link_button.setToolTip(link)
+        self.news_url = url
+        self.link_button.setToolTip(url)
         self.summary_display.setPlainText(summary)
         
         # 更新窗口标题
@@ -210,5 +210,5 @@ class AnalysisDetailDialog(QDialog):
 
     def _open_link(self):
         """打开新闻链接"""
-        if self.news_link:
-            QDesktopServices.openUrl(QUrl(self.news_link))
+        if self.news_url:
+            QDesktopServices.openUrl(QUrl(self.news_url))

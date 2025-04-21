@@ -395,7 +395,7 @@ class ProcessingWorker(QThread):
         logger.info(f"Stop requested for ProcessingWorker ({thread_id}).")
         if self.loop and self.loop.is_running():
             # 1) 设置退出标志
-            self._cancel_eventZ@X#$.set()
+            self._cancel_event.set()
 
             # 2) 取消仍在排队/执行的 future，避免 “loop closed” 异常
             for future in list(self._futures):
