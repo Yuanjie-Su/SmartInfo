@@ -43,10 +43,10 @@ class NavigationBar(QWidget):
         layout.setContentsMargins(5, 10, 5, 10)
         layout.setSpacing(10)
 
-        # 导航按钮 - 顶部按钮（News和Chat）
+        # Navigation buttons - top buttons (News and Chat)
         self.buttons = []
         top_btn_names = ["News", "Chat"]
-        top_btn_icons = ["📰", "💬"]  # 使用Unicode字符作为图标
+        top_btn_icons = ["📰", "💬"]  # Use Unicode characters as icons
 
         for idx, (name, icon) in enumerate(zip(top_btn_names, top_btn_icons)):
             btn = QPushButton(f"{icon}  {name}")
@@ -58,10 +58,10 @@ class NavigationBar(QWidget):
             layout.addWidget(btn)
             self.buttons.append(btn)
 
-        # 中间的伸缩空间
+        # Intermediate flexible space
         layout.addStretch(1)
 
-        # 导航按钮 - 底部的设置按钮
+        # Navigation buttons - bottom settings button
         settings_btn = QPushButton(f"⚙️  Settings")
         settings_btn.setObjectName("NavBtn_Settings")
         settings_btn.setCheckable(True)
@@ -71,12 +71,12 @@ class NavigationBar(QWidget):
         layout.addWidget(settings_btn)
         self.buttons.append(settings_btn)
 
-        # 底部添加版本信息
+        # Add version information at the bottom
         version_label = QLabel("v1.0.0")
         version_label.setObjectName("VersionLabel")  # Added Object Name
         layout.addWidget(version_label, 0, Qt.AlignmentFlag.AlignHCenter)
 
-        # 默认选中第一个
+        # Select the first item by default
         self.buttons[0].setChecked(True)
 
     def on_btn_clicked(self, idx):
@@ -91,7 +91,7 @@ class MainWindow(QMainWindow):
     def __init__(self, services: Dict[str, Any]):
         super().__init__()
         self.services = services
-        # 初始化主控制器，注入服务以解耦 UI 与业务逻辑
+        # Initialize main controller, inject services to decouple UI and business logic
         self.main_controller = MainController(
             self.services["news_service"],
             self.services["qa_service"],
@@ -193,34 +193,34 @@ class MainWindow(QMainWindow):
 
     @Slot(int)
     def _handle_navigation_request(self, index: int):
-        """处理来自导航栏的页面切换请求"""
+        """Handle page change requests from the navigation bar"""
         logger.debug(f"Navigation requested for index: {index}")
 
         if index == 0:  # News Tab
             self.stack.setCurrentIndex(index)
-            # 如果设置已更改，刷新 News Tab 的过滤器
+            # If settings changed, refresh News Tab filters
             if self.news_sources_or_categories_changed:
                 self._refresh_news_tab_filters()
         elif index == 1:  # QA Tab
             self.stack.setCurrentIndex(index)
-            # 加载 QA 历史记录
+            # Load QA history
             if hasattr(self, "qa_tab") and self.qa_tab:
                 self.qa_tab.load_history()
         elif index == 2:  # Settings Dialog
             logger.info("Settings button clicked. Opening SettingsWindow.")
             try:
-                # 如果 SettingsWindow 实例不存在或已被关闭，则创建新的实例
+                # If SettingsWindow instance doesn't exist or is closed, create a new one
                 if (
                     self.settings_window_instance is None
                     or not self.settings_window_instance.isVisible()
                 ):
                     logger.debug("Creating new SettingsWindow instance.")
-                    # 确保传递了正确的 services
+                    # Ensure correct services are passed
                     self.settings_window_instance = SettingsWindow(
                         controller=self.main_controller.settings_controller,
                         parent=self,
                     )
-                    # 将 SettingsWindow 的信号连接回 MainWindow
+                    # Connect SettingsWindow signal back to MainWindow
                     self.main_controller.settings_controller.external_settings_changed.connect(
                         self._handle_settings_change
                     )
@@ -229,22 +229,21 @@ class MainWindow(QMainWindow):
                         "SettingsWindow instance already exists and is visible."
                     )
 
-                # 显示模态对话框并等待其关闭
+                # Show modal dialog and wait for it to close
                 self.settings_window_instance.exec()  # Use exec() for modal dialog
 
             except KeyError as e:
-                error_msg = f"无法打开设置：缺少必要的服务 '{e}'。"
+                error_msg = f"Cannot open settings: Missing required service '{e}'."
                 logger.error(error_msg)
-                QMessageBox.critical(self, "错误", error_msg)
+                QMessageBox.critical(self, "Error", error_msg)
             except Exception as e:
-                error_msg = f"打开设置窗口时出错: {e}"
+                error_msg = f"Error opening settings window: {e}"
                 logger.error(error_msg, exc_info=True)
-                QMessageBox.critical(self, "错误", error_msg)
+                QMessageBox.critical(self, "Error", error_msg)
         else:
-            logger.warning(f"未处理的导航索引: {index}")
+            logger.warning(f"Unhandled navigation index: {index}")
 
         # Ensure the correct nav button remains checked after settings dialog closes
-        # When the modal dialog closes, index will not be 2 anymore on return here if called again
         current_stack_index = self.stack.currentIndex()
         for i, btn in enumerate(self.nav_bar.buttons):
             # Check the button corresponding to the current stack index (or settings if index is 2)
@@ -264,8 +263,8 @@ class MainWindow(QMainWindow):
         """Handle window close event"""
         reply = QMessageBox.question(
             self,
-            "确认退出",
-            "确定要退出程序吗？",
+            "Confirm exit",
+            "Are you sure you want to exit the program?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )

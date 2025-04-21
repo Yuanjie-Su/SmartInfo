@@ -51,7 +51,7 @@ class SettingsWindow(QDialog):
             []
         )  # Cache for category names used in dialogs
 
-        self.setWindowTitle("设置")
+        self.setWindowTitle("Settings")
         self.setMinimumSize(900, 650)
         self.setModal(True)
 
@@ -82,10 +82,10 @@ class SettingsWindow(QDialog):
         self.nav_list = QListWidget()
         self.nav_list.setObjectName("SettingsNavList")
         nav_items = [
-            {"name": "API 设置", "icon": "🔑"},
-            {"name": "资讯源管理", "icon": "📰"},
-            {"name": "分类配置", "icon": "🗂️"},
-            {"name": "系统配置", "icon": "⚙️"},
+            {"name": "API Settings", "icon": "🔑"},
+            {"name": "Source Management", "icon": "📰"},
+            {"name": "Category Configuration", "icon": "🗂️"},
+            {"name": "System Configuration", "icon": "⚙️"},
         ]
         for item_data in nav_items:
             item = QListWidgetItem(f" {item_data['icon']}  {item_data['name']}")
@@ -122,9 +122,9 @@ class SettingsWindow(QDialog):
         )
         # Use Ok instead of Save for modal dialog convention
         self.ok_button = button_box.button(QDialogButtonBox.StandardButton.Ok)
-        self.ok_button.setText("应用并关闭")
+        self.ok_button.setText("Apply && Close")
         self.cancel_button = button_box.button(QDialogButtonBox.StandardButton.Cancel)
-        self.cancel_button.setText("取消")
+        self.cancel_button.setText("Cancel")
 
         content_layout.addWidget(button_box, 0, Qt.AlignmentFlag.AlignRight)
 
@@ -162,19 +162,19 @@ class SettingsWindow(QDialog):
         form_layout = QFormLayout()
         layout.addLayout(form_layout)
 
-        form_layout.addRow(QLabel("<b>DeepSeek API 配置</b>"))
+        form_layout.addRow(QLabel("<b>DeepSeek API Configuration</b>"))
         self.deepseek_api_key_input = QLineEdit()
         self.deepseek_api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
         self.deepseek_api_key_input.setPlaceholderText(
-            "输入 API Key (优先使用环境变量)"
+            "Enter API Key (environment variable preferred)"
         )
-        self.deepseek_api_key_status = QLabel("状态: 未知")
+        self.deepseek_api_key_status = QLabel("Status: Unknown")
         hbox_key = QHBoxLayout()
         hbox_key.addWidget(self.deepseek_api_key_input)
         hbox_key.addWidget(self.deepseek_api_key_status)
-        form_layout.addRow("API Key (数据库):", hbox_key)
+        form_layout.addRow("API Key (Database):", hbox_key)
 
-        test_deepseek_button = QPushButton("测试连接 (使用输入框中的Key)")
+        test_deepseek_button = QPushButton("Test Connection (using key from input)")
         # Connect button click to internal trigger method
         test_deepseek_button.clicked.connect(lambda: self._trigger_test_api("deepseek"))
         self.test_deepseek_button = test_deepseek_button  # Keep reference if needed
@@ -191,15 +191,15 @@ class SettingsWindow(QDialog):
         buttons_layout = QHBoxLayout()
         layout.addLayout(buttons_layout)
 
-        add_button = QPushButton("添加资讯源")
+        add_button = QPushButton("Add Source")
         add_button.clicked.connect(self._trigger_add_source)  # Connect to trigger
         buttons_layout.addWidget(add_button)
 
-        edit_button = QPushButton("编辑所选")
+        edit_button = QPushButton("Edit Selected")
         edit_button.clicked.connect(self._trigger_edit_source)  # Connect to trigger
         buttons_layout.addWidget(edit_button)
 
-        delete_button = QPushButton("删除所选")
+        delete_button = QPushButton("Delete Selected")
         delete_button.clicked.connect(self._trigger_delete_source)  # Connect to trigger
         buttons_layout.addWidget(delete_button)
         buttons_layout.addStretch()
@@ -225,23 +225,23 @@ class SettingsWindow(QDialog):
         page = QWidget()
         layout = QVBoxLayout(page)
         info_layout = QHBoxLayout()
-        info_layout.addWidget(QLabel("管理资讯分类:"))
-        info_layout.addWidget(QLabel("<font color='grey'>(双击编辑)</font>"))
+        info_layout.addWidget(QLabel("Manage News Categories:"))
+        info_layout.addWidget(QLabel("<font color='grey'>(Double-click to edit)</font>"))
         info_layout.addStretch()
         layout.addLayout(info_layout)
         layout.addWidget(
             QLabel(
-                "<font color='red'>注意：删除分类将同时删除该分类下的所有资讯源。</font>"
+                "<font color='red'>Note: Deleting a category will also delete all news sources within it.</font>"
             )
         )
 
         buttons_layout = QHBoxLayout()
         layout.addLayout(buttons_layout)
-        add_button = QPushButton("添加分类")
+        add_button = QPushButton("Add Category")
         add_button.clicked.connect(self._trigger_add_category)  # Connect to trigger
         buttons_layout.addWidget(add_button)
 
-        delete_button = QPushButton("删除所选")
+        delete_button = QPushButton("Delete Selected")
         delete_button.clicked.connect(
             self._trigger_delete_category
         )  # Connect to trigger
@@ -273,23 +273,23 @@ class SettingsWindow(QDialog):
         form_layout = QFormLayout()
         layout.addLayout(form_layout)
 
-        form_layout.addRow(QLabel("<b>资讯获取设置</b>"))
+        form_layout.addRow(QLabel("<b>System Configuration</b>"))
         self.fetch_frequency_combo = QComboBox()
         self.fetch_frequency_combo.addItems(["manual", "hourly", "daily", "weekly"])
         self.fetch_frequency_combo.setToolTip(
-            "自动获取功能尚未实现，当前仅为设置占位符。"
+            "Automatic fetching functionality not implemented, this is just a placeholder."
         )
         self.fetch_frequency_combo.setEnabled(False)  # Keep disabled
-        form_layout.addRow("自动获取频率:", self.fetch_frequency_combo)
+        form_layout.addRow("News Fetch Frequency:", self.fetch_frequency_combo)
 
-        form_layout.addRow(QLabel("<b>数据存储设置</b>"))
+        form_layout.addRow(QLabel("<b>Data Storage Settings</b>"))
         self.data_dir_input = QLineEdit()
         self.data_dir_input.setReadOnly(True)
         self.data_dir_input.setStyleSheet("background-color: #f0f0f0;")
-        form_layout.addRow("数据存储路径:", self.data_dir_input)
+        form_layout.addRow("Data Storage Path:", self.data_dir_input)
 
-        self.reset_button = QPushButton("重置系统配置到默认")
-        self.reset_button.setToolTip("将获取频率等重置为默认值")
+        self.reset_button = QPushButton("Reset System Settings to Default")
+        self.reset_button.setToolTip("Reset fetch frequency and data directory to default values")
         # Connect button click to internal trigger method
         self.reset_button.clicked.connect(self._trigger_reset_settings)
         form_layout.addRow("", self.reset_button)
@@ -301,7 +301,7 @@ class SettingsWindow(QDialog):
     def _setup_sources_model(self):
         """Sets up the model and proxy for the sources table."""
         self.sources_model = QStandardItemModel(0, 3, self)
-        self.sources_model.setHorizontalHeaderLabels(["名称", "URL", "分类"])
+        self.sources_model.setHorizontalHeaderLabels(["Name", "URL", "Category"])
         self.sources_proxy_model = QSortFilterProxyModel(self)
         self.sources_proxy_model.setSourceModel(self.sources_model)
         self.sources_table.setModel(self.sources_proxy_model)
@@ -310,7 +310,7 @@ class SettingsWindow(QDialog):
     def _setup_categories_model(self):
         """Sets up the model and proxy for the categories table."""
         self.categories_model = QStandardItemModel(0, 2, self)
-        self.categories_model.setHorizontalHeaderLabels(["分类名称", "资讯源数量"])
+        self.categories_model.setHorizontalHeaderLabels(["Category Name", "News Source Count"])
         self.categories_proxy_model = QSortFilterProxyModel(self)
         self.categories_proxy_model.setSourceModel(self.categories_model)
         self.categories_table.setModel(self.categories_proxy_model)
@@ -383,7 +383,7 @@ class SettingsWindow(QDialog):
             selected_indexes = self.sources_table.selectionModel().selectedRows()
             if not selected_indexes:
                 QMessageBox.warning(
-                    self, "Selection Needed", "Please select a news source to edit."
+                    self, "Selection Required", "Please select a source to edit."
                 )
                 return
             index = selected_indexes[0]  # Use the first selected row
@@ -432,7 +432,7 @@ class SettingsWindow(QDialog):
         selected_indexes = self.sources_table.selectionModel().selectedRows()
         if not selected_indexes:
             QMessageBox.warning(
-                self, "Selection Needed", "Please select a news source to delete."
+                self, "Selection Required", "Please select a source to delete."
             )
             return
 
@@ -459,7 +459,7 @@ class SettingsWindow(QDialog):
 
         reply = QMessageBox.question(
             self,
-            "Confirm Delete",
+            "Confirm Deletion",
             f"Are you sure you want to delete the source '{source_name}'?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
@@ -473,15 +473,13 @@ class SettingsWindow(QDialog):
             self, "Add Category", "Enter new category name:"
         )
         if ok and category_name:
-            category_name = category_name.strip()
-            if not category_name:
-                QMessageBox.warning(
-                    self, "Input Error", "Category name cannot be empty."
-                )
+            # Check if category name already exists locally to avoid redundant calls
+            if category_name in self._available_categories:
+                QMessageBox.warning(self, "Duplicate Category", f"Category '{category_name}' already exists.")
                 return
             self.controller.add_category(category_name)
-        elif ok:
-            QMessageBox.warning(self, "Input Error", "Category name cannot be empty.")
+        elif ok and not category_name:
+            QMessageBox.warning(self, "Input Required", "Category name cannot be empty.")
 
     def _trigger_edit_category(self, index=None):
         """Opens input dialog to edit the selected category."""
@@ -489,7 +487,7 @@ class SettingsWindow(QDialog):
             selected_indexes = self.categories_table.selectionModel().selectedRows()
             if not selected_indexes:
                 QMessageBox.warning(
-                    self, "Selection Needed", "Please select a category to edit."
+                    self, "Selection Required", "Please select a category to edit."
                 )
                 return
             index = selected_indexes[0]
@@ -525,15 +523,12 @@ class SettingsWindow(QDialog):
             QLineEdit.EchoMode.Normal,
             old_name,
         )
-        if ok and new_name:
-            new_name = new_name.strip()
-            if not new_name:
-                QMessageBox.warning(
-                    self, "Input Error", "Category name cannot be empty."
-                )
+        if ok and new_name and new_name != old_name:
+            # Check if the new name conflicts with another existing category
+            if new_name in self._available_categories:
+                QMessageBox.warning(self, "Duplicate Category", f"Category '{new_name}' already exists.")
                 return
-            if new_name != old_name:
-                self.controller.update_category(category_id, new_name)
+            self.controller.update_category(category_id, new_name)
         elif ok:
             QMessageBox.warning(self, "Input Error", "Category name cannot be empty.")
 
@@ -542,7 +537,7 @@ class SettingsWindow(QDialog):
         selected_indexes = self.categories_table.selectionModel().selectedRows()
         if not selected_indexes:
             QMessageBox.warning(
-                self, "Selection Needed", "Please select a category to delete."
+                self, "Selection Required", "Please select a category to delete."
             )
             return
 
@@ -569,13 +564,12 @@ class SettingsWindow(QDialog):
             )
             return
 
-        reply = QMessageBox.warning(  # Use warning icon
+        reply = QMessageBox.question(
             self,
-            "Confirm Delete",
-            f"Are you sure you want to delete category '{category_name}'?\n\n"
-            f"<font color='red'>WARNING:</font> This will also delete all news sources within this category! This action cannot be undone.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
-            QMessageBox.StandardButton.Cancel,
+            "Confirm Deletion",
+            f"WARNING: Deleting category '{category_name}' will also delete ALL associated news sources.\n\nAre you sure you want to proceed?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
             self.controller.delete_category(category_id, category_name)
@@ -585,7 +579,7 @@ class SettingsWindow(QDialog):
         reply = QMessageBox.question(
             self,
             "Confirm Reset",
-            "Reset fetch frequency to default?\n(API Keys and data path are not affected)",
+            "Are you sure you want to reset system settings (like data directory, fetch frequency) to their defaults?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -597,22 +591,22 @@ class SettingsWindow(QDialog):
     @Slot(dict)
     def _display_general_settings(self, settings_data: Dict[str, Any]):
         """Populates the API and System tabs with loaded settings."""
-        logger.debug("Displaying general settings in UI.")
+        logger.debug("Received general settings data from controller.")
         # API Keys
         api_settings = settings_data.get("api_keys", {})
-        self.deepseek_api_key_status.setText(
-            f"<font color='{self._get_status_color(api_settings.get('deepseek_status'))}'>{api_settings.get('deepseek_status', 'Unknown')}</font>"
-        )
+        status = api_settings.get("deepseek_status", "Unknown")
+        color = self._get_status_color(status)
+        self.deepseek_api_key_status.setText(f"<font color='{color}'>{status}</font>")
         # Update placeholder based on status
-        if "环境变量" in api_settings.get("deepseek_status", ""):
+        if "environment variable" in status.lower():
             self.deepseek_api_key_input.setPlaceholderText(
-                "已从环境变量加载，此处输入可覆盖数据库"
+                "Loaded from environment variable, enter here to overwrite database"
             )
             self.deepseek_api_key_input.clear()
-        elif "数据库" in api_settings.get("deepseek_status", ""):
-            self.deepseek_api_key_input.setPlaceholderText("输入新 Key 可覆盖数据库")
+        elif "database" in status.lower():
+            self.deepseek_api_key_input.setPlaceholderText("Enter new Key to overwrite database")
         else:
-            self.deepseek_api_key_input.setPlaceholderText("请输入 DeepSeek API Key")
+            self.deepseek_api_key_input.setPlaceholderText("Enter DeepSeek API Key")
 
         # System Settings
         system_settings = settings_data.get("system", {})
@@ -725,11 +719,13 @@ class SettingsWindow(QDialog):
         """Helper to determine color for status labels."""
         if not status_text:
             return "red"
-        if "环境变量" in status_text:
+        if "environment variable" in status_text.lower():
             return "green"
-        if "数据库" in status_text:
+        elif "database" in status_text.lower():
+            return "orange"
+        elif "success" in status_text.lower() or "testing" in status_text.lower():
             return "blue"
-        if "未配置" in status_text:
+        elif "error" in status_text.lower() or "failed" in status_text.lower() or "not configured" in status_text.lower() or "未配置" in status_text:
             return "red"
         return "grey"  # Default for unknown
 
@@ -737,7 +733,7 @@ class SettingsWindow(QDialog):
         """Displays dialog for adding or editing a news source."""
         is_edit = initial_data is not None
         dialog = QDialog(self)
-        dialog.setWindowTitle("Edit News Source" if is_edit else "Add News Source")
+        dialog.setWindowTitle("Edit Source" if is_edit else "Add Source")
         dialog.setMinimumWidth(450)
         layout = QVBoxLayout(dialog)
         form_layout = QFormLayout()

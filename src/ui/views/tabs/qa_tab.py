@@ -35,7 +35,7 @@ from PySide6.QtCore import (
 from PySide6.QtGui import QFont, QColor, QIcon
 
 # Import Services needed
-from src.services.qa_service import QAService  # 保留兼容，后续可移除
+from src.services.qa_service import QAService  # Keep for compatibility, can be removed later
 from src.ui.controllers.qa_controller import QAController
 from src.ui.workers.async_runner import AsyncTaskRunner
 
@@ -48,7 +48,7 @@ class QATab(QWidget):
     def __init__(self, controller: QAController):  # Inject controller
         super().__init__()
         self.controller = controller
-        # 连接 Controller 信号
+        # Connect Controller signals
         self.controller.history_loaded.connect(self._on_history_loaded)
         self.controller.answer_received.connect(self._on_answer_received)
         self.controller.error_occurred.connect(self._on_qa_error)
@@ -71,23 +71,23 @@ class QATab(QWidget):
         history_layout = QVBoxLayout(history_widget)
         history_layout.setContentsMargins(15, 15, 15, 15)
 
-        # 历史标题
-        history_title = QLabel("历史对话记录")
+        # History title
+        history_title = QLabel("Conversation History")
         history_title.setObjectName("HistoryTitle")
         history_title.setStyleSheet(
             "font-size: 16px; font-weight: bold; margin-bottom: 10px;"
         )
         history_layout.addWidget(history_title)
 
-        # 会话列表
+        # Session list
         self.history_list = QListWidget()
         self.history_list.setObjectName("HistoryList")
         self.history_list.itemClicked.connect(self._on_history_item_clicked)
         history_layout.addWidget(self.history_list, 1)
 
-        # 清除历史按钮
-        clear_button = QPushButton("清除历史记录")
-        clear_button.setProperty("secondary", "true")  # 使用次要按钮样式
+        # Clear history button
+        clear_button = QPushButton("Clear History")
+        clear_button.setProperty("secondary", "true")  # Use secondary button style
         clear_button.clicked.connect(self._clear_history)
         history_layout.addWidget(clear_button)
 
@@ -100,8 +100,8 @@ class QATab(QWidget):
         chat_layout.setContentsMargins(15, 15, 15, 15)
         chat_layout.setSpacing(15)
 
-        # 聊天标题
-        chat_title = QLabel("智能问答")
+        # Chat title
+        chat_title = QLabel("Intelligent Q&A")
         chat_title.setObjectName("ChatTitle")
         chat_title.setStyleSheet("font-size: 18px; font-weight: bold;")
         chat_layout.addWidget(chat_title)
@@ -118,14 +118,14 @@ class QATab(QWidget):
         self.chat_display = QTextEdit()
         self.chat_display.setObjectName("qa_chat_display")
         self.chat_display.setReadOnly(True)
-        # 增加字体大小
+        # Increase font size
         font = self.chat_display.font()
         font.setPointSize(font.pointSize() + 1)
         self.chat_display.setFont(font)
         chat_container_layout.addWidget(self.chat_display, 1)
 
         chat_scroll.setWidget(chat_container)
-        chat_layout.addWidget(chat_scroll, 1)  # 给更多空间
+        chat_layout.addWidget(chat_scroll, 1)  # Give more space
 
         # Input Area - Modernized
         input_container = QWidget()
@@ -146,14 +146,14 @@ class QATab(QWidget):
 
         self.question_input = QLineEdit()
         self.question_input.setObjectName("ChatInput")
-        self.question_input.setPlaceholderText("输入问题...")
+        self.question_input.setPlaceholderText("Enter your question...")
         self.question_input.setMinimumHeight(40)
         self.question_input.returnPressed.connect(
             self._send_question
         )  # Trigger on Enter
         input_layout.addWidget(self.question_input, 1)
 
-        self.send_button = QPushButton("发送")
+        self.send_button = QPushButton("Send")
         self.send_button.setObjectName("SendButton")
         self.send_button.setMinimumSize(QSize(80, 40))
         self.send_button.clicked.connect(self._send_question)
@@ -162,7 +162,7 @@ class QATab(QWidget):
         chat_layout.addWidget(input_container)
         main_splitter.addWidget(chat_widget)
 
-        # Adjust splitter sizes - 更宽的聊天区域
+        # Adjust splitter sizes - Wider chat area
         main_splitter.setSizes([280, 720])
 
         self._show_welcome_message()
@@ -178,7 +178,7 @@ class QATab(QWidget):
         for item in reversed(history_items):
             q_item = QListWidgetItem(item["question"])
             q_item.setData(Qt.ItemDataRole.UserRole, item["id"])
-            q_item.setToolTip(f"回答: {item['answer'][:100]}...")
+            q_item.setToolTip(f"Answer: {item['answer'][:100]}...")
             self.history_list.addItem(q_item)
         logger.info(f"Loaded {len(history_items)} QA history items.")
 
@@ -186,15 +186,15 @@ class QATab(QWidget):
         """Display welcome message"""
         welcome_message = (
             "<div style='margin: 20px; line-height: 1.5;'>"
-            "<h2 style='color: #07c160;'>欢迎使用 SmartInfo 智能问答</h2>"
-            "<p>您可以基于已收集和分析的信息提问。系统将使用知识库和大型语言模型提供答案。</p>"
-            "<p><b>示例问题:</b></p>"
+            "<h2 style='color: #07c160;'>Welcome to SmartInfo Intelligent Q&A</h2>"
+            "<p>You can ask questions based on the collected and analyzed information. The system will use the knowledge base and large language models to provide answers.</p>"
+            "<p><b>Example Questions:</b></p>"
             "<ul>"
-            "<li>最近AI领域有哪些重大进展？</li>"
-            "<li>总结当前量子计算的发展状态。</li>"
-            "<li>芯片技术的最新突破是什么？</li>"
+            "<li>What are the recent major advancements in the AI field?</li>"
+            "<li>Summarize the current development status of quantum computing.</li>"
+            "<li>What are the latest breakthroughs in chip technology?</li>"
             "</ul>"
-            "<p>请输入您的问题开始探索！</p>"
+            "<p>Please enter your question to start exploring!</p>"
             "</div>"
         )
         self.chat_display.setHtml(welcome_message)
@@ -206,7 +206,7 @@ class QATab(QWidget):
             return
 
         self.question_input.clear()
-        self._add_message_to_chat("👤 用户", question)  # Add user message immediately
+        self._add_message_to_chat("👤 User", question)  # Add user message immediately
         self.controller.clear_answer_sources()  # Clear sources from previous answer
 
         # --- Update UI State ---
@@ -215,7 +215,7 @@ class QATab(QWidget):
         # Append thinking message without newline before it if chat is not empty
         separator = "\n" if self.chat_display.toPlainText() else ""
         self.chat_display.append(
-            f"{separator}<i style='color: #07c160;'>🤖 系统思考中...</i>"
+            f"{separator}<i style='color: #07c160;'>🤖 System thinking...</i>"
         )
         self.chat_display.ensureCursorVisible()  # Scroll down
         QApplication.processEvents()
@@ -236,7 +236,7 @@ class QATab(QWidget):
         html = html.replace(
             '<p style="-qt-paragraph-type:empty"><br /></p>', ""
         )  # Remove empty paragraphs sometimes added
-        thinking_msg = "<i style='color: #07c160;'>🤖 系统思考中...</i>"
+        thinking_msg = "<i style='color: #07c160;'>🤖 System thinking...</i>"
         # Find the last occurrence and remove it cleanly
         last_occurrence = html.rfind(thinking_msg)
         if last_occurrence != -1:
@@ -252,19 +252,19 @@ class QATab(QWidget):
         if result and result.get("error"):
             logger.error(f"QA service returned an error: {result['error']}")
             self._add_message_to_chat(
-                "⚠️ 系统错误",
-                f"抱歉，回答问题时发生错误: {result['error']}",
+                "⚠️ System Error",
+                f"Sorry, an error occurred while answering the question: {result['error']}",
             )
         elif result and result.get("answer"):
             answer = result["answer"]
             self.controller.add_answer_sources(result.get("sources", []))
             # Add the actual answer
-            self._add_message_to_chat("🤖 系统", answer)
+            self._add_message_to_chat("🤖 System", answer)
             # Add sources if any
             if self.controller.answer_sources:
-                sources_html = "<div style='margin: 10px 0 0 70px; font-size: 13px; color: #6c757d;'><b>参考来源 (相似度):</b><ul style='margin-top: 5px;'>"
+                sources_html = "<div style='margin: 10px 0 0 70px; font-size: 13px; color: #6c757d;'><b>Reference Sources (Similarity):</b><ul style='margin-top: 5px;'>"
                 for src in self.controller.answer_sources:
-                    title = src.get("title", "未知标题")
+                    title = src.get("title", "Unknown Title")
                     sim = src.get("similarity", 0)
                     # Make title clickable if we store/retrieve the link? Need service change.
                     # For now, just display title and similarity.
@@ -278,7 +278,7 @@ class QATab(QWidget):
         else:
             # Should not happen if error is None, but handle defensively
             logger.error("QA service returned an unexpected empty result.")
-            self._add_message_to_chat("⚠️ 系统错误", "抱歉，系统无法生成答案。")
+            self._add_message_to_chat("⚠️ System Error", "Sorry, the system couldn't generate an answer.")
 
         self.chat_display.ensureCursorVisible()
 
@@ -292,7 +292,7 @@ class QATab(QWidget):
         # Remove "Thinking..." message (same logic as in _on_answer_received)
         html = self.chat_display.toHtml()
         html = html.replace('<p style="-qt-paragraph-type:empty"><br /></p>', "")
-        thinking_msg = "<i style='color: #07c160;'>🤖 系统思考中...</i>"
+        thinking_msg = "<i style='color: #07c160;'>🤖 System thinking...</i>"
         last_occurrence = html.rfind(thinking_msg)
         if last_occurrence != -1:
             end_part = html[last_occurrence + len(thinking_msg) :].strip()
@@ -304,8 +304,8 @@ class QATab(QWidget):
 
         logger.error(f"QA task execution failed: {error}", exc_info=error)
         self._add_message_to_chat(
-            "⚠️ 系统错误",
-            f"处理问题时发生内部错误: {str(error)}",
+            "⚠️ System Error",
+            f"An internal error occurred while processing the question: {str(error)}",
         )
         self.chat_display.ensureCursorVisible()
 
@@ -319,7 +319,7 @@ class QATab(QWidget):
         message = message.replace("\n", "<br />")
 
         # 现代聊天气泡样式
-        if "用户" in sender:
+        if "User" in sender:
             bubble_style = (
                 "background: #07c160; color: #fff; border-radius: 18px 18px 4px 18px; padding: 12px 18px; "
                 "max-width: 70%; margin: 8px 0 15px auto; float: right; text-align: left; "
@@ -335,7 +335,7 @@ class QATab(QWidget):
             </div>
             <div style='clear:both;'></div>
             """
-        elif "系统错误" in sender:
+        elif "System Error" in sender:
             bubble_style = (
                 "background: #ffebee; color: #d32f2f; border-radius: 18px 18px 18px 4px; padding: 12px 18px; "
                 "max-width: 70%; margin: 8px auto 15px 0; float: left; text-align: left; "
@@ -392,8 +392,8 @@ class QATab(QWidget):
         """Clear the Q&A history"""
         reply = QMessageBox.question(
             self,
-            "确认清除",
-            "确定要清除所有问答历史记录吗？",
+            "Confirm Clear",
+            "Are you sure you want to clear all Q&A history?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -402,9 +402,9 @@ class QATab(QWidget):
                 if self.controller.clear_qa_history():
                     self.history_list.clear()
                     self._show_welcome_message()  # Show welcome message again
-                    QMessageBox.information(self, "成功", "问答历史记录已清除。")
+                    QMessageBox.information(self, "Success", "Q&A history has been cleared.")
                 else:
-                    QMessageBox.warning(self, "失败", "清除问答历史记录失败。")
+                    QMessageBox.warning(self, "Failure", "Failed to clear Q&A history.")
             except Exception as e:
                 logger.error(f"Error clearing QA history: {e}", exc_info=True)
-                QMessageBox.critical(self, "错误", f"清除历史记录时出错: {e}")
+                QMessageBox.critical(self, "Error", f"An error occurred while clearing history: {e}")

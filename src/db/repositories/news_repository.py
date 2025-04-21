@@ -174,19 +174,19 @@ class NewsRepository(BaseRepository):
         """Deletes all news items from the table."""
         logger.warning("Attempting to clear all news data.")
 
-        # 开始事务
+        # Start transaction
         if not self._db.transaction():
             logger.error("Failed to start transaction for clear_all.")
             return False
 
-        # 第一个查询：删除所有数据
+        # First query: delete all data
         query_del = self._execute(f"DELETE FROM {NEWS_TABLE}", commit=False)
         if not query_del:
             logger.error(f"Failed to delete data from {NEWS_TABLE}. Rolling back.")
             self._db.rollback()
             return False
 
-        # 第二个查询：重置自增序列
+        # Second query: reset autoincrement sequence
         query_seq = self._execute(
             f"DELETE FROM sqlite_sequence WHERE name='{NEWS_TABLE}'", commit=False
         )
@@ -195,7 +195,7 @@ class NewsRepository(BaseRepository):
             self._db.rollback()
             return False
 
-        # 提交事务
+        # Commit transaction
         if not self._db.commit():
             logger.error(
                 f"Failed to commit transaction for clear_all: {self._db.lastError().text()}"
@@ -227,24 +227,24 @@ class NewsRepository(BaseRepository):
 
     def update_analysis(self, news_id: int, analysis_text: str) -> bool:
         """
-        更新新闻条目的分析字段。
-        
+        Updates the analysis field of a news item.
+
         Args:
-            news_id: 要更新的新闻ID
-            analysis_text: 分析结果文本
-            
+            news_id: The ID of the news item to update
+            analysis_text: The analysis result text
+
         Returns:
-            更新是否成功
+            True if the update was successful, False otherwise
         """
         query_str = f"UPDATE {NEWS_TABLE} SET analysis = ? WHERE id = ?"
         query = self._execute(query_str, (analysis_text, news_id), commit=True)
-        
+
         if query:
             rows_affected = self._get_rows_affected(query)
             updated = rows_affected > 0
             if updated:
-                logger.info(f"已更新新闻ID {news_id} 的分析内容。")
+                logger.info(f"Updated analysis content for news ID {news_id}.")
             else:
-                logger.warning(f"未能更新新闻ID {news_id} 的分析内容，可能ID不存在。")
+                logger.warning(f"Failed to update analysis content for news ID {news_id}, ID might not exist.")
             return updated
         return False

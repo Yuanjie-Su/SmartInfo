@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QLabel,
     QAbstractItemView,
+    QMessageBox,
 )
 from PySide6.QtCore import Qt, Signal, Slot
 from PySide6.QtGui import QColor, QFont
@@ -43,7 +44,7 @@ class FetchProgressDialog(QDialog):
 
     def __init__(self, sources: List[Dict[str, Any]], parent=None):
         super().__init__(parent)
-        self.setWindowTitle("资讯抓取进度")
+        self.setWindowTitle("News Fetch Progress")
         self.setMinimumSize(900, 500)
         self.sources_map: Dict[str, int] = {}  # url -> row_index
 
@@ -89,10 +90,9 @@ class FetchProgressDialog(QDialog):
         table_layout.addWidget(self.table)
         layout.addWidget(table_container, 1)
 
-        # url -> status update count
-        self.status_history = {s["url"]: 0 for s in sources}
-        # url -> is_final_status
-        self.final_status_flag = {s["url"]: False for s in sources}
+        # Create a ButtonBox without actual buttons, just for layout
+        button_box = QDialogButtonBox(self)
+        layout.addWidget(button_box) # Add to main layout
 
     def populate_table(self, sources: List[Dict[str, Any]]):
         """Fills the table with the initial source list."""
@@ -123,7 +123,7 @@ class FetchProgressDialog(QDialog):
                 0, self.TOTAL_EXPECTED_STEPS
             )  # Set range based on expected steps
             progress.setValue(0)  # Initial value is 0
-            progress.setFormat("等待中")  # Initial text
+            progress.setFormat("Waiting")  # Initial text
             progress.setAlignment(Qt.AlignmentFlag.AlignCenter)  # Center text
 
             self.table.setCellWidget(idx, self.COL_STATUS, progress)
@@ -146,6 +146,11 @@ class FetchProgressDialog(QDialog):
             action_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
             action_layout.addWidget(view_button)
             self.table.setCellWidget(idx, self.COL_ACTION, action_widget)
+
+        # url -> status update count
+        self.status_history = {s["url"]: 0 for s in sources}
+        # url -> is_final_status
+        self.final_status_flag = {s["url"]: False for s in sources}
 
         # Dynamic resizing removed: use fixed widths configured in init
 
@@ -280,10 +285,14 @@ class FetchProgressDialog(QDialog):
         self.view_llm_output_requested.emit(url)
 
     def closeEvent(self, event):
-        """Override close event to just hide the dialog."""
-        logger.debug("FetchProgressDialog closeEvent triggered, hiding.")
-        self.hide()
-        event.ignore()
+        if self.is_running:
+            reply = QMessageBox.question(
+                self,
+                "Confirm Close",
+                "Fetch tasks are in progress. Are you sure you want to close the window and cancel the tasks?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
 
     def reject(self):
         """Override reject (called on Escape or Close button if standard box used)"""

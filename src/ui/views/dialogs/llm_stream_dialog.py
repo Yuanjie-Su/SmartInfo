@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 class LlmStreamDialog(QDialog):
     """Dialog to display the complete LLM analysis output for a specific task/URL."""
 
-    def __init__(self, title: str = "LLM分析结果", parent=None):
+    def __init__(self, title: str = "LLM Analysis Result", parent=None):
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setMinimumSize(750, 550)

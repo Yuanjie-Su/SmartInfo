@@ -123,7 +123,7 @@ class InitialCrawlerWorker(QRunnable):
         tasks_processed_count = 0
 
         try:
-            # 使用上下文管理，自动启动和关闭 PlaywrightCrawler
+            # Use context management to automatically start and shut down PlaywrightCrawler
             async with PlaywrightCrawler() as crawler:
                 async for result in crawler.process_urls(
                     urls_to_crawl, scroll_pages=False
@@ -208,21 +208,21 @@ class ProcessingWorker(QThread):
         self._is_ready = threading.Event()
         self._cancel_event = threading.Event()
         self._futures = set()
-        self.llm_semaphore = None  # 将在 run 方法中初始化
+        self.llm_semaphore = None  # Will be initialized in the run method
         logger.info("ProcessingWorker (QThread) initialized.")
 
     def run(self):
         thread_id = threading.get_ident()
         logger.info(f"ProcessingWorker ({thread_id}) thread starting...")
         try:
-            # 1) 创建并注册事件循环
+            # 1) Create and register event loop
             self.loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self.loop)
 
-            # 2) 初始化 LLM 并发控制信号量
+            # 2) Initialize LLM concurrency control semaphore
             self.llm_semaphore = asyncio.Semaphore(3)
 
-            # 3) 告知主线程：循环已就绪
+            # 3) Notify main thread: loop is ready
             self.loop.call_soon(self._is_ready.set)
 
             logger.info(f"ProcessingWorker ({thread_id}) event loop running...")
@@ -315,9 +315,9 @@ class ProcessingWorker(QThread):
                 ):
                     self.signals.processing_status.emit(u, f"{s}: {d}")
 
-            # 使用信号量控制并发 LLM 客户端的数量
+            # Use semaphore to control the number of concurrent LLM clients
             async with self.llm_semaphore:
-                # 动态创建 LLM 客户端
+                # Dynamically create LLM client
                 from src.services.llm_client import LLMClient
                 llm_client = LLMClient(
                     base_url=self.llm_base_url,
@@ -326,7 +326,7 @@ class ProcessingWorker(QThread):
                 )
                 logger.debug(f"Created LLM client for task {task_id}")
                 
-                # 使用动态创建的 LLM 客户端执行任务
+                # Use the dynamically created LLM client to execute the task
                 saved_count, analysis_result_md, error_obj = (
                     await self.news_service._process_html_and_analyze(
                         url, html_content, source_info, status_callback, llm_client
@@ -394,15 +394,15 @@ class ProcessingWorker(QThread):
         thread_id = threading.get_ident()
         logger.info(f"Stop requested for ProcessingWorker ({thread_id}).")
         if self.loop and self.loop.is_running():
-            # 1) 设置退出标志
+            # 1) Set exit flag
             self._cancel_event.set()
 
-            # 2) 取消仍在排队/执行的 future，避免 “loop closed” 异常
+            # 2) Cancel pending futures to avoid "loop closed" exceptions
             for future in list(self._futures):
                 if not future.done():
                     future.cancel()
 
-            # 3) 停止事件循环
+            # 3) Stop event loop
             self.loop.call_soon_threadsafe(self.loop.stop)
         else:
             logger.warning(

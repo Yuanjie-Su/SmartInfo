@@ -274,8 +274,16 @@ class LLMClient:
             logger.debug(
                 f"Async stream processing ended for model {model_name}. Total chunks processed: {total_chunks}"
             )
-            # Ensure cleanup if response object needs it (usually not required for openai library streams)
-            # if hasattr(response, 'aclose'): await response.aclose()
+            # Explicitly try to close the underlying stream resource.
+            # The 'response' object here *is* the async iterator returned by the openai library.
+            if hasattr(response, 'aclose'):
+                 try:
+                     logger.info(f"Explicitly calling aclose() on the LLM response stream for model {model_name}.")
+                     await response.aclose() # <-- EXPLICITLY AWAIT aclose() HERE
+                     logger.info(f"Successfully awaited aclose() for model {model_name}.")
+                 except Exception as close_err:
+                     # Log error but don't prevent the function from finishing
+                     logger.warning(f"Error during explicit aclose() for model {model_name}: {close_err}")
 
     def _sync_stream_processor(
         self, response: Iterator, model_name: str

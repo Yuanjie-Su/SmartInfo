@@ -45,13 +45,13 @@ class QAService:
         """
         if not self._llm_client:
             return {
-                "answer": "问答服务未完全初始化，请稍后再试。",
+                "answer": "Q&A service is not fully initialized, please try again later.",
                 "error": "Service not ready",
             }
 
         if not question or not question.strip():
             return {
-                "answer": "请输入有效的问题。",
+                "answer": "Please enter a valid question.",
                 "error": "Empty question",
             }
 
@@ -73,7 +73,7 @@ class QAService:
 
             # 3. Process response
             if llm_response and llm_response.get("status") == "success":
-                answer = llm_response.get("content", "未能生成回答。").strip()
+                answer = llm_response.get("content", "Could not generate an answer.").strip()
                 logger.info(f"LLM Answer received: '{answer[:100]}...'")
 
                 # Save Q&A pair to history (without sources)
@@ -87,21 +87,21 @@ class QAService:
                 error_msg = llm_response.get("error", "Unknown LLM error")
                 logger.error(f"LLM query failed: {error_msg}")
                 return {
-                    "answer": f"抱歉，回答问题时出错: {error_msg}",
+                    "answer": f"Sorry, an error occurred while answering the question: {error_msg}",
                     "error": error_msg,
                 }
 
         except Exception as e:
             logger.error(f"Error during question answering: {e}", exc_info=True)
             return {
-                "answer": f"处理您的问题时发生意外错误。",
+                "answer": f"An unexpected error occurred while processing your question.",
                 "error": str(e),
             }
 
     def _build_direct_qa_prompt(self, question: str) -> str:
         """Builds a simple prompt to ask the LLM the question directly."""
         # You can customize this prompt further if needed
-        return f"请直接回答以下问题：\n\n问题：{question}\n\n回答："
+        return f"Please answer the following question directly:\n\nQuestion: {question}\n\nAnswer: "
 
     def get_qa_history(self, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
         """Retrieves Q&A history from the database."""

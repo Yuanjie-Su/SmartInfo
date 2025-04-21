@@ -60,16 +60,16 @@ class SettingsController(QObject):
                 "system": {},
             }
             # API Key Status (example for DeepSeek)
-            deepseek_key_status = "未配置"
+            deepseek_key_status = "Not Configured"
             env_key = self._setting_service._config.get(
                 API_KEY_DEEPSEEK
             )  # Access config via service if needed
             if env_key:
-                deepseek_key_status = "已从环境变量加载"
+                deepseek_key_status = "Loaded from Environment"
             elif self._setting_service._api_key_repo.get_key(
                 "deepseek"
             ):  # Access repo via service
-                deepseek_key_status = "已从数据库加载"
+                deepseek_key_status = "Loaded from Database"
             settings_data["api_keys"]["deepseek_status"] = deepseek_key_status
             # Add other API keys similarly...
 

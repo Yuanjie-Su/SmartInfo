@@ -32,10 +32,12 @@ from src.ui.workers.news_fetch_workers import (
     ProcessingWorker,
 )
 
-# --- 新增导入 ---
+# --- New Imports ---
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-# --- 结束新增导入 ---
+
+from src.utils.prompt import SYSTEM_PROMPT_ANALYZE_CONTENT
+# --- End New Imports ---
 
 logger = logging.getLogger(__name__)
 
@@ -53,9 +55,9 @@ class NewsController(QObject):
     )  # Final status message (e.g., "Finished", "Cancelled")
     error_occurred = Signal(str, str)  # title, message
     
-    # --- 新增信号 ---
+    # --- New Signals ---
     analysis_chunk_received = Signal(int, str)  # news_id, chunk_text
-    # --- 结束新增信号 ---
+    # --- End New Signals ---
 
     def __init__(self, news_service: NewsService, setting_service: SettingService, parent=None):
         super().__init__(parent)
@@ -69,10 +71,10 @@ class NewsController(QObject):
         )  # Signals local to controller <-> worker comms
         self._analysis_results_cache: Dict[str, str] = {}
         
-        # --- 新增成员变量 ---
+        # --- New Member Variables ---
         self._thread_pool = QThreadPool.globalInstance()
-        self._single_item_analysis_tasks = {}  # 跟踪进行中的单项分析任务
-        # --- 结束新增成员变量 ---
+        self._single_item_analysis_tasks = {}  # Track ongoing single item analysis tasks
+        # --- End New Member Variables ---
 
         # --- Model Setup ---
         self._setup_table_model()  # Initialize the model here
@@ -332,7 +334,7 @@ class NewsController(QObject):
         self._processing_tasks_finished_count = 0
         self._active_initial_crawler = None
 
-        # 获取LLM配置信息
+        # Get LLM configuration information
         volcengine_api_key = self._setting_service.get_api_key("volcengine")
         if not volcengine_api_key:
             logger.warning("Volcano Engine API key not configured. LLM-dependent features may fail.")
@@ -411,7 +413,7 @@ class NewsController(QObject):
         return [s for s in sources if s["name"] == source_name]
 
     def get_source_names_by_category(self, category_id: int) -> List[str]:
-        """获取指定分类的所有新闻源名称"""
+        """Retrieves all news source names for the specified category."""
         if category_id == -1:
             sources = self._news_service.get_all_sources()
         else:
@@ -551,128 +553,119 @@ class NewsController(QObject):
         self._active_initial_crawler = None
         # Don't stop the processing worker here, keep it running
 
-    # --- 新增方法：单条新闻分析 ---
+    # --- New Method: Single News Analysis ---
     def trigger_single_item_analysis(self, news_id: int, content: str):
         """
-        触发对单条新闻内容的LLM分析。
-        分析结果将通过analysis_chunk_received信号以流式方式返回。
-        完成后，分析结果将保存到数据库。
+        Trigger LLM analysis on a single news content.
+        The analysis result will be returned in a streaming manner via the analysis_chunk_received signal.
+        After completion, the analysis result will be saved to the database.
         
         Args:
-            news_id: 新闻项的ID
-            content: 新闻的原始内容文本
+            news_id: The ID of the news item
+            content: The original content text of the news
         """
         if not content or not content.strip():
-            self.error_occurred.emit("分析错误", "内容为空，无法进行分析")
+            self.error_occurred.emit("Analysis Error", "Content is empty, cannot perform analysis")
             return
             
-        # 检查API密钥是否配置
+        # Check if API key is configured
         volcengine_api_key = self._setting_service.get_api_key("volcengine")
         if not volcengine_api_key:
-            logger.warning("未配置Volcano Engine API密钥，无法使用LLM功能")
+            logger.warning("Volcano Engine API key not configured, LLM functionality cannot be used")
             self.error_occurred.emit(
-                "API密钥错误", "未配置Volcano Engine API密钥，请检查设置"
+                "API Key Error", "Volcano Engine API key not configured, please check settings"
             )
             return
             
-        # 设置LLM参数
+        # Set LLM parameters
         llm_base_url = "https://ark.cn-beijing.volces.com/api/v3"
         
-        # 创建并启动分析任务
+        # Create and start analysis task
         try:
-            # 避免重复分析
+            # Avoid duplicate analysis
             if news_id in self._single_item_analysis_tasks:
-                logger.warning(f"新闻ID {news_id} 已有正在进行的分析任务")
+                logger.warning(f"News ID {news_id} already has an ongoing analysis task")
                 return
                 
-            # 启动异步任务
+            # Start asynchronous task
             def run_analysis_task():
-                # 创建单独的事件循环用于这个线程
+                # Create a separate event loop for this thread
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 
                 try:
-                    # 通知UI开始分析
-                    logger.info(f"开始对新闻ID {news_id} 进行分析")
+                    # Notify UI to start analysis
+                    logger.info(f"Starting analysis for news ID {news_id}")
                     
-                    # 使用异步函数进行分析
+                    # Use asynchronous function for analysis
                     result = loop.run_until_complete(
                         self._analyze_single_content(news_id, content, volcengine_api_key, llm_base_url)
                     )
                     
-                    # 保存分析结果到数据库
+                    # Save analysis result to database
                     if result and result.strip():
                         success = self._news_service.update_news_analysis(news_id, result)
                         if not success:
-                            logger.error(f"保存新闻ID {news_id} 的分析结果失败")
+                            logger.error(f"Failed to save analysis result for news ID {news_id}")
                     
-                    logger.info(f"新闻ID {news_id} 的分析任务完成")
+                    logger.info(f"Analysis task for news ID {news_id} completed")
                 except Exception as e:
-                    logger.error(f"分析新闻ID {news_id} 时出错: {e}", exc_info=True)
-                    self.error_occurred.emit("分析错误", f"处理新闻时出错: {str(e)}")
+                    logger.error(f"Error analyzing news ID {news_id}: {e}", exc_info=True)
+                    self.error_occurred.emit("Analysis Error", f"Error processing news: {str(e)}")
                 finally:
-                    # 关闭事件循环
+                    # Close event loop
                     loop.close()
-                    # 从跟踪字典中移除任务
+                    # Remove task from tracking dictionary
                     if news_id in self._single_item_analysis_tasks:
                         del self._single_item_analysis_tasks[news_id]
             
-            # 将任务提交到线程池
-            self._single_item_analysis_tasks[news_id] = True  # 标记任务已开始
+            # Submit task to thread pool
+            self._single_item_analysis_tasks[news_id] = True  # Mark task as started
             self._thread_pool.start(run_analysis_task)
-            logger.debug(f"已提交新闻ID {news_id} 的分析任务")
+            logger.debug(f"Analysis task for news ID {news_id} submitted")
             
         except Exception as e:
-            logger.error(f"提交分析任务时出错: {e}", exc_info=True)
-            self.error_occurred.emit("系统错误", f"无法启动分析任务: {str(e)}")
+            logger.error(f"Error submitting analysis task: {e}", exc_info=True)
+            self.error_occurred.emit("System Error", f"Unable to start analysis task: {str(e)}")
             
     async def _analyze_single_content(self, news_id: int, content: str, api_key: str, base_url: str):
         """
-        使用LLM对单条新闻内容进行分析，并以流的方式返回结果。
+        Analyze a single news content using LLM and return the result in a streaming manner.
         
         Args:
-            news_id: 新闻ID，用于关联结果
-            content: 要分析的新闻内容
-            api_key: LLM API密钥
-            base_url: LLM API基础URL
+            news_id: The news ID for associating the result
+            content: The news content to analyze
+            api_key: LLM API key
+            base_url: LLM API base URL
             
         Returns:
-            完整的分析结果文本
+            Complete analysis result text
         """
         try:
-            # 构建分析提示
-            system_prompt = """你是一个专业的新闻分析师。请对提供的新闻内容进行深入分析，包括：
-1. 主要事件和关键人物
-2. 事件背景和上下文
-3. 可能的影响和意义
-4. 多角度观点分析
-5. 结论和建议
-
-使用清晰的标题和结构化段落组织你的分析。保持客观、准确和深入。"""
-
-            user_prompt = f"请分析以下新闻内容：\n\n{content}"
+            user_prompt = f"""
+            Please analyze the following news content:\n\"\"\"\n{content}\n\"\"\"
+            **Write in the same language as the original content** (e.g., if the original content is in Chinese, the analysis should also be in Chinese). 
+            """
             
-            # 从NewsService获取流式分析结果
+            # Get streaming analysis result from NewsService
             full_result = ""
-            analysis_generator = await self._news_service.analyze_single_content(
-                system_prompt=system_prompt,
+            
+            async for chunk in self._news_service.analyze_single_content(
+                system_prompt=SYSTEM_PROMPT_ANALYZE_CONTENT,
                 user_prompt=user_prompt,
                 api_key=api_key,
                 base_url=base_url
-            )
-            
-            # 处理流式结果
-            async for chunk in analysis_generator:
+            ):
                 if chunk and chunk.strip():
-                    # 发送块到UI
+                    # Send chunk to UI
                     self.analysis_chunk_received.emit(news_id, chunk)
                     full_result += chunk
                     
             return full_result
                     
         except Exception as e:
-            logger.error(f"执行LLM分析时出错: {e}", exc_info=True)
-            # 发送错误信息作为最后一个块
-            error_message = f"\n\n**分析过程中出错**: {str(e)}"
+            logger.error(f"Error executing LLM analysis: {e}", exc_info=True)
+            # Send error message as the last chunk
+            error_message = f"\n\n**Error during analysis**: {str(e)}"
             self.analysis_chunk_received.emit(news_id, error_message)
             return error_message

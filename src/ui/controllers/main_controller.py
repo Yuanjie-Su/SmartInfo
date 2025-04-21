@@ -28,11 +28,11 @@ class MainController(QObject):
         parent=None,
     ):
         super().__init__(parent)
-        # 注入服务实例
+        # Inject service instances
         self.news_service = news_service
         self.qa_service = qa_service
         self.setting_service = setting_service
-        # 生成子控制器
+        # Generate sub-controllers
         self.news_controller = NewsController(self.news_service, self.setting_service)
         self.settings_controller = SettingsController(
             self.setting_service, self.news_service
@@ -45,5 +45,5 @@ class MainController(QObject):
         )
 
     def notify_settings_changed(self):
-        """当设置发生变更时，发射信号通知其他模块刷新数据。"""
+        """Emits a signal to notify other modules to refresh data when settings change."""
         self.settings_changed.emit()

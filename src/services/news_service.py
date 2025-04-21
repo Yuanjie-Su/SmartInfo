@@ -1,5 +1,3 @@
-# src/services/news_service.py (Refactored)
-#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
 """
@@ -8,6 +6,7 @@ NewsService Module
 - Utilizes an LLM for link extraction and in-depth content summarization.
 """
 
+import json
 import logging
 import asyncio
 import re
@@ -27,47 +26,39 @@ from src.db.repositories import (
 # Client to interact with the LLM API
 from src.services.llm_client import LLMClient
 
-# Utility for parsing structured output from LLM analysis
+# Utilities for processing content and LLM output
 from src.utils.markdown_utils import (
     clean_markdown_links,
     strip_markdown_divider,
     strip_markdown_links,
 )
-from src.utils.parse import parse_markdown_analysis_output
-
-# Utility for measuring token counts for LLM input/output constraints
+from src.utils.parse import parse_json_from_text
 from src.utils.token_utils import get_token_size
-
-# HTML cleaning and conversion to Markdown
 from src.utils.html_utils import clean_and_format_html, extract_metadata_from_article_html
-
-# system prompt
 from src.utils.prompt import (
-    EXTRACT_ARTICLE_LINKS_SYSTEM_PROMPT,
-    EXTRACT_SUMMARIZE_ARTICLE_BATCH_SYSTEM_PROMPT,
+    SYSTEM_PROMPT_EXTRACT_ARTICLE_LINKS,
+    SYSTEM_PROMPT_EXTRACT_SUMMARIZE_ARTICLE_BATCH,
+    SYSTEM_PROMPT_ANALYZE_CONTENT,
 )
 
 # Configure module-level logger
 logger = logging.getLogger(__name__)
 
-# Default model identifier for link extraction and analysis
+# Constants for LLM model and token limits
 DEFAULT_EXTRACTION_MODEL = "deepseek-v3-250324"
-# Maximum tokens allowed in LLM's output response
-MAX_OUTPUT_TOKENS = 16384
-# Maximum tokens allowed in LLM's input prompt
-MAX_INPUT_TOKENS = 131072 - 2 * MAX_OUTPUT_TOKENS
-
+MAX_OUTPUT_TOKENS = 16384  # Max tokens for LLM output
+MAX_INPUT_TOKENS = 131072 - 2 * MAX_OUTPUT_TOKENS  # Max tokens for LLM input prompt
 
 class NewsService:
     """
     Service class responsible for:
-    - Fetching HTML content from news sources (handled externally now, e.g., by Controller/Worker).
-    - Processing fetched HTML: cleaning, formatting, chunking.
-    - Extracting relevant links using LLM.
+    - Fetching and cleaning HTML content.
+    - Converting to Markdown and chunking large texts.
+    - Extracting article links via LLM.
     - Crawling extracted links for sub-content.
-    - Performing LLM-driven content analysis on sub-content.
-    - Parsing analysis output and saving structured news items.
-    - Providing CRUD operations for news, sources, and categories.
+    - Performing LLM-driven content analysis.
+    - Parsing analysis results and saving to database.
+    - Providing CRUD operations for news items, sources, and categories.
     """
 
     def __init__(
@@ -76,7 +67,7 @@ class NewsService:
         source_repo: NewsSourceRepository,
         category_repo: NewsCategoryRepository,
     ):
-        # Database repositories
+        # Initialize database repository interfaces
         self._news_repo = news_repo
         self._source_repo = source_repo
         self._category_repo = category_repo
@@ -84,7 +75,6 @@ class NewsService:
     # -------------------------------------------------------------------------
     # Main Orchestration Method (Called by Worker/Controller)
     # -------------------------------------------------------------------------
-
     async def _process_html_and_analyze(
         self,
         url: str,
@@ -94,35 +84,28 @@ class NewsService:
         llm_client: LLMClient,
     ) -> Tuple[int, str, Optional[Exception]]:
         """
-        Processes HTML content from a single news source URL. This is the main
-        entry point for the processing logic called by the worker.
-
-        Workflow:
-          1. Prepare Markdown from HTML.
-          2. Chunk Markdown if necessary.
-          3. Process each chunk:
-             - Extract links via LLM.
-             - Crawl extracted links for sub-content.
-             - Analyze sub-content via LLM (potentially chunked).
-             - Parse analysis results.
-          4. Save all parsed items to the database.
+        Asynchronous entry point to process HTML content and analyze news articles.
+        1. Convert HTML to Markdown.
+        2. Chunk Markdown if too large.
+        3. For each chunk:
+            a. Extract and crawl links.
+            b. Analyze sub-articles via LLM.
+            c. Parse analysis results.
+        4. Save all parsed items to the database.
 
         Args:
-            url: The original URL of the news source.
-            html_content: The raw HTML content fetched from the URL.
-            source_info: Dictionary containing metadata about the source (id, name, category_id, etc.).
-            on_status_update: Optional callback function for reporting progress updates.
-                              Expected signature: on_status_update(url, status_message, details)
-            llm_client: LLMClient instance to use for API calls.
+            url: Source page URL.
+            html_content: Raw HTML fetched from the URL.
+            source_info: Metadata about the source (id, name, category, etc.).
+            on_status_update: Optional callback for progress reporting.
+            llm_client: Instance of LLMClient for API interaction.
 
         Returns:
-            Tuple[int, str, Optional[Exception]]
-            - saved_item_count: Number of successfully stored news items.
-            - analysis_result_markdown: Raw Markdown result from the final content analysis step(s).
-            - processing_error: Any exception or error message encountered during processing.
+            saved_item_count (int): Number of saved news items.
+            analysis_result_markdown (str): Markdown summary of parsed items.
+            processing_error (Exception|None): Any error encountered.
         """
-
-        # Helper for status updates
+        # Internal helper for unified status reporting
         def _status_update(status: str, details: str = ""):
             if on_status_update:
                 try:
@@ -131,19 +114,18 @@ class NewsService:
                     logger.error(f"Status update callback error for {url}: {e}")
 
         saved_item_count = 0
-        analysis_result_markdown = ""  # Store concatenated results if chunked
-        processing_error = None
+        analysis_result: List[Dict[str, Any]] = []
+        processing_error: Optional[Exception] = None
         all_parsed_results_for_url: List[Dict[str, Any]] = []
 
         try:
-            # Step 1: Clean HTML and prepare initial Markdown
-            markdown = self._clean_and_prepare_markdown(
-                url, html_content, _status_update
-            )
+            # Step 1: Clean HTML and produce Markdown
+            markdown = self._clean_and_prepare_markdown(url, html_content, _status_update)
             if not markdown:
-                return 0, "", None  # Skipped due to empty content
+                # Skip processing if no valid Markdown generated
+                return 0, "", None
 
-            # Step 2: Chunk initial Markdown if too large
+            # Step 2: Evaluate token size and chunk if exceeding threshold
             token_size = get_token_size(markdown)
             _status_update("Token Check", f"Initial Markdown tokens: {token_size}")
             markdown_chunks = [markdown]
@@ -151,110 +133,108 @@ class NewsService:
             if token_size > 40960:
                 num_chunks = (token_size // 40960) + 1
                 try:
+                    # Split long Markdown into line-based chunks
                     markdown_chunks = self._get_chunks(markdown, num_chunks)
-                    logger.info(
-                        f"Chunked initial markdown for {url} into {len(markdown_chunks)} segments."
-                    )
-                    _status_update(
-                        "Chunking", f"{len(markdown_chunks)} initial segments"
-                    )
+                    logger.info(f"Chunked initial markdown for {url} into {len(markdown_chunks)} segments.")
+                    _status_update("Chunking", f"{len(markdown_chunks)} initial segments")
                 except Exception as e:
-                    logger.error(
-                        f"Initial chunk splitting failed for {url}: {e}", exc_info=True
-                    )
+                    logger.error(f"Initial chunk splitting failed for {url}: {e}", exc_info=True)
+                    # Fallback to single chunk on error
                     _status_update("Chunk Err", "Proceeding with single segment")
-                    markdown_chunks = [markdown]  # Fallback
+                    markdown_chunks = [markdown]
                     num_chunks = 1
 
-            # Step 3: Process each chunk
+            # Step 3: Process each Markdown chunk
             for i, chunk_content in enumerate(markdown_chunks, start=1):
                 status_prefix = f"C{i}/{num_chunks}" if num_chunks > 1 else "Processing"
                 if not chunk_content.strip():
                     logger.debug(f"Skipped empty chunk {i}/{num_chunks} for {url}")
                     continue
 
-                # Step 3a: Extract and crawl links
+                # 3a: Link extraction and crawling
                 sub_structure_data_map, chunk_error = await self._extract_and_crawl_links(
                     url, chunk_content, status_prefix, _status_update, llm_client
                 )
                 if chunk_error:
-                    processing_error = chunk_error  # Store first error encountered
+                    processing_error = chunk_error
                 if not sub_structure_data_map:
-                    continue  # Skip analysis if no sub-content found or crawl failed
+                    # Skip analysis if no sub-articles found
+                    continue
 
-                # Step 3b: Analyze the collected sub-content
+                # 3b: Content analysis via LLM (with chunking support)
                 chunk_analysis_result, analyze_error = await self._analyze_content(
                     url, sub_structure_data_map, status_prefix, _status_update, llm_client
                 )
                 if analyze_error:
-                    processing_error = (
-                        processing_error or analyze_error
-                    )  # Keep first error
+                    processing_error = processing_error or analyze_error
                 if not chunk_analysis_result:
-                    continue  # Skip parsing if analysis failed or returned empty
+                    continue
 
-                # Aggregate analysis results if chunking occurred
+                # Aggregate analysis results for multi-chunk runs
                 if num_chunks > 1:
-                    analysis_result_markdown += chunk_analysis_result
+                    analysis_result.extend(chunk_analysis_result)
                 else:
-                    analysis_result_markdown = chunk_analysis_result
-                print(chunk_analysis_result)
-                # Step 3c: Parse results from this chunk's analysis
+                    analysis_result = chunk_analysis_result
+
+                # 3c: Parse analysis output into structured items
                 parsed_items, parse_error = self._parse_analysis_results(
-                    url,
-                    chunk_analysis_result,
-                    sub_structure_data_map,
-                    source_info,
-                    status_prefix,
-                    _status_update,
+                    url, chunk_analysis_result, sub_structure_data_map,
+                    source_info, status_prefix, _status_update
                 )
-                print(parsed_items)
                 if parse_error:
-                    processing_error = (
-                        processing_error or parse_error
-                    )  # Keep first error
+                    processing_error = processing_error or parse_error
                 if parsed_items:
                     all_parsed_results_for_url.extend(parsed_items)
 
-            # End of chunk processing loop
-
-            # Step 4: Save all accumulated results to the database
+            # Step 4: Persist accumulated results to the database
             saved_item_count, db_error = self._save_results_to_db(
                 url, all_parsed_results_for_url, _status_update
             )
             if db_error:
                 processing_error = processing_error or db_error
 
-            # Determine final status based on errors encountered
+            # Finalize status with summary of added vs skipped items
             final_status = "Complete" if not processing_error else "Complete*"
             _status_update(
                 final_status,
-                f"Added: {saved_item_count}, Skipped: {len(all_parsed_results_for_url) - saved_item_count}",
+                f"Added: {saved_item_count}, Skipped: {len(all_parsed_results_for_url) - saved_item_count}"
             )
 
-            return saved_item_count, analysis_result_markdown.strip(), processing_error
+            # Format summary of parsed items as Markdown for logging/display
+            analysis_result_markdown = "\n".join([
+                f"### {item.get('title', '')}\n"
+                f"🔗 {item.get('url', '')}\n"
+                f"📅 {item.get('date', '')}\n"
+                f"📝 {item.get('summary', '')}\n"
+                for item in all_parsed_results_for_url
+            ])
+
+            return saved_item_count, analysis_result_markdown, processing_error
 
         except Exception as critical_err:
-            logger.error(
-                f"Fatal processing error for {url}: {critical_err}", exc_info=True
-            )
+            # Catch any unexpected error and report as fatal
+            logger.error(f"Fatal processing error for {url}: {critical_err}", exc_info=True)
             _status_update("Fatal Error", str(critical_err))
-            return 0, analysis_result_markdown.strip(), critical_err
+            return 0, "", critical_err
 
     # -------------------------------------------------------------------------
     # Private Helper Methods for Processing Steps
     # -------------------------------------------------------------------------
-
     def _clean_and_prepare_markdown(
         self, url: str, html_content: str, _status_update: Callable[[str, str], None]
     ) -> Optional[str]:
-        """Cleans HTML, converts to Markdown, and cleans links."""
+        """
+        Clean raw HTML and convert it into Markdown format.
+        - Removes unwanted tags/styles.
+        - Normalizes links.
+        """
         _status_update("HTML Proc", "Cleaning and formatting HTML")
         if not html_content or not html_content.strip():
             _status_update("Skipped", "Empty HTML content")
             return None
 
         try:
+            # Convert HTML to markdown
             markdown = clean_and_format_html(
                 html_content=html_content,
                 base_url=url,
@@ -264,17 +244,15 @@ class NewsService:
                 _status_update("Skipped", "No Markdown after cleaning")
                 return None
 
-            # Clean markdown links immediately after conversion
+            # Remove or adjust any residual markdown links
             cleaned_markdown = clean_markdown_links(markdown)
             _status_update("HTML Done", "Cleaned HTML to Markdown")
             return cleaned_markdown
 
         except Exception as e:
-            logger.error(
-                f"Error during HTML cleaning/formatting for {url}: {e}", exc_info=True
-            )
+            logger.error(f"Error during HTML cleaning/formatting for {url}: {e}", exc_info=True)
             _status_update("HTML Error", str(e))
-            return None  # Treat as skippable error for this step
+            return None  # Continue processing with next steps as skippable error
 
     async def _extract_and_crawl_links(
         self,
@@ -284,65 +262,62 @@ class NewsService:
         _status_update: Callable[[str, str], None],
         llm_client: LLMClient,
     ) -> Tuple[Dict[str, str], Optional[Exception]]:
-        """Extracts links using LLM, crawls them, and returns processed sub-content."""
+        """
+        Extracts article links from Markdown using LLM and fetches sub-article content.
+        Returns a mapping from sub-URL to its extracted metadata.
+        """
         sub_structure_data_map: Dict[str, str] = {}
-        error = None
+        error: Optional[Exception] = None
 
+        # 1) Ask LLM to identify relevant links
         _status_update(f"{status_prefix} Link Ext", "Invoking LLM for links")
         link_prompt = self.build_link_extraction_prompt(base_url, markdown_content)
         links_str = await llm_client.get_completion_content(
             model=DEFAULT_EXTRACTION_MODEL,
             messages=[
-                {"role": "system", "content": EXTRACT_ARTICLE_LINKS_SYSTEM_PROMPT},
+                {"role": "system", "content": SYSTEM_PROMPT_EXTRACT_ARTICLE_LINKS},
                 {"role": "user", "content": link_prompt},
             ],
-            max_tokens=4096,  # Sufficient for a list of links
-            temperature=0.0,  # Low temp for deterministic extraction
+            max_tokens=4096,
+            temperature=0.0,
         )
 
+        # If LLM returned no links, skip without error
         if not links_str or not links_str.strip():
             logger.warning(f"No links returned by LLM for {base_url} ({status_prefix})")
             _status_update(f"{status_prefix} No Links", "")
-            return sub_structure_data_map, None  # Not an error, just no links
+            return sub_structure_data_map, None
 
-        # Parse and normalize URLs
+        # Normalize and filter out self-links
         extracted_links = [
             urljoin(base_url, link.strip())
             for link in links_str.splitlines()
-            if link.strip() and link.strip() != base_url  # Exclude self-links
+            if link.strip() and link.strip() != base_url
         ]
         if not extracted_links:
-            logger.warning(
-                f"LLM link output produced no valid URLs for {base_url} ({status_prefix})"
-            )
+            logger.warning(f"LLM link output produced no valid URLs for {base_url} ({status_prefix})")
             _status_update(f"{status_prefix} No Links", "Parsing failed")
             return sub_structure_data_map, None
 
+        # 2) Crawl each extracted link concurrently
         _status_update(f"{status_prefix} Crawling", f"{len(extracted_links)} URLs")
-        logger.info(
-            f"Crawling {len(extracted_links)} links for {base_url} ({status_prefix})"
-        )
+        logger.info(f"Crawling {len(extracted_links)} links for {base_url} ({status_prefix})")
         sub_crawler = AiohttpCrawler(max_concurrent_requests=5, request_timeout=15)
         try:
             async for crawl_result in sub_crawler.process_urls(extracted_links):
+                # Skip any failed requests
                 if crawl_result.get("error"):
-                    logger.warning(
-                        f"Sub-crawl failed for {crawl_result.get('original_url')}: {crawl_result['error']}"
-                    )
+                    logger.warning(f"Sub-crawl failed for {crawl_result.get('original_url')}: {crawl_result['error']}")
                     continue
                 if not crawl_result.get("content"):
-                    logger.warning(
-                        f"Sub-crawl returned empty content for {crawl_result.get('original_url')}"
-                    )
+                    logger.warning(f"Sub-crawl returned empty content for {crawl_result.get('original_url')}")
                     continue
 
-                sub_url = crawl_result.get(
-                    "final_url", crawl_result.get("original_url")
-                )
+                sub_url = crawl_result.get("final_url", crawl_result.get("original_url"))
                 if not sub_url:
                     continue
 
-                # Clean sub-page HTML to Markdown, stripping images and links
+                # Extract structured data (title, date, content) from HTML
                 structure_data = extract_metadata_from_article_html(
                     html_content=crawl_result["content"],
                     base_url=sub_url,
@@ -353,12 +328,10 @@ class NewsService:
                 sub_structure_data_map[sub_url] = structure_data
 
         except Exception as sub_err:
-            logger.error(
-                f"Sub-crawl error for {base_url} ({status_prefix}): {sub_err}",
-                exc_info=True,
-            )
+            # Record crawl errors and propagate
+            logger.error(f"Sub-crawl error for {base_url} ({status_prefix}): {sub_err}", exc_info=True)
             _status_update(f"{status_prefix} CrawlErr", str(sub_err))
-            error = sub_err  # Propagate crawl error
+            error = sub_err
 
         if not sub_structure_data_map:
             _status_update(f"{status_prefix} No Sub-Content", "")
@@ -373,166 +346,146 @@ class NewsService:
         _status_update: Callable[[str, str], None],
         llm_client: LLMClient,
     ) -> Tuple[str, Optional[Exception]]:
-        """Analyzes the collected sub-content using LLM, handling chunking if needed."""
-        analysis_result_markdown = ""
-        error = None
+        """
+        Run LLM-driven summarization on collected sub-article data.
+        Supports prompt chunking if the input size exceeds token limits.
+        """
+        analysis_result: List[Dict[str, str]] = []
+        error: Optional[Exception] = None
 
         _status_update(f"{status_prefix} Analyzing", f"{len(sub_structure_data_map)} items")
         analysis_prompt = self.build_content_analysis_prompt(sub_structure_data_map)
         prompt_tokens = get_token_size(analysis_prompt)
-        logger.debug(
-            f"Analysis prompt tokens for {url} ({status_prefix}): {prompt_tokens}"
-        )
+        logger.debug(f"Analysis prompt tokens for {url} ({status_prefix}): {prompt_tokens}")
 
         try:
-            # Handle prompt chunking if it exceeds input limit
+            # If prompt size too large, split into smaller batches
             if prompt_tokens > MAX_INPUT_TOKENS:
                 num_prompt_chunks = (prompt_tokens // MAX_INPUT_TOKENS) + 1
-                # 将 sub_content_map 的 key 均分到 num_prompt_chunks 个子字典中，并重建每个子字典对应的 prompt
                 chunk_maps: List[Dict[str, str]] = []
                 keys = list(sub_structure_data_map.keys())
                 total = len(keys)
+
                 if total < num_prompt_chunks:
-                    logger.warning(
-                        f"Not enough content to chunk for {url} ({status_prefix}), skipping chunking."
-                    )
-                    return (
-                        "",
-                        "Token limit exceeded, not enough content to chunk for {url} ({status_prefix}), skipping chunking.",
-                    )
+                    logger.warning(f"Not enough content to chunk for {url} ({status_prefix}), skipping chunking.")
+                    return "", "Token limit exceeded, not enough content to chunk."
+
                 size = total // num_prompt_chunks
                 for i in range(num_prompt_chunks):
                     start = i * size
                     end = start + size if i < num_prompt_chunks - 1 else total
                     part_keys = keys[start:end]
-                    if not part_keys:
-                        continue
-                    chunk_maps.append({k: sub_structure_data_map[k] for k in part_keys})
-                # 根据每个子字典重建 prompt 列表
-                prompt_chunks = [
-                    self.build_content_analysis_prompt(chunk) for chunk in chunk_maps
-                ]
-                logger.info(
-                    f"Analysis prompt chunking for {url} ({status_prefix}): {len(prompt_chunks)} parts."
-                )
-                _status_update(
-                    f"{status_prefix} Chunking", f"{len(prompt_chunks)} analysis parts"
-                )
+                    if part_keys:
+                        chunk_maps.append({k: sub_structure_data_map[k] for k in part_keys})
 
-                partial_results: List[str] = []
-                for j, p_chunk in enumerate(prompt_chunks, start=1):
-                    _status_update(
-                        f"{status_prefix} Analyzing {j}/{len(prompt_chunks)}",
-                        "LLM analysis",
-                    )
-                    chunk_result = await llm_client.get_completion_content(
+                # Build separate prompts for each chunk
+                prompt_chunks = [
+                    self.build_content_analysis_prompt(chunk_map) for chunk_map in chunk_maps
+                ]
+                logger.info(f"Analysis prompt chunking for {url} ({status_prefix}): {len(prompt_chunks)} parts.")
+                _status_update(f"{status_prefix} Chunking", f"{len(prompt_chunks)} analysis parts")
+
+                partial_results: List[Dict[str, str]] = []
+                for idx, p_chunk in enumerate(prompt_chunks, start=1):
+                    _status_update(f"{status_prefix} Analyzing {idx}/{len(prompt_chunks)}", "LLM analysis")
+                    llm_result = await llm_client.get_completion_content(
                         model=DEFAULT_EXTRACTION_MODEL,
                         messages=[
-                            {
-                                "role": "system",
-                                "content": EXTRACT_SUMMARIZE_ARTICLE_BATCH_SYSTEM_PROMPT,
-                            },
+                            {"role": "system", "content": SYSTEM_PROMPT_EXTRACT_SUMMARIZE_ARTICLE_BATCH},
                             {"role": "user", "content": p_chunk},
                         ],
                         max_tokens=MAX_OUTPUT_TOKENS,
-                        temperature=0.8,  # Higher temp for creative summarization
+                        temperature=0.8,
                     )
-                    if chunk_result and chunk_result.strip():
-                        partial_results.append(chunk_result)
-                    else:
-                        logger.warning(
-                            f"Empty result for analysis prompt chunk {j}/{len(prompt_chunks)} at {url}"
-                        )
+                    # Parse JSON response
+                    try:
+                        json_result = parse_json_from_text(llm_result)
+                        partial_results.extend(json_result)
+                    except json.JSONDecodeError:
+                        logger.error(f"Failed to parse JSON for {url} ({status_prefix})")
+                    except Exception as e:
+                        logger.error(f"Failed to parse JSON for {url} ({status_prefix}): {e}")
 
-                analysis_result_markdown = "\n\n---\n\n".join(
-                    partial_results
-                )  # Combine results
+                analysis_result = partial_results or []
+
             else:
-                # Analyze in one go
-                analysis_result_markdown = await llm_client.get_completion_content(
+                # Single-call analysis for smaller prompts
+                llm_result = await llm_client.get_completion_content(
                     model=DEFAULT_EXTRACTION_MODEL,
                     messages=[
-                        {
-                            "role": "system",
-                            "content": EXTRACT_SUMMARIZE_ARTICLE_BATCH_SYSTEM_PROMPT,
-                        },
+                        {"role": "system", "content": SYSTEM_PROMPT_EXTRACT_SUMMARIZE_ARTICLE_BATCH},
                         {"role": "user", "content": analysis_prompt},
                     ],
                     max_tokens=MAX_OUTPUT_TOKENS,
                     temperature=0.8,
                 )
+                try:
+                    analysis_result = parse_json_from_text(llm_result)
+                except json.JSONDecodeError:
+                    logger.error(f"Failed to parse JSON for {url} ({status_prefix})")
+                    analysis_result = []
+                except Exception as e:
+                    logger.error(f"Failed to parse JSON for {url} ({status_prefix}): {e}")
+                    analysis_result = []
 
-            # Check final result
-            if not analysis_result_markdown or not analysis_result_markdown.strip():
-                err_msg = (
-                    f"LLM analysis returned no content for {url} ({status_prefix})"
-                )
-                logger.error(err_msg)
+            # Validate final analysis output
+            if not analysis_result:
+                error_msg = f"LLM analysis returned no content for {url} ({status_prefix})"
+                logger.error(error_msg)
                 _status_update(f"{status_prefix} Analyze Err", "Empty LLM response")
-                error = Exception(err_msg)
+                error = Exception(error_msg)
             else:
                 _status_update(f"{status_prefix} Analyzed", "LLM analysis complete")
 
         except Exception as analyze_err:
-            logger.error(
-                f"LLM analysis failed for {url} ({status_prefix}): {analyze_err}",
-                exc_info=True,
-            )
+            # Catch any analysis errors
+            logger.error(f"LLM analysis failed for {url} ({status_prefix}): {analyze_err}", exc_info=True)
             _status_update(f"{status_prefix} Analyze Err", str(analyze_err))
             error = analyze_err
 
-        return analysis_result_markdown, error
+        return analysis_result, error
 
     def _parse_analysis_results(
         self,
         url: str,
-        analysis_result_markdown: str,
+        analysis_result: List[Dict[str, str]],
         sub_structure_data_map: Dict[str, Dict[str, Any]],
         source_info: Dict[str, Any],
         status_prefix: str,
         _status_update: Callable[[str, str], None],
     ) -> Tuple[List[Dict[str, Any]], Optional[Exception]]:
-        """Parses the LLM's analysis markdown and prepares items for saving."""
+        """
+        Convert LLM analysis output into structured news item dictionaries ready for database insertion.
+        """
         parsed_items_list: List[Dict[str, Any]] = []
-        error = None
+        error: Optional[Exception] = None
 
         try:
-            parsed_items = parse_markdown_analysis_output(analysis_result_markdown)
-            print(parsed_items)
-            logger.info(
-                f"Parsed {len(parsed_items)} items from {url} ({status_prefix}) analysis."
-            )
-
-            if parsed_items:
-                items_to_add = [
-                    {
-                        **item,  # Contains title, url, date, summary
-                        "content": sub_structure_data_map.get(
-                            item["url"], {}
-                        ).get("content", ""),  # Add original content
-                        "source_name": source_info["name"],
-                        "category_name": source_info["category_name"],
-                        "source_id": source_info["id"],
-                        "category_id": source_info["category_id"],
-                    }
-                    for item in parsed_items
-                    if item.get("url")  # Ensure url exists
-                ]
+            if analysis_result:
+                # Merge analysis fields with original metadata
+                items_to_add = []
+                for item in analysis_result:
+                    if item.get("url"):
+                        parsed = {
+                            **item,
+                            "title": sub_structure_data_map.get(item["url"], {}).get("title", ""),
+                            "date": sub_structure_data_map.get(item["url"], {}).get("date", ""),
+                            "content": sub_structure_data_map.get(item["url"], {}).get("content", ""),
+                            "source_name": source_info["name"],
+                            "category_name": source_info["category_name"],
+                            "source_id": source_info["id"],
+                            "category_id": source_info["category_id"],
+                        }
+                        items_to_add.append(parsed)
                 parsed_items_list.extend(items_to_add)
-                _status_update(
-                    f"{status_prefix} Parsed", f"{len(items_to_add)} items ready"
-                )
+                _status_update(f"{status_prefix} Parsed", f"{len(items_to_add)} items ready")
             else:
-                logger.warning(
-                    f"No actionable items parsed for {url} ({status_prefix})"
-                )
+                # No items extracted from analysis
+                logger.warning(f"No actionable items parsed for {url} ({status_prefix})")
                 _status_update(f"{status_prefix} Parse Empty", "No items detected")
-
         except Exception as parse_err:
-            logger.error(
-                f"Parsing error for LLM output of {url} ({status_prefix}): {parse_err}",
-                exc_info=True,
-            )
+            # Handle parsing exceptions
+            logger.error(f"Parsing error for LLM output of {url} ({status_prefix}): {parse_err}", exc_info=True)
             _status_update(f"{status_prefix} Parse Err", str(parse_err))
             error = parse_err
 
@@ -541,26 +494,28 @@ class NewsService:
     def _save_results_to_db(
         self,
         url: str,
-        parsed_items: List[Dict[str, Any]],
-        _status_update: Callable[[str, str], None],
+        parsed_items: List[dict],
+        _status_update: Callable[[str, str], None]
     ) -> Tuple[int, Optional[Exception]]:
-        """Saves the parsed items to the database."""
+        """
+        Persist a batch of parsed news items to the database.
+        Returns the count of added items and any error encountered.
+        """
         saved_count = 0
-        error = None
+        error: Optional[Exception] = None
 
+        # Skip if there is no data to store
         if not parsed_items:
-            return 0, None  # Nothing to save
+            return 0, None
 
         _status_update("Saving", f"{len(parsed_items)} items")
         logger.info(f"Saving {len(parsed_items)} items for {url}")
         try:
             added_count, skipped_count = self._news_repo.add_batch(parsed_items)
             saved_count = added_count
-            logger.info(
-                f"Database save for {url}: Added {added_count}, Skipped {skipped_count}"
-            )
-            # Status update is handled by the calling orchestrator method
+            logger.info(f"Database save for {url}: Added {added_count}, Skipped {skipped_count}")
         except Exception as db_err:
+            # Log DB save failures
             logger.error(f"Database save error for {url}: {db_err}", exc_info=True)
             _status_update("DB Error", str(db_err))
             error = db_err
@@ -570,36 +525,35 @@ class NewsService:
     # -------------------------------------------------------------------------
     # Text Chunking Helper
     # -------------------------------------------------------------------------
-
     def _get_chunks(self, text: str, num_chunks: int) -> List[str]:
         """
-        Split input text into approximately equal-sized chunks by lines.
+        Split the input text into roughly equal-sized chunks by line count.
         """
         lines = text.splitlines()
         if not lines:
             return []
+
         total_lines = len(lines)
         lines_per_chunk = max(1, total_lines // num_chunks)
         chunks: List[str] = []
-        start_index = 0
+        start_idx = 0
+
         for i in range(num_chunks):
-            end_index = (
-                start_index + lines_per_chunk if i < num_chunks - 1 else total_lines
-            )
-            end_index = min(end_index, total_lines)
-            if start_index < end_index:
-                chunks.append("\n".join(lines[start_index:end_index]))
-            start_index = end_index
-            if start_index >= total_lines:
+            end_idx = start_idx + lines_per_chunk if i < num_chunks - 1 else total_lines
+            end_idx = min(end_idx, total_lines)
+            if start_idx < end_idx:
+                chunks.append("\n".join(lines[start_idx:end_idx]))
+            start_idx = end_idx
+            if start_idx >= total_lines:
                 break
+
         return [chunk for chunk in chunks if chunk.strip()]
 
     # -------------------------------------------------------------------------
     # Prompt Construction Helpers
     # -------------------------------------------------------------------------
-
     def build_link_extraction_prompt(self, url: str, markdown_content: str) -> str:
-        """Constructs the prompt for LLM link extraction."""
+        """Create the prompt for link extraction LLM call."""
         prompt = f"""
 Base URL: {url}
 Markdown:
@@ -608,27 +562,26 @@ Markdown:
         return prompt
 
     def build_content_analysis_prompt(self, structure_data_map: Dict[str, str]) -> str:
-        """Constructs the prompt for LLM content analysis."""
-        # (Prompt content remains the same as original)
+        """Build the prompt containing article metadata to guide LLM summarization."""
         if not structure_data_map:
             return ""
 
-        prompt = ""
-        for url, structure_data in structure_data_map.items():
-            prompt += f"<Article>\n"
-            prompt += f"Title: {structure_data['title']}\n"
-            prompt += f"Url: {structure_data['url']}\n"
-            prompt += f"Date: {structure_data['date']}\n"
-            prompt += f"Content:\n{structure_data['content']}\n"
-            prompt += f"</Article>\n\n"
+        prompt_parts: List[str] = []
+        for article_url, data in structure_data_map.items():
+            prompt_parts.append("<Article>")
+            prompt_parts.append(f"Title: {data['title']}")
+            prompt_parts.append(f"Url: {data['url']}")
+            prompt_parts.append(f"Date: {data['date']}")
+            prompt_parts.append("Content:")
+            prompt_parts.append(data["content"])
+            prompt_parts.append("</Article>\n")
 
-        prompt += "Please summarize each article in Markdown format, following the structure and style shown above."
-        return prompt
+        prompt_parts.append("Please summarize each article in Markdown format, following the structure and style shown above.")
+        return "\n".join(prompt_parts)
 
     # -------------------------------------------------------------------------
     # Public CRUD Methods (Pass-through to Repositories)
     # -------------------------------------------------------------------------
-
     # --- News Item Methods ---
     def get_news_by_id(self, news_id: int) -> Optional[Dict[str, Any]]:
         """Retrieve a single news item by its unique identifier."""
@@ -653,11 +606,11 @@ Markdown:
         return self._category_repo.get_all()
 
     def get_all_categories_with_counts(self) -> List[Tuple[int, str, int]]:
-        """List all categories (ID, Name, Source Count)."""
+        """List all categories with count of sources."""
         return self._category_repo.get_with_source_count()
 
     def add_category(self, name: str) -> Optional[int]:
-        """Add a new category. Returns the new category ID or None."""
+        """Add a new category; returns new category ID on success."""
         return self._category_repo.add(name)
 
     def update_category(self, category_id: int, new_name: str) -> bool:
@@ -665,15 +618,13 @@ Markdown:
         return self._category_repo.update(category_id, new_name)
 
     def delete_category(self, category_id: int) -> bool:
-        """Delete a category and its associated news sources."""
-        logger.warning(
-            f"Deleting category ID {category_id} will also delete its sources."
-        )
+        """Delete a category and all its associated news sources."""
+        logger.warning(f"Deleting category ID {category_id} will also delete its sources.")
         return self._category_repo.delete(category_id)
 
     # --- Source Methods ---
     def get_all_sources(self) -> List[Dict[str, Any]]:
-        """Retrieve all news sources with category metadata."""
+        """Retrieve all news sources along with their category metadata."""
         rows = self._source_repo.get_all()
         return [
             {
@@ -687,7 +638,7 @@ Markdown:
         ]
 
     def get_sources_by_category_id(self, category_id: int) -> List[Dict[str, Any]]:
-        """Retrieve news sources filtered by a specific category ID."""
+        """Retrieve news sources filtered by specific category ID."""
         rows = self._source_repo.get_by_category(category_id)
         return [
             {
@@ -701,30 +652,24 @@ Markdown:
         ]
 
     def add_source(self, name: str, url: str, category_name: str) -> Optional[int]:
-        """Add a new source. Creates category if missing. Returns new source ID or None."""
+        """Add a new source; create category if it does not exist."""
         category = self._category_repo.get_by_name(category_name)
         if not category:
             category_id = self._category_repo.add(category_name)
             if not category_id:
-                logger.error(
-                    f"Failed to add/find category '{category_name}' for new source."
-                )
+                logger.error(f"Failed to add/find category '{category_name}' for new source.")
                 return None
         else:
             category_id = category[0]
         return self._source_repo.add(name, url, category_id)
 
-    def update_source(
-        self, source_id: int, name: str, url: str, category_name: str
-    ) -> bool:
-        """Update an existing source. Creates category if missing."""
+    def update_source(self, source_id: int, name: str, url: str, category_name: str) -> bool:
+        """Update existing source info; create category if missing."""
         category = self._category_repo.get_by_name(category_name)
         if not category:
             category_id = self._category_repo.add(category_name)
             if not category_id:
-                logger.error(
-                    f"Failed to add/find category '{category_name}' for updating source."
-                )
+                logger.error(f"Failed to add/find category '{category_name}' for updating source.")
                 return False
         else:
             category_id = category[0]
@@ -734,7 +679,6 @@ Markdown:
         """Delete a news source by its ID."""
         return self._source_repo.delete(source_id)
 
-    # --- 新增方法：单条新闻分析 ---
     async def analyze_single_content(
         self,
         system_prompt: str,
@@ -743,52 +687,48 @@ Markdown:
         base_url: str
     ) -> AsyncGenerator[str, None]:
         """
-        使用LLM对单条内容进行分析，以流的方式返回结果。
-        
-        Args:
-            system_prompt: 系统提示文本
-            user_prompt: 用户提示文本（包含要分析的内容）
-            api_key: LLM API密钥
-            base_url: LLM API基础URL
-            
-        Yields:
-            生成的文本块
+        Stream LLM analysis for a single piece of content.
+        Yields analysis fragments as they are generated by the model.
         """
         from src.services.llm_client import LLMClient
-        
+
         try:
-            # 创建一个临时的LLM客户端
-            llm_client = LLMClient(api_key=api_key, base_url=base_url)
-            
-            # 获取流式生成结果
-            async for chunk in llm_client.stream_completion_content(
+            # Instantiate a temporary LLM client in async streaming mode
+            llm_client = LLMClient(api_key=api_key, base_url=base_url, async_mode=True)
+
+            # Start streaming completion from the LLM
+            stream_generator = await llm_client.stream_completion_content(
                 model=DEFAULT_EXTRACTION_MODEL,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
                 max_tokens=MAX_OUTPUT_TOKENS,
-                temperature=0.7,  # 适中的创造性
-            ):
+                temperature=0.7,
+            )
+
+            # Ensure the stream was successfully initiated
+            if stream_generator is None:
+                logger.error("LLM stream initiation failed.")
+                yield "\n\nAnalysis process failed: Unable to start streaming analysis."
+                return
+
+            # Yield each chunk of output as it arrives
+            async for chunk in stream_generator:
                 yield chunk
-                
+
         except Exception as e:
-            logger.error(f"LLM流式分析出错: {e}", exc_info=True)
-            yield f"\n\n分析过程发生错误: {str(e)}"
-            
+            # Handle any streaming errors
+            logger.error(f"LLM streaming analysis failed: {e}", exc_info=True)
+            yield f"\n\nAnalysis process failed: {e}"
+
     def update_news_analysis(self, news_id: int, analysis_text: str) -> bool:
         """
-        更新新闻条目的分析字段。
-        
-        Args:
-            news_id: 要更新的新闻ID
-            analysis_text: 分析结果文本
-            
-        Returns:
-            更新是否成功
+        Update the 'analysis' field of an existing news record.
+        Returns True on success, False otherwise.
         """
         try:
             return self._news_repo.update_analysis(news_id, analysis_text)
         except Exception as e:
-            logger.error(f"更新新闻ID {news_id} 的分析字段时出错: {e}", exc_info=True)
+            logger.error(f"Error updating analysis field for news ID {news_id}: {e}", exc_info=True)
             return False

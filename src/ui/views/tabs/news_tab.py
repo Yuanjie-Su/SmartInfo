@@ -20,7 +20,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMenu,
     QSplitter,
-    QTextEdit,
+    QTextBrowser,
     QHeaderView,
     QMessageBox,
     QApplication,
@@ -119,8 +119,9 @@ class NewsTab(QWidget):
         preview_layout = QVBoxLayout(preview_widget)
         preview_layout.setContentsMargins(0, 0, 0, 0)
         preview_layout.addWidget(QLabel("Preview:"))
-        self.preview_text = QTextEdit()
+        self.preview_text = QTextBrowser()
         self.preview_text.setReadOnly(True)
+        self.preview_text.setOpenExternalLinks(True)
         preview_layout.addWidget(self.preview_text)
         splitter.addWidget(preview_widget)
 
@@ -234,22 +235,22 @@ class NewsTab(QWidget):
         self.controller.apply_filters(category_id, source_name, search_text)
 
     def _handle_category_change(self):
-        """处理分类选择改变，更新对应的数据源过滤列表"""
+        """Handles category selection change and updates the corresponding data source filter list."""
         category_id = self.category_filter.currentData()
         
-        # 获取当前选中的分类对应的所有新闻源
+        # Get all news sources corresponding to the currently selected category
         source_names = self.controller.get_source_names_by_category(category_id)
         
-        # 更新新闻源下拉框
+        # Update the news source dropdown
         self.source_filter.blockSignals(True)
         self.source_filter.clear()
         self.source_filter.addItem("All", "All")
         for name in source_names:
             self.source_filter.addItem(name, name)
-        self.source_filter.setCurrentIndex(0)  # 默认选中"All"
+        self.source_filter.setCurrentIndex(0)  # Default select "All"
         self.source_filter.blockSignals(False)
         
-        # 应用过滤器更新表格
+        # Apply filters to update the table
         self._trigger_filter_apply()
 
     def _trigger_selection_changed(self):
@@ -273,18 +274,19 @@ class NewsTab(QWidget):
             preview_html = f"<h3>{news_details.get('title', 'N/A')}</h3>"
             preview_html += f"<p>{news_details.get('source_name', '')} {news_details.get('date', '')}<br>"
             url = news_details.get("url", "#")
-            preview_html += f"<a href='{url}'>{url}</a></p><hr>"  # Added HR
+            preview_html += f"<a href='{url}'>{url}</a></p>"  # Added HR
             # Display summary first, then analysis if available
             summary = news_details.get("summary", "")
             analysis = news_details.get(
                 "analysis", ""
             )  # Assuming controller gets this too
 
+            # Display summary inline with bold label, no separate header
             if summary:
-                preview_html += f"<h4>Summary:</h4><p>{summary.replace(chr(10), '<br>')}</p>"  # Use chr(10) for newline
+                preview_html += f"<p><strong>Summary: </strong>{summary.replace(chr(10), '<br>')}</p>"  # Use chr(10) for newline
             if analysis:
                 preview_html += (
-                    f"<h4>Analysis:</h4><p>{analysis.replace(chr(10), '<br>')}</p>"
+                    f"<p><strong>Analysis:</strong>{analysis.replace(chr(10), '<br>')}</p>"
                 )
 
             self.preview_text.setHtml(preview_html)
@@ -351,16 +353,16 @@ class NewsTab(QWidget):
         self.category_filter.blockSignals(False)
 
         # --- Source Filter ---
-        # 初始加载时，使用所有来源填充source_filter
+        # Initially load all sources into source_filter
         self.source_filter.blockSignals(True)
         self.source_filter.clear()
         self.source_filter.addItem("All", "All")
         for name in source_names:
             self.source_filter.addItem(name, name)
-        self.source_filter.setCurrentIndex(0)  # 默认选择"All"
+        self.source_filter.setCurrentIndex(0)  # Default select "All"
         self.source_filter.blockSignals(False)
 
-        # 初始过滤器应用
+        # Initial filter application
         self._trigger_filter_apply()
 
     @Slot(str, str, bool)
@@ -459,20 +461,19 @@ class NewsTab(QWidget):
 
     def _show_analysis_for_selected(self, proxy_index: QModelIndex):
         """
-        处理右键菜单 "View Analysis" 的点击事件。
-        打开一个新的对话框显示详情，并在需要时触发 LLM 分析。
+        Handles the click event of the right-click menu "View Analysis".
+        Opens a new dialog to show details and triggers LLM analysis if needed.
         """
         if not self.controller.proxy_model or not self.controller.news_model or not proxy_index.isValid():
-            logger.warning("无法显示分析：模型或索引无效。")
-            self._show_error_message("错误", "无法获取所选项目的数据。")
+            logger.warning("Unable to display analysis: Model or index is invalid.")
+            self._show_error_message("Error", "Unable to retrieve data for the selected item.")
             return
 
-        # --- 从模型获取所需要的数据 ---
-        source_index = self.controller.proxy_model.mapToSource(proxy_index)
+        # --- Get the required data from the model ---
         news_details = self.controller.get_news_details(proxy_index)
         
         if not news_details:
-            self._show_error_message("错误", "无法获取新闻详情。")
+            self._show_error_message("Error", "Unable to retrieve news details.")
             return
             
         news_id = news_details.get("id")
@@ -484,55 +485,58 @@ class NewsTab(QWidget):
         existing_analysis = news_details.get("analysis", "")
         content = news_details.get("content", "")
 
-        # --- 创建并显示 AnalysisDetailDialog ---
+        # --- Create and display AnalysisDetailDialog ---
         try:
-            # 检查是否已有此对话框实例 (希望每个分析只打开一个窗口)
-            dialog_key = f"analysis_{news_id}" # 使用 news_id 作为唯一标识符
+            # Check if there is already an instance of this dialog (hope to open only one window for each analysis)
+            dialog_key = f"analysis_{news_id}" # Use news_id as a unique identifier
             if dialog_key in self.llm_stream_dialogs and self.llm_stream_dialogs[dialog_key].isVisible():
                  existing_dialog = self.llm_stream_dialogs[dialog_key]
                  existing_dialog.raise_()
                  existing_dialog.activateWindow()
                  logger.debug(f"Analysis dialog for ID {news_id} already open.")
-                 return # 不重复打开
+                 return # Do not open again
 
 
-            logger.info(f"为新闻 ID {news_id} 打开分析详情对话框。")
-            analysis_dialog = AnalysisDetailDialog(
+            logger.info(f"Opening analysis detail dialog for news ID {news_id}.")
+            self.analysis_dialog = AnalysisDetailDialog(
                 news_id=news_id,
-                controller=self.controller, # 将控制器传递给对话框，用于连接信号
-                parent=self # 设置父窗口
+                controller=self.controller, # Pass the controller to the dialog for signal connection
+                parent=self # Set parent window
             )
-            self.llm_stream_dialogs[dialog_key] = analysis_dialog # 跟踪打开的对话框
-            analysis_dialog.finished.connect(lambda result, key=dialog_key: self._analysis_dialog_closed(key))
+            self.llm_stream_dialogs[dialog_key] = self.analysis_dialog # Track opened dialog
+            self.analysis_dialog.finished.connect(lambda result, key=dialog_key: self._analysis_dialog_closed(key))
 
 
-            analysis_dialog.set_details(title, url, date, summary, source_name)
+            self.analysis_dialog.set_details(title, url, date, summary, source_name)
 
-            if existing_analysis and existing_analysis.strip():
-                logger.debug(f"新闻 ID {news_id} 已有分析结果，直接显示。")
-                analysis_dialog.set_analysis_content(existing_analysis) # 假设对话框有此方法
+            # Initial content
+            initial_analysis_content = existing_analysis
+            if initial_analysis_content:
+                self.analysis_dialog.set_analysis_content(initial_analysis_content)
             else:
-                logger.debug(f"新闻 ID {news_id} 无分析结果，将触发 LLM 分析。")
-                analysis_dialog.set_analysis_content("⏳ 正在生成分析，请稍候...") # 初始提示
-                if not content or not content.strip():
-                     logger.warning(f"无法为新闻 ID {news_id} 生成分析，因为原文内容为空。")
-                     analysis_dialog.set_analysis_content("❌ 无法生成分析：原文内容缺失。")
-                else:
-                    # --- 调用 Controller 触发 LLM 分析 ---
-                    # 这个调用应该是异步的，Controller 内部会处理线程/异步任务
-                    # 对话框 AnalysisDetailDialog 内部需要连接 Controller 发出的流式信号
-                    self.controller.trigger_single_item_analysis(news_id, content)
+                # Set initial text in dialog to indicate analysis is starting
+                self.analysis_dialog.set_analysis_content("Analyzing...")
+                # Trigger analysis in the controller
+                self.controller.trigger_single_item_analysis(news_id, content)
 
-            analysis_dialog.show()
+            # Show the dialog
+            self.analysis_dialog.show()
+            self.analysis_dialog.raise_()
+            self.analysis_dialog.activateWindow()
 
         except Exception as e:
-            logger.error(f"创建或显示分析对话框时出错: {e}", exc_info=True)
-            self._show_error_message("界面错误", f"无法打开分析窗口: {e}")
+            logger.error(f"Error showing analysis detail dialog: {e}", exc_info=True)
+            QMessageBox.critical(self, "Error", "Failed to show analysis details.")
+            if self.analysis_dialog:
+                self.analysis_dialog.set_analysis_content("An error occurred, failed to load analysis results.")
+                # If dialog exists but couldn't be shown, ensure it's closed properly
+                dialog_key = f"analysis_{news_id}"
+                self._analysis_dialog_closed(dialog_key)
 
-    # --- 新增: 对话框关闭处理 ---
-    @Slot(str) # 参数是之前设置的 dialog_key
+    # --- New: Dialog close handling ---
+    @Slot(str) # Parameter is the previously set dialog_key
     def _analysis_dialog_closed(self, dialog_key: str):
-        """当分析详情对话框关闭时，从跟踪字典中移除它。"""
+        """When the analysis detail dialog is closed, remove it from the tracking dictionary."""
         if dialog_key in self.llm_stream_dialogs:
             logger.debug(f"Analysis detail dialog for key '{dialog_key}' closed.")
             del self.llm_stream_dialogs[dialog_key]
