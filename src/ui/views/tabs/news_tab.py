@@ -175,6 +175,7 @@ class NewsTab(QWidget):
         self.controller.fetch_analysis_result.connect(self._cache_analysis_result)
         self.controller.fetch_process_finished.connect(self._handle_fetch_finished)
         self.controller.error_occurred.connect(self._show_error_message)
+        # self.fetch_progress_dialog.tasks_stop_requested.connect(self.controller.handle_stop_tasks_request)
 
     # --- Internal Trigger Methods (Called by UI Signals) ---
     def _trigger_fetch_news(self):
