@@ -35,6 +35,7 @@ from src.utils.markdown_utils import (
 from src.utils.parse import parse_json_from_text
 from src.utils.token_utils import get_token_size
 from src.utils.html_utils import clean_and_format_html, extract_metadata_from_article_html
+from src.utils.text_utils import get_chunks
 from src.utils.prompt import (
     SYSTEM_PROMPT_EXTRACT_ARTICLE_LINKS,
     SYSTEM_PROMPT_EXTRACT_SUMMARIZE_ARTICLE_BATCH,
@@ -134,7 +135,7 @@ class NewsService:
                 num_chunks = (token_size // 40960) + 1
                 try:
                     # Split long Markdown into line-based chunks
-                    markdown_chunks = self._get_chunks(markdown, num_chunks)
+                    markdown_chunks = get_chunks(markdown, num_chunks)
                     logger.info(f"Chunked initial markdown for {url} into {len(markdown_chunks)} segments.")
                     _status_update("Chunking", f"{len(markdown_chunks)} initial segments")
                 except Exception as e:
@@ -521,33 +522,6 @@ class NewsService:
             error = db_err
 
         return saved_count, error
-
-    # -------------------------------------------------------------------------
-    # Text Chunking Helper
-    # -------------------------------------------------------------------------
-    def _get_chunks(self, text: str, num_chunks: int) -> List[str]:
-        """
-        Split the input text into roughly equal-sized chunks by line count.
-        """
-        lines = text.splitlines()
-        if not lines:
-            return []
-
-        total_lines = len(lines)
-        lines_per_chunk = max(1, total_lines // num_chunks)
-        chunks: List[str] = []
-        start_idx = 0
-
-        for i in range(num_chunks):
-            end_idx = start_idx + lines_per_chunk if i < num_chunks - 1 else total_lines
-            end_idx = min(end_idx, total_lines)
-            if start_idx < end_idx:
-                chunks.append("\n".join(lines[start_idx:end_idx]))
-            start_idx = end_idx
-            if start_idx >= total_lines:
-                break
-
-        return [chunk for chunk in chunks if chunk.strip()]
 
     # -------------------------------------------------------------------------
     # Prompt Construction Helpers

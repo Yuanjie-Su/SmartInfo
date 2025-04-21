@@ -43,6 +43,7 @@ class NewsTab(QWidget):
         super().__init__()
         self.controller = controller
         self._is_closing = False
+        # 初始化为None，稍后在需要时再创建
         self.fetch_progress_dialog: Optional[FetchProgressDialog] = None
         self.llm_stream_dialogs: Dict[str, LlmStreamDialog] = {}
         self._cached_analysis_results: Dict[str, str] = {}
@@ -175,7 +176,6 @@ class NewsTab(QWidget):
         self.controller.fetch_analysis_result.connect(self._cache_analysis_result)
         self.controller.fetch_process_finished.connect(self._handle_fetch_finished)
         self.controller.error_occurred.connect(self._show_error_message)
-        # self.fetch_progress_dialog.tasks_stop_requested.connect(self.controller.handle_stop_tasks_request)
 
     # --- Internal Trigger Methods (Called by UI Signals) ---
     def _trigger_fetch_news(self):
@@ -192,7 +192,10 @@ class NewsTab(QWidget):
 
         if self.fetch_progress_dialog is None:
             self.fetch_progress_dialog = FetchProgressDialog(selected_sources, self)
-            # Connect the dialog's request signal to the handler
+            # Connect the dialog's request signals to the handlers
+            self.fetch_progress_dialog.tasks_stop_requested.connect(
+                self.controller.handle_stop_tasks_request
+            )
             self.fetch_progress_dialog.view_llm_output_requested.connect(
                 self._show_llm_stream_dialog
             )
