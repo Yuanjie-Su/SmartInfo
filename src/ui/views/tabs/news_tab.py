@@ -184,6 +184,42 @@ class NewsTab(QWidget):
             )
             return
 
+        # Check if fetching is already in progress
+        is_already_fetching = self.controller._is_fetching
+        
+        if is_already_fetching:
+            # If already fetching, filter out sources that are already being processed
+            new_sources = self.controller.filter_new_sources(selected_sources)
+            
+            if not new_sources:
+                QMessageBox.information(
+                    self, "Notice", "All selected sources are already being processed."
+                )
+                return
+                
+            # Ensure progress dialog is visible and add new sources
+            if self.fetch_progress_dialog is None:
+                self.fetch_progress_dialog = FetchProgressDialog(new_sources, self)
+                # Connect the dialog's request signals to the handlers
+                self.fetch_progress_dialog.tasks_stop_requested.connect(
+                    self.controller.handle_stop_tasks_request
+                )
+                self.fetch_progress_dialog.view_llm_output_requested.connect(
+                    self._show_llm_stream_dialog
+                )
+            else:
+                # Update dialog with new sources
+                self.fetch_progress_dialog.add_sources_to_table(new_sources)
+                
+            self.fetch_progress_dialog.setWindowTitle("News Fetch Progress")
+            self.fetch_progress_dialog.show()
+            self.fetch_progress_dialog.raise_()
+            
+            # Add new sources to existing fetch process
+            self.controller.add_sources_to_fetch(new_sources)
+            return
+            
+        # Creating new fetch process
         if self.fetch_progress_dialog is None:
             self.fetch_progress_dialog = FetchProgressDialog(selected_sources, self)
             # Connect the dialog's request signals to the handlers
@@ -200,9 +236,6 @@ class NewsTab(QWidget):
         self.fetch_progress_dialog.setWindowTitle("News Fetch Progress")
         self.fetch_progress_dialog.show()
         self.fetch_progress_dialog.raise_()
-
-        # Update UI state
-        self.fetch_button.setEnabled(False)
 
         # Call controller to start fetch
         self.controller.start_fetch(selected_sources)
@@ -387,11 +420,10 @@ class NewsTab(QWidget):
     def _handle_fetch_finished(self, final_message: str):
         """Handles the end of the fetch process."""
         logger.info(f"NewsTab received fetch finished signal: {final_message}")
-        self.fetch_button.setEnabled(True)
-
+        
+        # Update the progress dialog if it exists
         if self.fetch_progress_dialog:
-            # Update dialog title, keep it open for review
-            self.fetch_progress_dialog.setWindowTitle(f"News Fetch - {final_message}")
+            self.fetch_progress_dialog.set_final_status(final_message)
 
         # Trigger a refresh of news list implicitly by controller
         self.controller.refresh_news() # Controller should do this

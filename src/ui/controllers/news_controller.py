@@ -7,7 +7,7 @@ Core responsibilities:
 - Interact with NewsService to load, refresh, and update news records.
 - Initialize and configure QSqlTableModel and QSortFilterProxyModel for table display and filtering.
 - Preload filter criteria (categories and sources) and emit filters_loaded signal to notify the UI.
-- Manage asynchronous crawling and processing workflows using InitialCrawlerWorker and ProcessingWorker:
+- Manage asynchronous crawling and processing workflows using CrawlerWorker and ProcessorWorker:
     * Monitor fetch progress and processing status, emitting fetch_status_update for real-time updates.
     * Deliver processed analysis output via fetch_analysis_result.
     * Handle cancellation, errors, and notify final completion through fetch_process_finished.
@@ -16,7 +16,7 @@ Core responsibilities:
 """
 
 import logging
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Set
 
 from PySide6.QtCore import QObject, Signal, Slot, QThreadPool, QModelIndex, Qt
 from PySide6.QtSql import QSqlTableModel
@@ -28,8 +28,8 @@ from src.db.connection import get_db  # Needed for QSqlTableModel
 from src.db.schema_constants import NEWS_TABLE
 from src.ui.workers.news_fetch_workers import (
     WorkerSignals,
-    InitialCrawlerWorker,
-    ProcessingWorker,
+    CrawlerWorker,  # Changed from InitialCrawlerWorker
+    ProcessorWorker,  # Changed from ProcessingWorker
 )
 
 import asyncio
@@ -38,6 +38,83 @@ from concurrent.futures import ThreadPoolExecutor
 from src.utils.prompt import SYSTEM_PROMPT_ANALYZE_CONTENT
 
 logger = logging.getLogger(__name__)
+
+
+class TaskTracker:
+    """Helper class to track task status and completion."""
+    
+    def __init__(self):
+        self.active_urls = set()
+        self.cancelled_urls = set()
+        self.final_status_map = {}
+        self.processed_count = 0
+        self.total_count = 0
+        self.initial_phase_complete = False
+        
+    def add_urls(self, urls: List[str]):
+        """Add URLs to tracking."""
+        added_count = 0
+        for url in urls:
+            if url not in self.final_status_map:  # Prevent duplicate additions affecting count
+                self.active_urls.add(url)
+                self.final_status_map[url] = False
+                added_count += 1
+        self.total_count = len(self.final_status_map)  # Base total count on map size
+        logger.debug(f"TaskTracker: Added {added_count} URLs. New total count: {self.total_count}")
+        
+    def remove_urls(self, urls: List[str]):
+        """Remove URLs completely from tracking."""
+        removed_count = 0
+        for url in urls:
+            self.active_urls.discard(url)  # Remove from active set
+            if url in self.final_status_map:
+                del self.final_status_map[url]  # Remove from status mapping
+                removed_count += 1
+
+        if removed_count > 0:
+            # Update total count and processed count
+            self.total_count = len(self.final_status_map)
+            # Recalculate processed_count based on final_status_map
+            self.processed_count = sum(1 for is_final in self.final_status_map.values() if is_final)
+
+            logger.debug(f"TaskTracker: Removed {removed_count} URLs. New total count: {self.total_count}, New processed count: {self.processed_count}")
+        
+    def mark_cancelled(self, urls: List[str]):
+        """Mark URLs as cancelled."""
+        self.cancelled_urls.update(urls)
+        
+    def mark_final_status(self, url: str, is_final: bool = True):
+        """Mark a URL as having received its final status."""
+        if url in self.final_status_map:
+            # Only increment processed_count when status changes from non-final to final
+            if not self.final_status_map[url] and is_final:
+                self.processed_count += 1
+            self.final_status_map[url] = is_final
+        else:
+            # If URL was previously removed, ignore
+            logger.debug(f"TaskTracker: Ignoring final status for removed/unknown URL: {url}")
+            
+    def is_complete(self) -> bool:
+        """Check if all tasks are complete."""
+        # Check if initial phase is complete and all URLs in final_status_map have final status
+        all_final = all(self.final_status_map.values()) if self.final_status_map else True
+        # Ensure total_count is based on current final_status_map size
+        self.total_count = len(self.final_status_map)
+        
+        complete = (self.initial_phase_complete and 
+                    all_final and
+                    self.total_count == self.processed_count)
+                
+        return complete
+                
+    def reset(self):
+        """Reset all tracking data."""
+        self.active_urls.clear()
+        self.cancelled_urls.clear()
+        self.final_status_map.clear()
+        self.processed_count = 0
+        self.total_count = 0
+        self.initial_phase_complete = False
 
 
 class NewsController(QObject):
@@ -59,40 +136,54 @@ class NewsController(QObject):
         self._news_service = news_service
         self._setting_service = setting_service
         self._is_fetching = False
-        self._active_initial_crawler: Optional[InitialCrawlerWorker] = None
-        self._processing_worker: Optional[ProcessingWorker] = None
-        self._worker_signals = (
-            WorkerSignals()
-        )  # Signals local to controller <-> worker comms
+        self._active_initial_crawler: Optional[CrawlerWorker] = None
+        self._processing_worker: Optional[ProcessorWorker] = None
+        self._worker_signals = WorkerSignals()  # Signals local to controller <-> worker comms
         self._analysis_results_cache: Dict[str, str] = {}
         
         # --- Thread pool for analyzing individual news content ---
         self._thread_pool = QThreadPool.globalInstance()
         self._single_item_analysis_tasks = {}  # Track ongoing single item analysis tasks
 
+        # --- Task Tracking with the new TaskTracker class ---
+        self._task_tracker = TaskTracker()
+
         # --- Model Setup ---
         self._setup_table_model()  # Initialize the model here
 
-        # Connect worker signals to internal handler slots
-        self._worker_signals.initial_crawl_status.connect(
-            self._handle_initial_crawl_status
-        )
+        # --- Connect worker signals ---
+        self._connect_worker_signals()
+
+    def _connect_worker_signals(self):
+        """Connect worker signals to handler methods."""
+        # Crawl phase signals
+        self._worker_signals.initial_crawl_status.connect(self._handle_initial_crawl_status)
         self._worker_signals.html_ready.connect(self._handle_html_ready)
-        self._worker_signals.initial_crawl_finished.connect(
-            self._handle_initial_crawl_phase_finished
-        )
+        self._worker_signals.initial_crawl_finished.connect(self._handle_initial_crawl_phase_finished)
+        
+        # Processing phase signals
         self._worker_signals.processing_status.connect(self._handle_processing_status)
-        self._worker_signals.processing_finished.connect(
-            self._handle_processing_finished
-        )
+        self._worker_signals.processing_finished.connect(self._handle_processing_finished)
 
-        # --- Task Tracking ---
-        self._total_sources_to_process = 0
-        self._initial_crawl_finished_flag = False
-        self._processing_tasks_finished_count = 0
-        self._cancelled_urls = set()
-
-        self._cancellation_in_progress = False
+    def _handle_error(self, operation: str, error: Exception, details: str = None) -> bool:
+        """
+        Centralized error handler.
+        
+        Args:
+            operation: Description of the operation that failed
+            error: Exception that occurred
+            details: Optional additional details
+            
+        Returns:
+            False, to be used as a return value for operations
+        """
+        error_msg = str(error)
+        if details:
+            error_msg = f"{error_msg}: {details}"
+        
+        logger.error(f"Error during {operation}: {error_msg}", exc_info=True)
+        self.error_occurred.emit(f"{operation.title()} Error", error_msg)
+        return False
 
     def _setup_table_model(self):
         """Initializes the QSqlTableModel and proxy model."""
@@ -162,21 +253,14 @@ class NewsController(QObject):
     def load_filter_options(self):
         """Loads category and source data for filters."""
         try:
-            categories = (
-                self._news_service.get_all_categories()
-            )  # List[Tuple[int, str]]
-            sources = (
-                self._news_service.get_all_sources()
-            )  # List[Dict] - maybe just names needed?
+            categories = self._news_service.get_all_categories()  # List[Tuple[int, str]]
+            sources = self._news_service.get_all_sources()  # List[Dict]
             source_names = sorted(
                 list(set(s["name"] for s in sources if s.get("name")))
             )
             self.filters_loaded.emit(categories, source_names)
         except Exception as e:
-            logger.error(f"Failed to load filter options: {e}", exc_info=True)
-            self.error_occurred.emit(
-                "Filter Load Error", f"Could not load filters: {e}"
-            )
+            self._handle_error("filter load", e)
 
     def apply_filters(self, category_id: int, source_name: str, search_text: str):
         """Applies filters to the news model."""
@@ -202,9 +286,6 @@ class NewsController(QObject):
 
         # 3. Refresh model data
         if not self._news_model.select():
-            logger.error(
-                f"Failed to select data after applying filters: {self._news_model.lastError().text()}"
-            )
             self.error_occurred.emit(
                 "Filter Error",
                 f"Failed to apply filters: {self._news_model.lastError().text()}",
@@ -214,9 +295,6 @@ class NewsController(QObject):
 
     def refresh_news(self):
         """Reloads data from the database."""
-        # if self._is_fetching:
-        #     self.error_occurred.emit("Busy", "Cannot refresh while fetching.")
-        #     return
         if self._news_model:
             if self._news_model.select():
                 self.news_data_updated.emit()
@@ -244,12 +322,7 @@ class NewsController(QObject):
             try:
                 return self._news_service.get_news_by_id(news_id)
             except Exception as e:
-                logger.error(
-                    f"Error fetching news details for ID {news_id}: {e}", exc_info=True
-                )
-                self.error_occurred.emit(
-                    "Preview Error", f"Could not load details: {e}"
-                )
+                self._handle_error("news detail retrieval", e, f"ID: {news_id}")
         return None
 
     def delete_selected_news(self, proxy_indexes: List[QModelIndex]):
@@ -314,7 +387,6 @@ class NewsController(QObject):
     def start_fetch(self, sources_to_fetch: List[Dict[str, Any]]):
         """
         Starts the fetch process for selected news sources.
-        This has been updated to use the modified InitialCrawlerWorker that creates individual tasks for each URL.
         """
         if self._is_fetching:
             self.error_occurred.emit(
@@ -326,13 +398,13 @@ class NewsController(QObject):
             return
 
         logger.info(f"Controller starting fetch for {len(sources_to_fetch)} sources.")
-        self._cancelled_urls.clear()
         self._is_fetching = True
         self._analysis_results_cache.clear()
-        self._total_sources_to_process = len(sources_to_fetch)
-        self._initial_crawl_finished_flag = False
-        self._processing_tasks_finished_count = 0
-        self._active_initial_crawler = None
+        
+        # Reset and initialize task tracker
+        self._task_tracker.reset()
+        source_urls = [source.get("url") for source in sources_to_fetch if source.get("url")]
+        self._task_tracker.add_urls(source_urls)
 
         # Get LLM configuration information
         volcengine_api_key = self._setting_service.get_api_key("volcengine")
@@ -346,31 +418,94 @@ class NewsController(QObject):
             
         llm_base_url = "https://ark.cn-beijing.volces.com/api/v3"
 
-        # Start the ProcessingWorker thread if not running
+        # Start the ProcessorWorker thread if not running
         if self._processing_worker is None:
-            self._processing_worker = ProcessingWorker(
-                self._news_service, self._worker_signals, llm_base_url, volcengine_api_key
-            )
-            self._processing_worker.start()
             try:
+                self._processing_worker = ProcessorWorker(
+                    self._news_service, self._worker_signals, llm_base_url, volcengine_api_key
+                )
+                self._processing_worker.start()
                 self._processing_worker.wait_until_ready(timeout=5)
-                logger.info("Processing worker started by NewsController.")
+                logger.info("ProcessorWorker started by NewsController.")
             except TimeoutError:
-                logger.error("Processing worker failed to start.")
+                logger.error("ProcessorWorker failed to start.")
                 self.error_occurred.emit(
-                    "Fetch Error", "Processing worker failed to start."
+                    "Fetch Error", "ProcessorWorker failed to start."
                 )
                 self._reset_fetch_state("Worker start failed")
                 return
+            except Exception as e:
+                self._handle_error("processor worker start", e)
+                self._reset_fetch_state("Worker start failed")
+                return
 
-        # Start the InitialCrawlerWorker runnable with our modified implementation
-        # that creates individual tasks for each URL instead of using process_urls
-        self._active_initial_crawler = InitialCrawlerWorker(
-            sources_to_fetch, self._worker_signals
-        )
-        QThreadPool.globalInstance().start(self._active_initial_crawler)
-        logger.info("InitialCrawlerWorker submitted to thread pool.")
-    
+        # Start the CrawlerWorker
+        try:
+            self._active_initial_crawler = CrawlerWorker(
+                sources_to_fetch, self._worker_signals
+            )
+            self._active_initial_crawler.start()  # Using QThread's start method
+            logger.info("CrawlerWorker started.")
+        except Exception as e:
+            self._handle_error("crawler worker start", e)
+            self._reset_fetch_state("Worker start failed")
+            return
+        
+    def filter_new_sources(self, sources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Filters the provided sources list to only include sources that are not already being fetched.
+        
+        Args:
+            sources: List of source dictionaries with 'url' keys
+            
+        Returns:
+            List of source dictionaries that are not already being processed
+        """
+        if not self._is_fetching:
+            return sources
+            
+        new_sources = []
+        for source in sources:
+            url = source.get("url")
+            if url and url not in self._task_tracker.active_urls:
+                new_sources.append(source)
+                
+        return new_sources
+        
+    def add_sources_to_fetch(self, new_sources: List[Dict[str, Any]]):
+        """
+        Adds new sources to an already running fetch operation.
+        
+        Args:
+            new_sources: List of new source dictionaries to add
+        """
+        if not self._is_fetching or not self._active_initial_crawler:
+            logger.warning("Cannot add sources: No active fetch operation")
+            self.error_occurred.emit("Operation Error", "No active fetch operation to add sources to")
+            return
+            
+        if not new_sources:
+            logger.debug("No new sources to add to fetch")
+            return
+            
+        logger.info(f"Adding {len(new_sources)} new sources to active fetch operation")
+        
+        # Update task tracker
+        source_urls = [source.get("url") for source in new_sources if source.get("url")]
+        self._task_tracker.add_urls(source_urls)
+        
+        # Add new URLs to the crawler
+        try:
+            # Forward the new sources to the active crawler
+            self._active_initial_crawler.add_urls_to_crawl(new_sources)
+            logger.debug(f"Successfully added {len(new_sources)} sources to active crawler")
+        except Exception as e:
+            logger.error(f"Error adding sources to crawler: {e}", exc_info=True)
+            # Mark the added URLs as failed so they don't block completion
+            for url in source_urls:
+                self.fetch_status_update.emit(url, f"Error: Failed to add task - {str(e)[:30]}", True)
+                self._task_tracker.mark_final_status(url, True)
+
     @Slot(list)
     def handle_stop_tasks_request(self, urls_to_stop: List[str]):
         """Handles the request from the dialog to stop specific tasks."""
@@ -378,31 +513,42 @@ class NewsController(QObject):
             logger.warning("Received stop request, but no fetch is active.")
             return
 
-        logger.info(f"Controller received request to stop tasks for URLs: {urls_to_stop}")
-        urls_set = set(urls_to_stop)
-        self._cancelled_urls.update(urls_set) # Add to the controller's cancelled set
+        if not urls_to_stop:
+            logger.info("Received stop request with empty URL list.")
+            return
 
-        # --- Forward cancellation to InitialCrawlerWorker ---
-        if self._active_initial_crawler:
+        logger.info(f"Controller received request to stop and remove tasks for URLs: {urls_to_stop}")
+
+        # --- 1. Remove from Task Tracker ---
+        self._task_tracker.remove_urls(urls_to_stop)
+        logger.info(f"Removed {len(urls_to_stop)} URLs from TaskTracker.")
+
+        # --- 2. Forward cancellation and removal request to Workers ---
+        workers_notified = 0
+        if self._active_initial_crawler and self._active_initial_crawler.isRunning():
             try:
-                # Assuming InitialCrawlerWorker has this method now
+                # This now handles cancelling the task and removing from worker's internal tracking
                 self._active_initial_crawler.cancel_specific_tasks(urls_to_stop)
-                logger.debug(f"Cancellation request forwarded to InitialCrawlerWorker for {len(urls_to_stop)} URLs.")
-            except AttributeError:
-                logger.error("InitialCrawlerWorker does not have 'cancel_specific_tasks' method.")
+                workers_notified += 1
+                logger.debug(f"Cancellation/removal request forwarded to CrawlerWorker.")
             except Exception as e:
-                logger.error(f"Error calling cancel_specific_tasks on InitialCrawlerWorker: {e}", exc_info=True)
+                logger.error(f"Error calling cancel_specific_tasks on CrawlerWorker: {e}", exc_info=True)
 
-        # --- Forward cancellation to ProcessingWorker ---
         if self._processing_worker and self._processing_worker.isRunning():
             try:
-                # Assuming ProcessingWorker has this method now
+                # This now handles cancelling the task and removing from worker's internal tracking
                 self._processing_worker.cancel_specific_tasks(urls_to_stop)
-                logger.debug(f"Cancellation request forwarded to ProcessingWorker for {len(urls_to_stop)} URLs.")
-            except AttributeError:
-                logger.error("ProcessingWorker does not have 'cancel_specific_tasks' method.")
+                workers_notified += 1
+                logger.debug(f"Cancellation/removal request forwarded to ProcessorWorker.")
             except Exception as e:
-                logger.error(f"Error calling cancel_specific_tasks on ProcessingWorker: {e}", exc_info=True)
+                logger.error(f"Error calling cancel_specific_tasks on ProcessorWorker: {e}", exc_info=True)
+
+        if workers_notified == 0:
+            logger.warning("Stop request handled, but no active workers were notified (they might have finished).")
+
+        # --- 3. Check if the overall process is now finished after removal ---
+        # This helps update the state immediately if removing the last tasks finishes the process.
+        self._check_if_all_fetching_done(f"User stopped {len(urls_to_stop)} tasks")
 
     def get_sources_matching_filters(
         self, category_id: int, source_name: str
@@ -431,30 +577,43 @@ class NewsController(QObject):
     def cleanup(self):
         """Stop workers and clean up resources."""
         logger.info("NewsController cleanup initiated.")
-        # Cancel the initial crawler
-        if self._active_initial_crawler:
-             self._active_initial_crawler.cancel()
-        # Stop the processing worker
-        if self._processing_worker and self._processing_worker.isRunning():
-            logger.info("Stopping NewsController's ProcessingWorker...")
-            self._processing_worker.stop()
-            self._processing_worker.quit()
-            if not self._processing_worker.wait(5000):
-                logger.warning("ProcessingWorker did not stop gracefully.")
-        self._processing_worker = None  # Release reference
+        
+        # Helper to stop a worker safely
+        def stop_worker(worker, worker_name):
+            if worker and worker.isRunning():
+                logger.info(f"Stopping {worker_name}...")
+                worker.stop()  # Signal the worker to stop
+                worker.quit()  # Exit the event loop
+                if not worker.wait(5000):  # Wait up to 5 seconds
+                    logger.warning(f"{worker_name} did not stop gracefully, terminating")
+                    worker.terminate()  # Force termination if necessary
+                logger.info(f"{worker_name} stopped")
+        
+        # Stop both workers
+        stop_worker(self._active_initial_crawler, "CrawlerWorker")
+        stop_worker(self._processing_worker, "ProcessorWorker")
+        
+        # Clear references
+        self._active_initial_crawler = None
+        self._processing_worker = None
+        
         logger.info("NewsController cleanup finished.")
 
     # --- Internal Slots for Worker Signals ---
     @Slot(str, str)
     def _handle_initial_crawl_status(self, url: str, status: str):
+        # Update task tracker if status is "Cancelled"
+        if "Cancelled" in status:
+            self._task_tracker.mark_cancelled([url])
+            self._task_tracker.mark_final_status(url, True)
+            
         self.fetch_status_update.emit(url, status, False)  # is_final=False
 
     @Slot(str, str, dict)
     def _handle_html_ready(self, url: str, html_content: str, source_info: dict):
-        if url in self._cancelled_urls:
+        if url in self._task_tracker.cancelled_urls:
             logger.info(f"Ignoring html_ready for cancelled URL: {url}")
             # Ensure final status is emitted for this cancelled URL
-            self._processing_tasks_finished_count += 1
             self.fetch_status_update.emit(url, "Cancelled", True)
             self._check_if_all_fetching_done(f"Skipped cancelled: {url}")
             return
@@ -464,14 +623,14 @@ class NewsController(QObject):
         ):
             return  # Ignore if fetch cancelled or stopped
         
-        if self._processing_worker:
+        if self._processing_worker and self._processing_worker.isRunning():
             future = self._processing_worker.submit_task(url, html_content, source_info)
             if future is None:
                 logger.error(f"Failed to submit processing task for {url}.")
                 self.fetch_status_update.emit(
                     url, "Error: Submit Failed", True
                 )  # Mark as final
-                self._processing_tasks_finished_count += 1
+                self._task_tracker.mark_final_status(url, True)
                 self._check_if_all_fetching_done("Task submit failed")
             else:
                 self.fetch_status_update.emit(url, "Processing Scheduled", False)
@@ -480,13 +639,13 @@ class NewsController(QObject):
             self.fetch_status_update.emit(
                 url, "Error: Worker Missing", True
             )  # Mark as final
-            self._processing_tasks_finished_count += 1
+            self._task_tracker.mark_final_status(url, True)
             self._check_if_all_fetching_done("Worker missing on ready")
 
     @Slot()
     def _handle_initial_crawl_phase_finished(self):
         logger.info("Controller noted: Initial crawl phase finished.")
-        self._initial_crawl_finished_flag = True
+        self._task_tracker.initial_phase_complete = True
         was_cancelled = (
             self._active_initial_crawler is not None
             and self._active_initial_crawler.is_cancelled()
@@ -504,7 +663,7 @@ class NewsController(QObject):
     def _handle_processing_finished(
         self, url: str, final_status: str, details: str, analysis_result: str
     ):
-        if url in self._cancelled_urls and final_status != "Cancelled":
+        if url in self._task_tracker.cancelled_urls and final_status != "Cancelled":
             logger.info(f"Overriding final status for {url} to Cancelled due to prior request.")
             final_status = "Cancelled"
             details = "Task was cancelled by user request."
@@ -529,8 +688,10 @@ class NewsController(QObject):
         elif final_status == "Cancelled":
             status_to_display = "Cancelled"
         
+        # Update the task tracker
+        self._task_tracker.mark_final_status(url, True)
+            
         self.fetch_status_update.emit(url, status_to_display, True)  # is_final=True
-        self._processing_tasks_finished_count += 1
         self._check_if_all_fetching_done(f"Processed: {url}")
 
     def _check_if_all_fetching_done(self, trigger_reason: str):
@@ -538,44 +699,28 @@ class NewsController(QObject):
             return
 
         logger.debug(
-            f"Check completion ({trigger_reason}): InitialDone={self._initial_crawl_finished_flag}, "
-            f"Processed={self._processing_tasks_finished_count}/{self._total_sources_to_process}, "
-            f"ExplicitlyCancelled={len(self._cancelled_urls)}"
+            f"Check completion ({trigger_reason}): InitialDone={self._task_tracker.initial_phase_complete}, "
+            f"Processed={self._task_tracker.processed_count}/{self._task_tracker.total_count}, "
+            f"FinalStatusCount={sum(1 for status in self._task_tracker.final_status_map.values() if status)}"
         )
 
-        # Completion check: Initial crawl must be flagged as done AND
-        # the number of processed/finished tasks must equal the total *initial* count.
-        is_complete = (
-            self._initial_crawl_finished_flag
-            and self._processing_tasks_finished_count >= self._total_sources_to_process
-        )
-
-        if is_complete:
-            # Determine final message based on whether any tasks were explicitly cancelled
+        # Check if all tasks are complete using the task tracker
+        if self._task_tracker.is_complete():
+            # Determine final message
             final_message = "Finished"
-            if self._cancelled_urls:
-                # Check if ALL tasks were cancelled or just some
-                if len(self._cancelled_urls) == self._total_sources_to_process:
-                     final_message = "Cancelled"
-                else:
-                     final_message = "Finished (Some tasks cancelled)"
-            # Could also check for errors here if needed
-
+            
             logger.info(
-                f"All fetch/processing tasks complete/cancelled. Status: {final_message}"
+                f"All fetch/processing tasks complete or removed. Status: {final_message}"
             )
-            self._reset_fetch_state(final_message)
             self.fetch_process_finished.emit(final_message)  # Notify view
+            self._reset_fetch_state(final_message)
             self.refresh_news()  # Refresh the news list
 
     def _reset_fetch_state(self, final_message: Optional[str] = None):
         logger.info(f"Resetting fetch state. Final status: {final_message}")
         self._is_fetching = False
-        self._total_sources_to_process = 0
-        self._initial_crawl_finished_flag = False
-        self._processing_tasks_finished_count = 0
-        self._active_initial_crawler = None
-        self._cancelled_urls.clear()
+        self._task_tracker.reset()
+        self._active_initial_crawler = None  # Release reference to crawler
         # Don't stop the processing worker here, keep it running
 
     # --- New Method: Single News Analysis ---
@@ -650,8 +795,7 @@ class NewsController(QObject):
             logger.debug(f"Analysis task for news ID {news_id} submitted")
             
         except Exception as e:
-            logger.error(f"Error submitting analysis task: {e}", exc_info=True)
-            self.error_occurred.emit("System Error", f"Unable to start analysis task: {str(e)}")
+            self._handle_error("analysis task submission", e)
             
     async def _analyze_single_content(self, news_id: int, content: str, api_key: str, base_url: str):
         """

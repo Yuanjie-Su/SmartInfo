@@ -169,6 +169,82 @@ class FetchProgressDialog(QDialog):
 
         # Dynamic resizing removed: use fixed widths configured in init
 
+    def add_sources_to_table(self, sources: List[Dict[str, Any]]):
+        """Adds new sources to the table without clearing existing ones."""
+        # Get the current row count
+        current_row_count = self.table.rowCount()
+        # Add rows for new sources
+        self.table.setRowCount(current_row_count + len(sources))
+        
+        for idx, source_info in enumerate(sources, start=current_row_count):
+            url = source_info.get("url", f"invalid_url_{idx}")
+            
+            # Skip if this URL is already in the table
+            if url in self.sources_map:
+                continue
+                
+            self.sources_map[url] = idx
+
+            # --- Checkbox Item ---
+            checkbox_item = QTableWidgetItem()
+            checkbox_item.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled)
+            checkbox_item.setCheckState(Qt.CheckState.Unchecked)
+            checkbox_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.table.setItem(idx, self.COL_CHECKBOX, checkbox_item)
+
+            # --- Source name and URL ---
+            name_item = QTableWidgetItem(source_info.get("name", "N/A"))
+            name_item.setTextAlignment(
+                Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft
+            )
+            url_item = QTableWidgetItem(url)
+            url_item.setTextAlignment(
+                Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft
+            )
+
+            # --- Progress bar ---
+            progress = QProgressBar()
+            progress.setObjectName(f"progress_{idx}")
+            progress.setRange(0, self.TOTAL_EXPECTED_STEPS)
+            progress.setValue(0)
+            progress.setFormat("Waiting")
+            progress.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.table.setCellWidget(idx, self.COL_STATUS, progress)
+
+            # Set items
+            self.table.setItem(idx, self.COL_NAME, name_item)
+            self.table.setItem(idx, self.COL_URL, url_item)
+
+            # Add a flat view button, initially disabled
+            view_button = QPushButton("View")
+            view_button.setFlat(True)
+            view_button.setEnabled(False)
+            view_button.clicked.connect(
+                lambda _=None, u=url: self._emit_view_request(u)
+            )
+            action_widget = QWidget()
+            action_layout = QHBoxLayout(action_widget)
+            action_layout.setContentsMargins(0, 0, 0, 0)
+            action_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            action_layout.addWidget(view_button)
+            self.table.setCellWidget(idx, self.COL_ACTION, action_widget)
+
+            # Update tracking dictionaries
+            self.status_history[url] = 0
+            self.final_status_flag[url] = False
+            
+        # Set running flag if we added any rows
+        if len(sources) > 0:
+            self.is_running = True
+    
+    def set_final_status(self, message: str):
+        """Updates the window title with the final status message."""
+        self.setWindowTitle(f"News Fetch - {message}")
+        
+        # Check if all tasks are done
+        if all(self.final_status_flag.values()):
+            self.is_running = False
+
     @Slot(str, str, bool)
     def update_status(self, url: str, status: str, is_final_status: bool):
         """Updates the status and progress bar for a given URL."""
