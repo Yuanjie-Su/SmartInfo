@@ -103,6 +103,7 @@ class AnalysisDetailDialog(QDialog):
             border: none;
             background-color: transparent;
         """)
+        self.link_button.setToolTip(self.news_url)
         self.link_button.clicked.connect(self._open_link)
         
         # Add widgets to the layout

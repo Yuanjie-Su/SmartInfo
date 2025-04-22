@@ -370,43 +370,6 @@ class NewsController(QObject):
         )
         QThreadPool.globalInstance().start(self._active_initial_crawler)
         logger.info("InitialCrawlerWorker submitted to thread pool.")
-
-    def cancel_fetch(self):
-        """Cancels the entire fetch operation."""
-        if not self._is_fetching or self._cancellation_in_progress:
-            return
-        self._cancellation_in_progress = True
-        logger.info("Controller requesting FULL fetch cancellation.")
-
-        # --- Collect all potentially active URLs ---
-        active_urls = []
-        if self._active_initial_crawler and hasattr(self._active_initial_crawler, '_active_tasks'):
-             active_urls.extend(list(self._active_initial_crawler._active_tasks.keys()))
-        if self._processing_worker and hasattr(self._processing_worker, '_active_futures'):
-             active_urls.extend(list(self._processing_worker._active_futures.keys()))
-        # Add URLs from the initial sources_map if they haven't finished
-        if hasattr(self, 'fetch_progress_dialog') and self.fetch_progress_dialog:
-             active_urls.extend([url for url, is_final in self.fetch_progress_dialog.final_status_flag.items() if not is_final])
-
-        # --- Use handle_stop_tasks_request to cancel everything ---
-        unique_active_urls = list(set(active_urls))
-        if unique_active_urls:
-             self.handle_stop_tasks_request(unique_active_urls) # Reuse the specific cancel logic
-
-        # Ensure general cancellation flag is set for workers if needed
-        if self._active_initial_crawler:
-             self._active_initial_crawler.cancel() # Still call the general cancel
-        if self._processing_worker:
-             self._processing_worker.stop() # Call the general stop
-
-        # Reset state and notify UI
-        # Note: Workers might take time to fully stop, status updates might still come in
-        # self._reset_fetch_state("Cancelled") # Reset state might be premature here
-        self.fetch_process_finished.emit("Cancelled") # Notify UI immediately
-        # self.refresh_news() # Refresh might also be premature
-
-        self._cancellation_in_progress = False
-        # Workers will eventually finish and the _check_if_all_fetching_done should handle final state reset
     
     @Slot(list)
     def handle_stop_tasks_request(self, urls_to_stop: List[str]):
@@ -441,12 +404,6 @@ class NewsController(QObject):
             except Exception as e:
                 logger.error(f"Error calling cancel_specific_tasks on ProcessingWorker: {e}", exc_info=True)
 
-        # --- Update status in dialog immediately for requested URLs ---
-        for url in urls_to_stop:
-             # Only update if not already marked final (prevents overriding completion/error)
-             if url in self.fetch_progress_dialog.final_status_flag and not self.fetch_progress_dialog.final_status_flag[url]:
-                 self.fetch_status_update.emit(url, "Cancelling...", False)
-
     def get_sources_matching_filters(
         self, category_id: int, source_name: str
     ) -> List[Dict[str, Any]]:
@@ -474,7 +431,10 @@ class NewsController(QObject):
     def cleanup(self):
         """Stop workers and clean up resources."""
         logger.info("NewsController cleanup initiated.")
-        self.cancel_fetch()  # Request cancellation first
+        # Cancel the initial crawler
+        if self._active_initial_crawler:
+             self._active_initial_crawler.cancel()
+        # Stop the processing worker
         if self._processing_worker and self._processing_worker.isRunning():
             logger.info("Stopping NewsController's ProcessingWorker...")
             self._processing_worker.stop()

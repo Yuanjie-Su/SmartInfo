@@ -68,11 +68,6 @@ class NewsTab(QWidget):
         self.fetch_button.setToolTip("Start fetching news and show progress window.")
         toolbar_layout.addWidget(self.fetch_button)
 
-        self.cancel_fetch_button = QPushButton("Cancel Fetch")  # Added Cancel Button
-        self.cancel_fetch_button.setToolTip("Cancel the ongoing fetch operation.")
-        self.cancel_fetch_button.setEnabled(False)  # Initially disabled
-        toolbar_layout.addWidget(self.cancel_fetch_button)
-
         # --- Filters ---
         toolbar_layout.addWidget(QLabel("Category:"))
         self.category_filter = QComboBox()
@@ -160,7 +155,6 @@ class NewsTab(QWidget):
         """Connect UI signals to internal slots or controller slots."""
         # UI Actions -> Internal Trigger Methods -> Controller Actions
         self.fetch_button.clicked.connect(self._trigger_fetch_news)
-        self.cancel_fetch_button.clicked.connect(self._trigger_cancel_fetch)
         self.category_filter.currentIndexChanged.connect(self._handle_category_change)
         self.source_filter.currentIndexChanged.connect(self._trigger_filter_apply)
         self.search_input.textChanged.connect(self._trigger_filter_apply)
@@ -209,15 +203,9 @@ class NewsTab(QWidget):
 
         # Update UI state
         self.fetch_button.setEnabled(False)
-        self.cancel_fetch_button.setEnabled(True)
 
         # Call controller to start fetch
         self.controller.start_fetch(selected_sources)
-
-    def _trigger_cancel_fetch(self):
-        """Triggers the cancellation of the ongoing fetch operation."""
-        self.cancel_fetch_button.setEnabled(False)
-        self.controller.cancel_fetch()
 
     def _trigger_filter_apply(self):
         """Gathers filter values and tells controller to apply them."""
@@ -400,7 +388,6 @@ class NewsTab(QWidget):
         """Handles the end of the fetch process."""
         logger.info(f"NewsTab received fetch finished signal: {final_message}")
         self.fetch_button.setEnabled(True)
-        self.cancel_fetch_button.setEnabled(False)
 
         if self.fetch_progress_dialog:
             # Update dialog title, keep it open for review

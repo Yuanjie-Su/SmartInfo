@@ -151,7 +151,7 @@ class InitialCrawlerWorker(QRunnable):
                     tasks_to_await.append(task)
 
                 # Process completed tasks
-                for future in asyncio.as_completed(tasks_to_await):
+                async for future in asyncio.as_completed(tasks_to_await):
                     original_url = "unknown_url"
                     task_name = (
                         future.get_name() if hasattr(future, "get_name") else "unknown_task"
