@@ -15,6 +15,7 @@ class QAController(QObject):
     def __init__(self, qa_service: QAService, parent=None):
         super().__init__(parent)
         self._service = qa_service
+        self.answer_sources = []  # 存储参考源，如果有的话
 
     def load_history(self, limit: int = 20):
         """
@@ -35,3 +36,20 @@ class QAController(QObject):
         runner.signals.finished.connect(self.answer_received)
         runner.signals.error.connect(self.error_occurred)
         QThreadPool.globalInstance().start(runner)
+        
+    def clear_answer_sources(self):
+        """Clear the answer sources from the last query."""
+        self.answer_sources = []
+        
+    def add_answer_sources(self, sources):
+        """Add sources to the answer source list."""
+        if sources:
+            self.answer_sources = sources
+            
+    def clear_qa_history(self):
+        """Clear all Q&A history."""
+        try:
+            return self._service.clear_qa_history()
+        except Exception as e:
+            self.error_occurred.emit(e)
+            return False

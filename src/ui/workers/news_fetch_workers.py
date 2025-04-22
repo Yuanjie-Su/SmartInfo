@@ -701,22 +701,23 @@ class ProcessorWorker(AsyncWorkerBase):
                     logger.info(f"Processing task for {url} cancelled before LLM call.")
                     raise asyncio.CancelledError()
 
-                # Import and create LLM client
+                # Import and create LLM client with context manager
                 from src.services.llm_client import LLMClient
 
-                llm_client = LLMClient(
+                # 使用上下文管理器创建和管理 LLM 客户端生命周期
+                async with LLMClient(
                     base_url=self.llm_base_url,
                     api_key=self.llm_api_key,
                     async_mode=True,
-                )
-                logger.debug(f"Created LLM client for task {task_id}")
+                ) as llm_client:
+                    logger.debug(f"Created LLM client for task {task_id}")
 
-                # Process the HTML content and analyze
-                saved_count, analysis_result_md, error_obj = (
-                    await self.news_service._process_html_and_analyze(
-                        url, html_content, source_info, status_callback, llm_client
+                    # Process the HTML content and analyze
+                    saved_count, analysis_result_md, error_obj = (
+                        await self.news_service._process_html_and_analyze(
+                            url, html_content, source_info, status_callback, llm_client
+                        )
                     )
-                )
 
             # Check cancellation after service call
             if self.is_cancelled() or self.is_marked_for_cancellation(url):

@@ -817,6 +817,7 @@ class NewsController(QObject):
             """
             
             # Get streaming analysis result from NewsService
+            # news_service.analyze_single_content 方法内部已经使用了上下文管理器
             full_result = ""
             
             async for chunk in self._news_service.analyze_single_content(

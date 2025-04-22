@@ -10,7 +10,6 @@ import logging
 from typing import List, Dict, Any, Optional
 
 from src.db.repositories import QARepository
-from .llm_client import LLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -23,10 +22,8 @@ class QAService:
     def __init__(
         self,
         qa_repo: QARepository,
-        llm_client: LLMClient,
     ):
         self._qa_repo = qa_repo
-        self._llm_client = llm_client
 
     # --- Question Answering ---
 
@@ -43,12 +40,6 @@ class QAService:
             A dictionary containing the 'answer'.
             Includes an 'error' key if something went wrong.
         """
-        if not self._llm_client:
-            return {
-                "answer": "Q&A service is not fully initialized, please try again later.",
-                "error": "Service not ready",
-            }
-
         if not question or not question.strip():
             return {
                 "answer": "Please enter a valid question.",
@@ -57,34 +48,62 @@ class QAService:
 
         try:
             logger.info(f"Answering question directly via LLM: '{question}'")
-
-            # 1. Prepare simple prompt for LLM
-            # No context retrieval needed anymore
+            
+            # 获取API key
+            from src.services.setting_service import SettingService
+            from src.config import init_config
+            from src.db.repositories import ApiKeyRepository, SystemConfigRepository
+            
+            config = init_config()
+            api_key_repo = ApiKeyRepository()
+            system_config_repo = SystemConfigRepository()
+            setting_service = SettingService(config, api_key_repo, system_config_repo)
+            volcengine_api_key = setting_service.get_api_key("volcengine")
+            
+            if not volcengine_api_key:
+                return {
+                    "answer": "LLM API key not configured. Please check settings.",
+                    "error": "API key missing",
+                }
+            
+            # 按需创建 LLMClient 实例
+            from src.services.llm_client import LLMClient
+            
+            # 1. 准备简单的提示词
             prompt = self._build_direct_qa_prompt(question)
-
-            # 2. Call LLM
-            logger.debug("Sending direct query to LLM...")
-            llm_response = await self._llm_client.generate_response(
-                prompt=prompt,
-                model=DEFAULT_QA_MODEL,
-                max_tokens=1024, # Adjust as needed
-                temperature=0.7,
-            )
-
-            # 3. Process response
-            if llm_response and llm_response.get("status") == "success":
-                answer = llm_response.get("content", "Could not generate an answer.").strip()
+            
+            # 2. 使用上下文管理器创建并调用 LLM
+            logger.debug("Creating temporary LLMClient and sending query...")
+            async with LLMClient(
+                base_url="https://ark.cn-beijing.volces.com/api/v3",
+                api_key=volcengine_api_key,
+                async_mode=True
+            ) as llm_client:
+                # 使用简化版的调用方式 - 也可以根据需要修改为不同的调用方式
+                llm_response = await llm_client.get_completion_content(
+                    model=DEFAULT_QA_MODEL,
+                    messages=[
+                        {"role": "system", "content": "You are a helpful assistant that answers questions clearly and concisely."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    max_tokens=1024,
+                    temperature=0.7,
+                )
+            
+            # 3. 处理响应
+            if llm_response and llm_response.strip():
+                answer = llm_response.strip()
                 logger.info(f"LLM Answer received: '{answer[:100]}...'")
 
-                # Save Q&A pair to history (without sources)
+                # 保存 Q&A 对到历史记录
                 try:
-                    self._qa_repo.add_qa(question, answer, "[]") # Store empty list as JSON for sources
+                    self._qa_repo.add_qa(question, answer, "[]") # 将空列表作为JSON存储
                 except Exception as db_err:
                     logger.error(f"Failed to save Q&A to history: {db_err}", exc_info=True)
 
                 return {"answer": answer}
             else:
-                error_msg = llm_response.get("error", "Unknown LLM error")
+                error_msg = "Empty response from LLM"
                 logger.error(f"LLM query failed: {error_msg}")
                 return {
                     "answer": f"Sorry, an error occurred while answering the question: {error_msg}",

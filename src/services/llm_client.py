@@ -54,7 +54,33 @@ class LLMClient:
         self.base_url = base_url
         self.api_key = api_key
         self.async_mode = async_mode
+        self._client = None
+
+    def __enter__(self):
+        """Context manager entry point for synchronous usage."""
+        if self.async_mode:
+            raise RuntimeError("Cannot use synchronous context manager with async_mode=True")
         self._client = self._create_client()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit point for synchronous usage."""
+        if hasattr(self._client, "close"):
+            self._client.close()
+        self._client = None
+
+    async def __aenter__(self):
+        """Context manager entry point for asynchronous usage."""
+        if not self.async_mode:
+            raise RuntimeError("Cannot use asynchronous context manager with async_mode=False")
+        self._client = self._create_client()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit point for asynchronous usage."""
+        if hasattr(self._client, "aclose"):
+            await self._client.aclose()
+        self._client = None
 
     def _create_client(self) -> Union[OpenAI, AsyncOpenAI]:
         """Creates the appropriate OpenAI client (sync or async)."""
@@ -69,6 +95,12 @@ class LLMClient:
             logger.debug(f"Creating OpenAI client for {self.base_url}")
             return OpenAI(**common_args)
 
+    def _ensure_client(self):
+        """Ensures client is initialized if not using context manager."""
+        if self._client is None:
+            self._client = self._create_client()
+            logger.debug("Auto-initializing LLM client outside of context manager")
+    
     async def get_completion_content(
         self,
         model: str,
@@ -92,6 +124,8 @@ class LLMClient:
         Returns:
             The generated text content, or None on failure after retries.
         """
+        self._ensure_client()
+        
         request_params = {
             "model": model,
             "messages": messages,
@@ -194,6 +228,8 @@ class LLMClient:
             An async generator (async mode) or a regular generator (sync mode)
             yielding text chunks, or None if the stream could not be initiated.
         """
+        self._ensure_client()
+        
         request_params = {
             "model": model,
             "messages": messages,
@@ -323,4 +359,3 @@ class LLMClient:
             logger.debug(
                 f"Sync stream processing ended for model {model_name}. Total chunks processed: {total_chunks}"
             )
-            # if hasattr(response, 'close'): response.close()

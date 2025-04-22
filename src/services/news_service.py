@@ -667,29 +667,28 @@ Markdown:
         from src.services.llm_client import LLMClient
 
         try:
-            # Instantiate a temporary LLM client in async streaming mode
-            llm_client = LLMClient(api_key=api_key, base_url=base_url, async_mode=True)
+            # 使用上下文管理器创建临时 LLM client
+            async with LLMClient(api_key=api_key, base_url=base_url, async_mode=True) as llm_client:
+                # Start streaming completion from the LLM
+                stream_generator = await llm_client.stream_completion_content(
+                    model=DEFAULT_EXTRACTION_MODEL,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt},
+                    ],
+                    max_tokens=MAX_OUTPUT_TOKENS,
+                    temperature=0.7,
+                )
 
-            # Start streaming completion from the LLM
-            stream_generator = await llm_client.stream_completion_content(
-                model=DEFAULT_EXTRACTION_MODEL,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                max_tokens=MAX_OUTPUT_TOKENS,
-                temperature=0.7,
-            )
+                # Ensure the stream was successfully initiated
+                if stream_generator is None:
+                    logger.error("LLM stream initiation failed.")
+                    yield "\n\nAnalysis process failed: Unable to start streaming analysis."
+                    return
 
-            # Ensure the stream was successfully initiated
-            if stream_generator is None:
-                logger.error("LLM stream initiation failed.")
-                yield "\n\nAnalysis process failed: Unable to start streaming analysis."
-                return
-
-            # Yield each chunk of output as it arrives
-            async for chunk in stream_generator:
-                yield chunk
+                # Yield each chunk of output as it arrives
+                async for chunk in stream_generator:
+                    yield chunk
 
         except Exception as e:
             # Handle any streaming errors
