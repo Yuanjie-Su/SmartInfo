@@ -245,8 +245,11 @@ class NewsService:
                 _status_update("Skipped", "No Markdown after cleaning")
                 return None
 
+            # exist url in the db
+            exist_url = self._news_repo.get_all_urls()
+
             # Remove or adjust any residual markdown links
-            cleaned_markdown = clean_markdown_links(markdown)
+            cleaned_markdown = clean_markdown_links(markdown, exclude_urls=exist_url, base_url=url)
             _status_update("HTML Done", "Cleaned HTML to Markdown")
             return cleaned_markdown
 
@@ -284,7 +287,7 @@ class NewsService:
         )
 
         # If LLM returned no links, skip without error
-        if not links_str or not links_str.strip():
+        if not links_str or not links_str.strip() or links_str.strip() == "no":
             logger.warning(f"No links returned by LLM for {base_url} ({status_prefix})")
             _status_update(f"{status_prefix} No Links", "")
             return sub_structure_data_map, None

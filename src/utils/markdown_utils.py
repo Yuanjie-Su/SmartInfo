@@ -1,17 +1,19 @@
 # -*- coding: utf-8 -*-
 
 """
-markdown 处理模块：提供将 HTML 或其他文本格式转换为 Markdown 的工具函数集合。
-主要功能：
-- 链接过滤：移除空链接、导航链接、占位链接及无意义链接
-- 文本清理：删除多余的 HTML 标签、空白和特殊字符
-- 格式转换：将标题、列表、图片等 HTML 元素映射为对应的 Markdown 语法
-- 可定制性：支持配置正则规则和输出选项，灵活适配不同场景需求
+Markdown processing module: Provides a collection of utility functions to convert HTML or other text formats to Markdown.
+Main features:
+- Link filtering: Removes empty links, navigation links, placeholder links, and meaningless links.
+- Text cleaning: Deletes unnecessary HTML tags, whitespace, and special characters.
+- Format conversion: Maps HTML elements like headings, lists, and images to corresponding Markdown syntax.
+- Customizability: Supports configuration of regex rules and output options, flexibly adapting to different scenario needs.
 """
 
 import re
+from urllib.parse import urljoin
+from typing import List, Optional
 
-# 优化常量名：链接过滤正则
+# Optimized constant name: Link filter regex
 LINK_FILTER_REGEX = re.compile(
     r"""
     # ====================================================================
@@ -120,31 +122,43 @@ LINK_FILTER_REGEX = re.compile(
 )
 
 
-def clean_markdown_links(raw_text: str) -> str:
+def clean_markdown_links(raw_text: str, exclude_urls: List[str] = None, base_url: str = None) -> Optional[str]:
     """
-    清理 Markdown 文本中的链接，仅保留链接表达式
+    Clean links in Markdown text, keeping only link expressions.
     """
     if not raw_text:
         return ""
 
-    # 去除图片链接
+    # Remove image links
     text_without_images = strip_image_links(raw_text)
 
-    # 使用综合正则清理无关链接
+    # Use comprehensive regex to clean irrelevant links
     text_filtered = LINK_FILTER_REGEX.sub("", text_without_images)
     if not text_filtered:
         return ""
 
-    # 提取剩余的 Markdown 链接
-    link_pattern = r"\[[^\]]+\]\([^)]+\)"
+    # Extract remaining Markdown links
+    link_pattern = r"\[([^\]]+)\]\(([^)]+)\)"
     extracted_links = re.findall(link_pattern, text_filtered)
 
-    return "\n".join(extracted_links)
+    # Filter out links with URLs in exclude_urls
+    filtered_links = []
+    for text, url in extracted_links:
+        full_url = urljoin(base_url, url)
+        if full_url not in exclude_urls:
+            filtered_links.append(f"[{text}]({full_url})")
+        else:
+            break
+
+    if filtered_links:
+        return "\n".join(filtered_links)
+    else:
+        return None
 
 
 def strip_image_links(raw_text: str) -> str:
     """
-    去除 Markdown 文本中的图片链接
+    Remove image links from Markdown text.
     """
     if not raw_text:
         return ""
@@ -154,7 +168,7 @@ def strip_image_links(raw_text: str) -> str:
 
 def strip_markdown_divider(raw_text: str) -> str:
     """
-    去除 Markdown 文本中的分割线
+    Remove dividers from Markdown text.
     """
     if not raw_text:
         return ""
@@ -164,7 +178,7 @@ def strip_markdown_divider(raw_text: str) -> str:
 
 def strip_markdown_links(raw_text: str) -> str:
     """
-    去除 Markdown 文本中的链接
+    Remove links from Markdown text.
     """
     if not raw_text:
         return ""

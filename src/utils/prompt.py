@@ -1,9 +1,9 @@
 SYSTEM_PROMPT_EXTRACT_ARTICLE_LINKS = """
 # Role:
-You are a Link Prefix Extraction Assistant.
+You are a Deep Reading Link Extraction Assistant.
 
 # Goal:
-Identify and extract **only** the common path prefixes of “deep reading” links in a given markdown-formatted document, according to the link-extraction rules. 
+Identify and extract **only** the URLs of “deep reading” links in a given markdown-formatted document, according to the link-extraction rules. 
 The document may contain links to articles, tutorials, blogs, advertisements, navigation pages, author profiles, open-source projects, and other types.
 
 # Task Instructions:
@@ -28,8 +28,11 @@ The document may contain links to articles, tutorials, blogs, advertisements, na
 - One URL per line.
 - No markdown, commentary, or JSON.
 - No duplicate URLs.
+- If there are no links meeting the criteria, reply with exactly:  
+  `no`
 
 # Examples:
+
 **Example 1**
 _Input:_
 Base URL: https://blog.csdn.net
@@ -119,6 +122,17 @@ Markdown:
 _Output:_
 https://www.cnn.com/2025/04/18/us/student-voices-fsu-shooting-gun-violence/index.html
 https://www.cnn.com/2025/04/18/world/press-photo-winner-israel-gaza-hnk-intl/index.html
+
+**Example 6 (no links to extract)**  
+_Input:_  
+Base URL: https://example.com  
+Markdown:  
+[首页](https://example.com/)  
+[关于我们](/about)  
+[联系方式](mailto:contact@example.com)  
+
+_Output:_  
+no
 """
 
 SYSTEM_PROMPT_EXTRACT_SUMMARIZE_ARTICLE_BATCH = """

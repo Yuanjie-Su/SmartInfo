@@ -58,7 +58,7 @@ class NewsCategoryRepository(BaseRepository):
         """Gets all categories."""
         query_str = f"SELECT id, name FROM {NEWS_CATEGORY_TABLE} ORDER BY name"
         return self._fetchall(query_str)
-
+    
     def update(self, category_id: int, new_name: str) -> bool:
         """Updates a category's name."""
         query_str = f"UPDATE {NEWS_CATEGORY_TABLE} SET name = ? WHERE id = ?"
