@@ -28,12 +28,13 @@ from src.db.repositories import (
     NewsCategoryRepository,
     ApiKeyRepository,
     SystemConfigRepository,
-    QARepository,
+    ChatRepository,
+    MessageRepository,
 )
 from src.services.llm_client import LLMClient
 from src.services.setting_service import SettingService
 from src.services.news_service import NewsService
-from src.services.qa_service import QAService
+from src.services.chat_service import ChatService
 
 # --- Configure Logging ---
 log_file_path = "smartinfo.log"
@@ -90,7 +91,8 @@ def initialize_services(config: AppConfig) -> Dict[str, Any]:
         category_repo = NewsCategoryRepository()
         api_key_repo = ApiKeyRepository()
         system_config_repo = SystemConfigRepository()
-        qa_repo = QARepository()
+        chat_repo = ChatRepository()
+        message_repo = MessageRepository()
 
         # Services
         setting_service = SettingService(config, api_key_repo, system_config_repo)
@@ -107,13 +109,13 @@ def initialize_services(config: AppConfig) -> Dict[str, Any]:
             )
 
         news_service = NewsService(news_repo, source_repo, category_repo)
-        qa_service = QAService(qa_repo)
+        chat_service = ChatService(chat_repo, message_repo)
 
         logger.info("Services initialized successfully.")
         return {
             "setting_service": setting_service,
             "news_service": news_service,
-            "qa_service": qa_service,
+            "chat_service": chat_service,
         }
     except Exception as e:
         logger.critical(f"Failed to initialize services: {e}", exc_info=True)

@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import logging
-from datetime import datetime
+import time
 from typing import List, Optional, Tuple
 
 from src.db.schema_constants import API_CONFIG_TABLE
@@ -16,7 +16,7 @@ class ApiKeyRepository(BaseRepository):
 
     def save_key(self, api_name: str, api_key: str) -> bool:
         """Saves or updates an API key."""
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now = int(time.time())
         # SQLite's ON CONFLICT clause works well here
         query_str = f"""
             INSERT INTO {API_CONFIG_TABLE} (api_name, api_key, created_date, modified_date)

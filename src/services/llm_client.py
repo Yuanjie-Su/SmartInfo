@@ -28,6 +28,7 @@ from openai import APIError, AsyncOpenAI, OpenAI, ChatCompletion
 
 logger = logging.getLogger(__name__)
 
+
 class LLMClient:
     """
     A client for interacting with Large Language Models (LLMs),
@@ -59,7 +60,9 @@ class LLMClient:
     def __enter__(self):
         """Context manager entry point for synchronous usage."""
         if self.async_mode:
-            raise RuntimeError("Cannot use synchronous context manager with async_mode=True")
+            raise RuntimeError(
+                "Cannot use synchronous context manager with async_mode=True"
+            )
         self._client = self._create_client()
         return self
 
@@ -72,7 +75,9 @@ class LLMClient:
     async def __aenter__(self):
         """Context manager entry point for asynchronous usage."""
         if not self.async_mode:
-            raise RuntimeError("Cannot use asynchronous context manager with async_mode=False")
+            raise RuntimeError(
+                "Cannot use asynchronous context manager with async_mode=False"
+            )
         self._client = self._create_client()
         return self
 
@@ -100,7 +105,7 @@ class LLMClient:
         if self._client is None:
             self._client = self._create_client()
             logger.debug("Auto-initializing LLM client outside of context manager")
-    
+
     async def get_completion_content(
         self,
         model: str,
@@ -125,7 +130,7 @@ class LLMClient:
             The generated text content, or None on failure after retries.
         """
         self._ensure_client()
-        
+
         request_params = {
             "model": model,
             "messages": messages,
@@ -229,7 +234,7 @@ class LLMClient:
             yielding text chunks, or None if the stream could not be initiated.
         """
         self._ensure_client()
-        
+
         request_params = {
             "model": model,
             "messages": messages,
@@ -312,14 +317,20 @@ class LLMClient:
             )
             # Explicitly try to close the underlying stream resource.
             # The 'response' object here *is* the async iterator returned by the openai library.
-            if hasattr(response, 'aclose'):
-                 try:
-                     logger.info(f"Explicitly calling aclose() on the LLM response stream for model {model_name}.")
-                     await response.aclose() # <-- EXPLICITLY AWAIT aclose() HERE
-                     logger.info(f"Successfully awaited aclose() for model {model_name}.")
-                 except Exception as close_err:
-                     # Log error but don't prevent the function from finishing
-                     logger.warning(f"Error during explicit aclose() for model {model_name}: {close_err}")
+            if hasattr(response, "aclose"):
+                try:
+                    logger.info(
+                        f"Explicitly calling aclose() on the LLM response stream for model {model_name}."
+                    )
+                    await response.aclose()  # <-- EXPLICITLY AWAIT aclose() HERE
+                    logger.info(
+                        f"Successfully awaited aclose() for model {model_name}."
+                    )
+                except Exception as close_err:
+                    # Log error but don't prevent the function from finishing
+                    logger.warning(
+                        f"Error during explicit aclose() for model {model_name}: {close_err}"
+                    )
 
     def _sync_stream_processor(
         self, response: Iterator, model_name: str

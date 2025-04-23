@@ -25,7 +25,8 @@ from src.db.schema_constants import (
     NEWS_TABLE,
     API_CONFIG_TABLE,
     SYSTEM_CONFIG_TABLE,
-    QA_HISTORY_TABLE,
+    CHATS_TABLE,
+    MESSAGES_TABLE,
 )
 
 logger = logging.getLogger(__name__)
@@ -250,8 +251,8 @@ class DatabaseConnectionManager:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 api_name TEXT NOT NULL UNIQUE,
                 api_key TEXT NOT NULL,
-                created_date TEXT NOT NULL,
-                modified_date TEXT NOT NULL
+                created_date INTEGER NOT NULL,
+                modified_date INTEGER NOT NULL
             )
         """
         )
@@ -267,22 +268,48 @@ class DatabaseConnectionManager:
         """
         )
 
-        # Q&A History Table
+        # Chats Table
         self._execute_schema_query(
             f"""
-            CREATE TABLE IF NOT EXISTS {QA_HISTORY_TABLE} (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                question TEXT NOT NULL,
-                answer TEXT NOT NULL,
-                context_ids TEXT,
-                created_date TEXT NOT NULL
+            CREATE TABLE IF NOT EXISTS {CHATS_TABLE} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                title TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER
             )
         """
         )
 
         self._execute_schema_query(
             f"""
-            CREATE INDEX IF NOT EXISTS idx_qa_history_created_date ON {QA_HISTORY_TABLE} (created_date)
+            CREATE INDEX IF NOT EXISTS idx_chats_created_at ON {CHATS_TABLE} (created_at)
+        """
+        )
+
+        self._execute_schema_query(
+            f"""
+            CREATE INDEX IF NOT EXISTS idx_chats_updated_at ON {CHATS_TABLE} (updated_at)
+        """
+        )
+
+        # Messages Table
+        self._execute_schema_query(
+            f"""
+            CREATE TABLE IF NOT EXISTS {MESSAGES_TABLE} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                chat_id INTEGER NOT NULL,
+                sender TEXT NOT NULL,
+                content TEXT NOT NULL,
+                timestamp INTEGER NOT NULL,
+                sequence_number INTEGER NOT NULL,
+                FOREIGN KEY (chat_id) REFERENCES {CHATS_TABLE}(id) ON DELETE CASCADE
+            )
+        """
+        )
+
+        self._execute_schema_query(
+            f"""
+            CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON {MESSAGES_TABLE} (chat_id)
         """
         )
 

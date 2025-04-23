@@ -12,7 +12,8 @@ from .news_source_repository import NewsSourceRepository
 from .news_repository import NewsRepository
 from .api_key_repository import ApiKeyRepository
 from .system_config_repository import SystemConfigRepository
-from .qa_repository import QARepository
+from .chat_repository import ChatRepository
+from .message_repository import MessageRepository
 
 # Define what is accessible when using 'from src.db.repositories import *'
 # Although explicit imports are generally preferred.
@@ -23,5 +24,6 @@ __all__ = [
     "NewsRepository",
     "ApiKeyRepository",
     "SystemConfigRepository",
-    "QARepository",
+    "ChatRepository",
+    "MessageRepository",
 ] 
