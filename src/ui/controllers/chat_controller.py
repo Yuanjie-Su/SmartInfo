@@ -122,11 +122,6 @@ class ChatController(QObject):
         if hasattr(self, "_current_chat_id") and self._current_chat_id:
             result["chat_id"] = self._current_chat_id
 
-        # If this is a streaming response, the full answer may already be in the result
-        # If not, use our accumulated answer
-        if "answer" not in result and self._current_streaming_answer:
-            result["answer"] = self._current_streaming_answer
-
         # Reset streaming state
         self._current_streaming_answer = ""
 

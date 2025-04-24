@@ -369,7 +369,6 @@ class ChatService:
 
             # After streaming is complete, ensure final update of database content
             if full_answer:
-                logger.info(f"Received complete LLM answer: '{full_answer[:100]}...'")
                 self._message_repo.update_message_content(
                     assistant_message_id, full_answer
                 )

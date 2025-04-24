@@ -29,14 +29,320 @@ from PySide6.QtCore import (
     Slot,
     QThreadPool,
     QSize,
+    Signal,
+    QRectF,
+    QEvent,
+    QTimer,
+    QItemSelectionModel,
 )
-from PySide6.QtGui import QFont, QColor, QIcon
+from PySide6.QtGui import (
+    QFont,
+    QColor,
+    QIcon,
+    QPainter,
+    QTextDocument,
+    QTextOption,
+)
 
 # Import necessary services and controllers
 from src.ui.controllers.chat_controller import ChatController
 from src.ui.workers.async_runner import AsyncTaskRunner
 
 logger = logging.getLogger(__name__)
+
+
+from PySide6.QtWidgets import QListView, QStyledItemDelegate, QStyle
+from PySide6.QtCore import QAbstractListModel, QModelIndex
+
+
+class ChatMessage:
+    """Data class for a chat message"""
+
+    def __init__(
+        self, sender, content, is_user=False, message_id=None, is_streaming=False
+    ):
+        self.sender = sender
+        self.content = content
+        self.is_user = is_user
+        self.message_id = message_id
+        self.is_streaming = is_streaming
+        self.show_copy_button = False  # Flag to track hover state
+
+
+class ChatListModel(QAbstractListModel):
+    """Model to hold chat messages data"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.messages = []
+
+    def rowCount(self, parent=QModelIndex()):
+        return len(self.messages)
+
+    def data(self, index, role=Qt.DisplayRole):
+        if not index.isValid() or index.row() >= len(self.messages):
+            return None
+
+        message = self.messages[index.row()]
+
+        if role == Qt.DisplayRole:
+            return message
+
+        return None
+
+    def setData(self, index, value, role=Qt.EditRole):
+        if not index.isValid() or index.row() >= len(self.messages):
+            return False
+
+        if role == Qt.UserRole:  # Use this role for setting hover state
+            self.messages[index.row()].show_copy_button = value
+            self.dataChanged.emit(index, index, [role])
+            return True
+
+        return False
+
+    def addMessage(self, message):
+        self.beginInsertRows(QModelIndex(), len(self.messages), len(self.messages))
+        self.messages.append(message)
+        self.endInsertRows()
+        return len(self.messages) - 1  # Return index of added message
+
+    def updateMessage(self, message_id, content):
+        for i, msg in enumerate(self.messages):
+            if msg.message_id == message_id:
+                msg.content = content
+                self.dataChanged.emit(self.index(i, 0), self.index(i, 0))
+                break
+
+
+class SelectableTextDocument(QTextDocument):
+    """QTextDocument that supports text selection"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # TextInteractionFlags don't directly apply to QTextDocument when used in a delegate
+        # Actual text selection is handled by the view's selection mechanism
+
+
+class ChatItemDelegate(QStyledItemDelegate):
+    """Custom delegate for rendering chat messages with copy button"""
+
+    copyButtonClicked = Signal(int)  # Signal emitted when copy button is clicked
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.hover_index = QModelIndex()
+        # Use a Unicode character instead of an icon file
+        self.copy_text = "📋"  # Unicode clipboard icon
+        self.active_copy_button = None  # Tracks which message has an active copy button
+
+    def paint(self, painter, option, index):
+        message = index.data(Qt.DisplayRole)
+        if not message:
+            return
+
+        painter.save()
+
+        # Prepare document for rendering
+        doc = SelectableTextDocument()
+        doc.setDocumentMargin(10)
+
+        # Set up text options
+        text_option = QTextOption()
+        text_option.setWrapMode(QTextOption.WrapAtWordBoundaryOrAnywhere)
+        doc.setDefaultTextOption(text_option)
+
+        # Different styling for user vs system messages
+        if message.is_user:
+            html = f"""
+            <div style="color: #000; background-color: #f0f0f0; 
+                        border-radius: 10px; padding: 8px 12px; 
+                        margin-left: 50px; margin-right: 10px;">
+                {message.content}
+            </div>
+            """
+        else:
+            sender_style = ""
+            if message.is_streaming:
+                animation = "<span style='color: #07c160;'>●</span>"
+                html = f"""
+                <div style="color: #000; background-color: #ffffff; 
+                            border-radius: 10px; padding: 8px 12px; 
+                            margin-left: 10px; margin-right: 50px;">
+                    {sender_style}
+                    {message.content} {animation}
+                </div>
+                """
+            else:
+                html = f"""
+                <div style="color: #000; background-color: #ffffff; 
+                            border-radius: 10px; padding: 8px 12px; 
+                            margin-left: 10px; margin-right: 50px;">
+                    {sender_style}
+                    {message.content}
+                </div>
+                """
+
+        doc.setHtml(html)
+
+        # Set document width to the width of the view
+        doc.setTextWidth(option.rect.width())
+
+        # Draw the document
+        ctx = option.widget.style().styleHint(QStyle.SH_ItemView_ShowDecorationSelected)
+        if option.state & QStyle.State_Selected and ctx:
+            painter.fillRect(option.rect, option.palette.highlight())
+
+        painter.translate(option.rect.topLeft())
+        doc.drawContents(painter)
+
+        # Draw copy button if it's not a user message and hovering
+        if not message.is_user and message.show_copy_button:
+            # Position the copy button at the top right of the message
+            button_size = 24
+            button_x = option.rect.width() - button_size - 10
+            button_y = 10  # Position at top for better visibility
+
+            button_rect = QRectF(button_x, button_y, button_size, button_size)
+
+            # Draw a subtle background for the button
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(240, 240, 240, 200))  # Light gray with transparency
+            painter.drawRoundedRect(button_rect, 4, 4)
+
+            # Draw the copy icon
+            painter.setPen(QColor(80, 80, 80))  # Dark gray text
+            painter.drawText(button_rect.toRect(), Qt.AlignCenter, self.copy_text)
+
+        painter.restore()
+
+    def sizeHint(self, option, index):
+        message = index.data(Qt.DisplayRole)
+        if not message:
+            return QSize(0, 0)
+
+        doc = QTextDocument()
+        doc.setDocumentMargin(10)
+
+        # Apply the same styling as in paint()
+        if message.is_user:
+            html = f"""
+            <div style="color: #000; background-color: #f0f0f0; 
+                        border-radius: 10px; padding: 8px 12px; 
+                        margin-left: 50px; margin-right: 10px;">
+                {message.content}
+            </div>
+            """
+        else:
+            html = f"""
+            <div style="color: #000; background-color: #ffffff; 
+                        border-radius: 10px; padding: 8px 12px; 
+                        margin-left: 10px; margin-right: 50px;">
+                {message.content}
+            </div>
+            """
+
+        doc.setHtml(html)
+        doc.setTextWidth(option.rect.width())
+
+        # Add extra space for copy button and margins
+        extra_height = 20
+        return QSize(int(doc.idealWidth()), int(doc.size().height()) + extra_height)
+
+    def editorEvent(self, event, model, option, index):
+        """Handle mouse events within the delegate"""
+        if not index.isValid():
+            return False
+
+        message = index.data(Qt.DisplayRole)
+        if not message or message.is_user:
+            return False
+
+        if event.type() == QEvent.MouseMove:
+            # Set hover state for copy button
+            model.setData(index, True, Qt.UserRole)
+            return True
+
+        elif event.type() == QEvent.MouseButtonPress:
+            # Check if click was on copy button
+            if message.show_copy_button:
+                button_size = 24
+                button_x = option.rect.width() - button_size - 10
+                button_y = 10  # Match the position from paint
+
+                button_rect = QRectF(
+                    button_x, button_y, button_size, button_size
+                ).toRect()
+                transformed_rect = button_rect.translated(option.rect.topLeft())
+
+                if transformed_rect.contains(event.pos()):
+                    # Copy the message content to clipboard without HTML tags
+                    content = message.content.replace("<br />", "\n")
+                    # Remove any HTML entities
+                    content = (
+                        content.replace("&lt;", "<")
+                        .replace("&gt;", ">")
+                        .replace("&amp;", "&")
+                    )
+                    QApplication.clipboard().setText(content)
+                    self.copyButtonClicked.emit(index.row())
+                    self.active_copy_button = index
+                    return True
+
+        return False
+
+
+class ChatListView(QListView):
+    """Enhanced QListView with hover detection for copy buttons and text selection"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMouseTracking(True)  # Enable mouse tracking for hover
+        self.last_hover_index = QModelIndex()
+        self.setTextElideMode(Qt.ElideNone)  # Don't elide text
+        self.setWordWrap(True)  # Enable word wrap
+        self.setSelectionMode(
+            QListView.SelectionMode.ExtendedSelection
+        )  # Allow text selection
+
+    def mouseMoveEvent(self, event):
+        """Track mouse movement to show/hide copy buttons"""
+        index = self.indexAt(event.pos())
+
+        if self.last_hover_index.isValid() and index != self.last_hover_index:
+            # Mouse moved away from previous item
+            self.model().setData(self.last_hover_index, False, Qt.UserRole)
+
+        if index.isValid():
+            # Mouse moved over an item
+            self.model().setData(index, True, Qt.UserRole)
+            self.last_hover_index = index
+
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event):
+        """Handle mouse leaving the widget"""
+        if self.last_hover_index.isValid():
+            self.model().setData(self.last_hover_index, False, Qt.UserRole)
+            self.last_hover_index = QModelIndex()
+
+        super().leaveEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        """Handle double click to select text in message"""
+        index = self.indexAt(event.pos())
+        if index.isValid():
+            message = index.data(Qt.DisplayRole)
+            if message:
+                # Select the entire message text when double-clicked
+                self.setSelection(
+                    self.visualRect(index), QItemSelectionModel.SelectionFlag.Select
+                )
+                # Emit a selection changed signal to update the UI
+                self.selectionModel().select(
+                    index, QItemSelectionModel.SelectionFlag.Select
+                )
+        super().mouseDoubleClickEvent(event)
 
 
 class ChatTab(QWidget):
@@ -86,44 +392,21 @@ class ChatTab(QWidget):
         chat_container_layout = QVBoxLayout(chat_container)
         chat_container_layout.setContentsMargins(5, 5, 5, 5)
 
-        self.chat_display = QTextEdit()
+        # Use our custom ChatListView instead of QListView
+        self.chat_display = ChatListView()
         self.chat_display.setObjectName("chat_display")
-        self.chat_display.setReadOnly(True)
-        # Increase font size
-        font = self.chat_display.font()
-        font.setPointSize(font.pointSize() + 1)
-        self.chat_display.setFont(font)
+        self.chat_display.setFrameShape(QFrame.NoFrame)
+        self.chat_display.setVerticalScrollMode(QListView.ScrollPerPixel)
+        self.chat_display.setSelectionMode(QListView.NoSelection)
 
-        # Add CSS for typing animation
-        self.chat_display.document().setDefaultStyleSheet(
-            """
-            .typing-indicator {
-                display: inline-block;
-                text-align: center;
-            }
-            .typing-indicator .dot {
-                display: inline-block;
-                width: 8px;
-                height: 8px;
-                border-radius: 50%;
-                margin: 0 3px;
-                background-color: #07c160;
-                opacity: 0.6;
-                animation: typing 1.4s infinite both;
-            }
-            .typing-indicator .dot:nth-child(2) {
-                animation-delay: 0.2s;
-            }
-            .typing-indicator .dot:nth-child(3) {
-                animation-delay: 0.4s;
-            }
-            @keyframes typing {
-                0% { opacity: 0.6; transform: scale(1); }
-                50% { opacity: 1; transform: scale(1.2); }
-                100% { opacity: 0.6; transform: scale(1); }
-            }
-        """
-        )
+        # Set up the model and delegate
+        self.chat_model = ChatListModel()
+        self.chat_delegate = ChatItemDelegate()
+        self.chat_display.setModel(self.chat_model)
+        self.chat_display.setItemDelegate(self.chat_delegate)
+
+        # Connect copy button clicked signal
+        self.chat_delegate.copyButtonClicked.connect(self._on_copy_button_clicked)
 
         chat_container_layout.addWidget(self.chat_display, 1)
 
@@ -172,9 +455,8 @@ class ChatTab(QWidget):
         pass
 
     def _show_welcome_message(self):
-        """Display welcome message"""
+        """Display welcome message using the chat model"""
         welcome_message = (
-            "<div style='margin: 20px; line-height: 1.5;'>"
             "<h2 style='color: #07c160;'>Welcome to SmartInfo Intelligent Chat</h2>"
             "<p>You can ask any question, and the system will provide answers using a large language model.</p>"
             "<p><b>Example questions:</b></p>"
@@ -184,15 +466,31 @@ class ChatTab(QWidget):
             "<li>What are the latest breakthroughs in chip technology?</li>"
             "</ul>"
             "<p>Please enter your question to start exploring!</p>"
-            "</div>"
         )
-        self.chat_display.setHtml(welcome_message)
+
+        # Create a system message and add it to the model
+        system_msg = ChatMessage(
+            sender="System",
+            content=welcome_message,
+            is_user=False,
+            message_id="welcome-msg",
+        )
+
+        # Add to model
+        self.chat_model.addMessage(system_msg)
+
+        # Scroll to show the message
+        self.chat_display.scrollToBottom()
 
     def start_new_chat(self):
         """Create and start a new chat session"""
         logger.info("Starting a new chat session")
 
         # Clear chat display
+        self.chat_model.messages.clear()
+        self.chat_model.layoutChanged.emit()
+
+        # Show welcome message
         self._show_welcome_message()
 
         # Clear input box
@@ -217,30 +515,59 @@ class ChatTab(QWidget):
             chat = self.controller.get_chat(chat_id)
 
             # Clear current chat display
-            self.chat_display.clear()
+            self.chat_model.messages.clear()
+            self.chat_model.layoutChanged.emit()
 
             # Display historical conversation content
             if chat and "error" not in chat:
-                # Display title (optional)
-                title = chat.get("title", "Chat Session")
-
                 # Display all messages
                 messages = chat.get("messages", [])
                 for message in messages:
                     sender = message["sender"]
                     content = message["content"]
-                    self._add_message_to_chat(sender, content)
+                    # Escape HTML special characters
+                    content = (
+                        content.replace("&", "&amp;")
+                        .replace("<", "&lt;")
+                        .replace(">", "&gt;")
+                    )
+                    content = content.replace("\n", "<br />")
+
+                    is_user = sender == "You"
+                    chat_msg = ChatMessage(
+                        sender=sender,
+                        content=content,
+                        is_user=is_user,
+                        message_id=f"hist-{message.get('id', '')}",
+                    )
+                    self.chat_model.addMessage(chat_msg)
             else:
                 # If no history found or format is incorrect, display error message
                 error_message = chat.get(
                     "error", f"Unable to load chat history (ID: {chat_id})"
                 )
-                self.chat_display.setHtml(f"<p style='color: red;'>{error_message}</p>")
+                error_msg = ChatMessage(
+                    sender="System Error",
+                    content=error_message,
+                    is_user=False,
+                    message_id="error-msg",
+                )
+                self.chat_model.addMessage(error_msg)
                 logger.error(f"Failed to load chat history: {error_message}")
+
+            # Scroll to show latest message
+            if self.chat_model.rowCount() > 0:
+                self.chat_display.scrollToBottom()
 
         except Exception as e:
             error_message = f"Error loading chat history: {str(e)}"
-            self.chat_display.setHtml(f"<p style='color: red;'>{error_message}</p>")
+            error_msg = ChatMessage(
+                sender="System Error",
+                content=error_message,
+                is_user=False,
+                message_id="error-msg",
+            )
+            self.chat_model.addMessage(error_msg)
             logger.error(f"Exception loading chat history: {e}", exc_info=True)
 
     def _send_question(self):
@@ -261,51 +588,33 @@ class ChatTab(QWidget):
         self.question_input.clear()
 
         try:
-            # Create placeholder for assistant response with typing indicator
+            # Create a message ID for the assistant's response
             assistant_msg_id = f"assistant-msg-{int(time.time() * 1000)}"
 
-            # Add a placeholder div with typing indicator for the system response
-            typing_html = f"""
-            <div style='clear:both;'></div>
-            <div style='position: relative; padding-left: 55px;' id='{assistant_msg_id}-container'>
-                <div style='position: absolute; left: 15px; width: 40px; height: 40px; 
-                    background-color: #e7f7ed; border-radius: 50%; text-align: center; 
-                    line-height: 40px; color: #07c160; font-size: 20px;'>🤖</div>
-                <div style='background: #f5f7fa; color: #2a3142; border-radius: 18px 18px 18px 4px; 
-                    padding: 12px 18px; max-width: 70%; margin: 8px auto 15px 70px; float: left; 
-                    text-align: left; box-shadow: 0 1px 2px rgba(0,0,0,0.1); line-height: 1.4;' 
-                    id='{assistant_msg_id}'>
-                    <div style='font-weight: bold; color: #07c160; margin-bottom: 5px; font-size: 14px;'>
-                        🤖 System
-                    </div>
-                    <span class='typing-indicator'>
-                        <span class='dot'></span>
-                        <span class='dot'></span>
-                        <span class='dot'></span>
-                    </span>
-                </div>
-            </div>
-            <div style='clear:both;'></div>
-            """
+            # Add a placeholder for the system response with typing indicator
+            typing_msg = ChatMessage(
+                sender="System",
+                content="",  # Will be updated with streaming content
+                is_user=False,
+                message_id=assistant_msg_id,
+                is_streaming=True,
+            )
+            self.chat_model.addMessage(typing_msg)
 
-            # Insert typing indicator
-            cursor = self.chat_display.textCursor()
-            cursor.movePosition(cursor.MoveOperation.End)
-            self.chat_display.setTextCursor(cursor)
-            self.chat_display.insertHtml(typing_html)
-            self.chat_display.ensureCursorVisible()
+            # Scroll to show typing indicator
+            self.chat_display.scrollToBottom()
 
             # Store message ID for streaming updates
             self.current_streaming_message_id = assistant_msg_id
             self.current_streaming_content = ""
 
-            # Use AsyncTaskRunner to avoid UI freezing
+            # Use controller to ask question
             self.controller.ask_question(question, self.current_chat_id)
 
         except Exception as e:
             logger.error(f"Error sending question: {e}", exc_info=True)
             self._add_message_to_chat(
-                "System", f"Error processing request: {str(e)}", error=True
+                "System Error", f"Error processing request: {str(e)}", error=True
             )
             # Re-enable input
             self.question_input.setEnabled(True)
@@ -314,58 +623,57 @@ class ChatTab(QWidget):
 
     @Slot(dict)
     def _on_streaming_chunk(self, chunk_data: Dict[str, Any]):
-        """Handle streaming chunks as they arrive from the LLM"""
+        """Handle streaming chunks with the new model"""
         try:
-            # Get the message ID and chat ID
+            # Get data from chunk
             message_id = chunk_data.get("message_id")
             chat_id = chunk_data.get("chat_id")
             text_chunk = chunk_data.get("text_chunk", "")
             full_text = chunk_data.get("full_text", "")
             is_final = chunk_data.get("is_final", False)
 
-            # Skip if not for the current chat
+            # Skip if not for current chat
             if self.current_chat_id is not None and chat_id != self.current_chat_id:
-                logger.debug(f"Ignoring chunk for different chat: {chat_id}")
                 return
 
-            # Update the current_streaming_content
+            # Skip if the streaming ID has been cleared (meaning _on_answer_received has already run)
+            if is_final and not hasattr(self, "current_streaming_message_id"):
+                return
+
+            if is_final and self.current_streaming_message_id is None:
+                return
+
+            # Update streaming content
             self.current_streaming_content = full_text
 
-            # Find the message element by ID
-            msg_id = self.current_streaming_message_id
-            if msg_id:
-                html = self.chat_display.toHtml()
+            # Escape HTML content
+            escaped_content = (
+                full_text.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\n", "<br />")
+            )
 
-                # Replace typing indicator with actual content if first chunk
-                if "<span class='typing-indicator'" in html:
-                    html = html.replace(
-                        "<span class='typing-indicator'><span class='dot'></span><span class='dot'></span><span class='dot'></span></span>",
-                        "",
-                    )
+            # Update message in model
+            if self.current_streaming_message_id:
+                self.chat_model.updateMessage(
+                    self.current_streaming_message_id, escaped_content
+                )
 
-                # Now update the message content
-                start_idx = html.find(f"id='{msg_id}'")
-                if start_idx > 0:
-                    div_start = html.find(">", start_idx) + 1
-                    div_end = html.find("</div>", div_start)
+                # Scroll to bottom to show latest content
+                self.chat_display.scrollToBottom()
 
-                    # Escape the content properly
-                    escaped_content = (
-                        full_text.replace("&", "&amp;")
-                        .replace("<", "&lt;")
-                        .replace(">", "&gt;")
-                        .replace("\n", "<br />")
-                    )
-
-                    # Replace the content
-                    new_html = html[:div_start] + escaped_content + html[div_end:]
-                    self.chat_display.setHtml(new_html)
-
-                # Ensure cursor is visible to auto-scroll
-                self.chat_display.ensureCursorVisible()
-
-                # If final chunk, reset streaming state
+                # Clear streaming state if final
                 if is_final:
+                    # Update the message to no longer show streaming animation
+                    for i, msg in enumerate(self.chat_model.messages):
+                        if msg.message_id == self.current_streaming_message_id:
+                            msg.is_streaming = False
+                            self.chat_model.dataChanged.emit(
+                                self.chat_model.index(i, 0), self.chat_model.index(i, 0)
+                            )
+                            break
+
                     self.current_streaming_message_id = None
                     self.current_streaming_content = ""
 
@@ -384,58 +692,28 @@ class ChatTab(QWidget):
         if result.get("is_new_chat", False) and "chat_id" in result:
             self.current_chat_id = result["chat_id"]
 
-        # For streaming responses, the content is already in the display
-        # Just need to ensure it's complete and handle any necessary cleanup
-        if (
-            hasattr(self, "current_streaming_message_id")
-            and self.current_streaming_message_id
-        ):
-            # End of streaming, nothing more to do here
+        # Clean up streaming state if needed
+        if hasattr(self, "current_streaming_message_id"):
             self.current_streaming_message_id = None
             self.current_streaming_content = ""
 
-            # Add reference sources (if any)
-            if self.controller.answer_sources:
-                sources_html = "<div style='margin: 10px 0 0 70px; font-size: 13px; color: #6c757d;'><b>Reference Sources (Similarity):</b><ul style='margin-top: 5px;'>"
-                for src in self.controller.answer_sources:
-                    title = src.get("title", "Unknown Title")
-                    sim = src.get("similarity", 0)
-                    sources_html += f"<li>{title} ({sim}%)</li>"
-                sources_html += "</ul></div>"
-                self.chat_display.append(sources_html)
+        # Add reference sources (if any)
+        if self.controller.answer_sources:
+            sources_msg = "Reference Sources (Similarity):\n"
+            for src in self.controller.answer_sources:
+                title = src.get("title", "Unknown Title")
+                sim = src.get("similarity", 0)
+                sources_msg += f"- {title} ({sim}%)\n"
 
-            return
-
-        # If this was not a streaming response (fallback), handle the old way
-        if result and result.get("error"):
-            logger.error(f"Chat service returned error: {result['error']}")
-            self._add_message_to_chat(
-                "⚠️ System Error",
-                f"Sorry, an error occurred while answering the question: {result['error']}",
+            # Add sources as a separate message
+            source_message = ChatMessage(
+                sender="System",
+                content=sources_msg,
+                is_user=False,
+                message_id=f"sources-{int(time.time() * 1000)}",
             )
-        elif result and result.get("answer"):
-            answer = result["answer"]
-            self.controller.add_answer_sources(result.get("sources", []))
-            # Add actual answer
-            self._add_message_to_chat("🤖 System", answer)
-            # Add reference sources (if any)
-            if self.controller.answer_sources:
-                sources_html = "<div style='margin: 10px 0 0 70px; font-size: 13px; color: #6c757d;'><b>Reference Sources (Similarity):</b><ul style='margin-top: 5px;'>"
-                for src in self.controller.answer_sources:
-                    title = src.get("title", "Unknown Title")
-                    sim = src.get("similarity", 0)
-                    sources_html += f"<li>{title} ({sim}%)</li>"
-                sources_html += "</ul></div>"
-                self.chat_display.append(sources_html)
-
-        else:
-            # If error is None but no answer, this should not happen
-            logger.error("Chat service returned unexpected empty result.")
-            self._add_message_to_chat(
-                "⚠️ System Error", "Sorry, the system could not generate an answer."
-            )
-
-        self.chat_display.ensureCursorVisible()
+            self.chat_model.addMessage(source_message)
+            self.chat_display.scrollToBottom()
 
     @Slot(Exception)
     def _on_chat_error(self, error: Exception):
@@ -446,87 +724,85 @@ class ChatTab(QWidget):
         self.send_button.setText("Send")
 
         # Clear any streaming state
-        self.current_streaming_message_id = None
-        self.current_streaming_content = ""
+        if self.current_streaming_message_id:
+            # Find and update the streaming message to show error
+            for i, msg in enumerate(self.chat_model.messages):
+                if msg.message_id == self.current_streaming_message_id:
+                    msg.content = "Error: processing failed"
+                    msg.is_streaming = False
+                    self.chat_model.dataChanged.emit(
+                        self.chat_model.index(i, 0), self.chat_model.index(i, 0)
+                    )
+                    break
 
-        # If we have a typing indicator, remove it
-        html = self.chat_display.toHtml()
-        if "typing-indicator" in html:
-            html = html.replace(
-                "<span class='typing-indicator'><span class='dot'></span><span class='dot'></span><span class='dot'></span></span>",
-                "<span style='color: #d32f2f;'>Error: processing failed</span>",
-            )
-            self.chat_display.setHtml(html)
+            self.current_streaming_message_id = None
+            self.current_streaming_content = ""
 
         logger.error(f"Chat task execution failed: {error}", exc_info=error)
+
+        # Add error message
         self._add_message_to_chat(
-            "⚠️ System Error",
+            "System Error",
             f"An internal error occurred while processing the question: {str(error)}",
         )
-        self.chat_display.ensureCursorVisible()
+
+        # Scroll to show the error message
+        self.chat_display.scrollToBottom()
 
     def _add_message_to_chat(self, sender: str, message: str, error: bool = False):
-        """Add message to chat display area with modern styling"""
-        # Basic HTML escape
+        """Add message to chat display using the new model"""
+        is_user = sender == "You"
+        msg_id = f"msg-{int(time.time() * 1000)}" if not is_user else None
+
+        # Escape HTML special characters
         message = (
             message.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         )
-        # Convert newlines to <br> for HTML display
         message = message.replace("\n", "<br />")
 
-        # Modern chat bubble style
-        if "You" in sender:
-            # User message - right-aligned bubble
-            bubble_style = (
-                "background: #f0f0f0; color: #000; border-radius: 18px 18px 0 18px; "
-                "padding: 12px 18px; max-width: 80%; margin: 8px 8px 15px auto; "
-                "float: right; text-align: left; box-shadow: 0 1px 2px rgba(0,0,0,0.1); "
-                "line-height: 1.4; font-size: 15px;"
-            )
-            # No sender label for user messages
-            message_html = f"""
-            <div style='clear:both;'></div>
-            <div style='{bubble_style}'>{message}</div>
-            <div style='clear:both;'></div>
-            """
-        elif error or "System Error" in sender:
-            # Error message styling
-            bubble_style = (
-                "background: #ffebee; color: #d32f2f; border-radius: 18px 18px 18px 0; "
-                "padding: 12px 18px; max-width: 80%; margin: 8px auto 15px 8px; "
-                "float: left; text-align: left; box-shadow: 0 1px 2px rgba(0,0,0,0.1); "
-                "line-height: 1.4; font-size: 15px;"
-            )
-            sender_style = "font-weight: bold; color: #d32f2f; margin-bottom: 5px;"
-            message_html = f"""
-            <div style='clear:both;'></div>
-            <div style='{bubble_style}'>
-                <div style='{sender_style}'>Error</div>{message}
-            </div>
-            <div style='clear:both;'></div>
-            """
-        else:  # System/AI message
-            # Generate a message ID for potential updates
-            msg_id = f"msg-{int(time.time() * 1000)}"
+        chat_msg = ChatMessage(
+            sender=sender, content=message, is_user=is_user, message_id=msg_id
+        )
 
-            # AI message - left-aligned bubble
-            bubble_style = (
-                "background: #ffffff; color: #000000; border-radius: 18px 18px 18px 0; "
-                "padding: 12px 18px; max-width: 80%; margin: 8px auto 15px 8px; "
-                "float: left; text-align: left; box-shadow: 0 1px 1px rgba(0,0,0,0.1); "
-                "line-height: 1.5; font-size: 15px;"
-            )
+        # Add to model
+        idx = self.chat_model.addMessage(chat_msg)
 
-            # No avatar, simple clean design
-            message_html = f"""
-            <div style='clear:both;'></div>
-            <div id='{msg_id}' style='{bubble_style}'>{message}</div>
-            <div style='clear:both;'></div>
-            """
+        # Scroll to show the new message
+        self.chat_display.scrollTo(self.chat_model.index(idx, 0))
 
-        # Add message and ensure visibility
-        cursor = self.chat_display.textCursor()
-        cursor.movePosition(cursor.MoveOperation.End)
-        self.chat_display.setTextCursor(cursor)
-        self.chat_display.insertHtml(message_html)
-        self.chat_display.ensureCursorVisible()
+        return msg_id
+
+    def _on_copy_button_clicked(self, row):
+        """Handle copy button clicks"""
+        if 0 <= row < self.chat_model.rowCount():
+            message = self.chat_model.messages[row]
+            # The content is already copied to clipboard in the delegate
+
+            # Show a quick status message if the status bar is available
+            status_bar = self.window().statusBar()
+            if status_bar:
+                status_bar.showMessage("Message copied to clipboard", 2000)
+
+            # If no status bar is available, show a small tooltip-like popup
+            else:
+                # Find top-level window position
+                top_window = self.window()
+                global_pos = top_window.mapToGlobal(top_window.rect().center())
+
+                # Create a message box with no buttons
+                popup = QMessageBox(top_window)
+                popup.setWindowFlags(Qt.ToolTip | Qt.FramelessWindowHint)
+                popup.setText("Copied to clipboard")
+                popup.setStandardButtons(QMessageBox.NoButton)
+
+                # Position in center of window
+                popup.move(
+                    global_pos.x() - popup.width() // 2,
+                    global_pos.y() - popup.height() // 2,
+                )
+
+                # Show for a short time
+                popup.show()
+
+                # Use a timer to automatically close the popup
+                QTimer.singleShot(1500, popup.close)
