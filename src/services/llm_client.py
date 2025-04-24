@@ -83,8 +83,8 @@ class LLMClient:
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit point for asynchronous usage."""
-        if hasattr(self._client, "aclose"):
-            await self._client.aclose()
+        if hasattr(self._client, "close"):
+            await self._client.close()
         self._client = None
 
     def _create_client(self) -> Union[OpenAI, AsyncOpenAI]:
@@ -276,12 +276,12 @@ class LLMClient:
             return None
 
     async def _async_stream_processor(
-        self, response: AsyncIterator, model_name: str
+        self, stream: AsyncIterator, model_name: str
     ) -> AsyncGenerator[str, None]:
         """Helper to process async stream chunks and handle errors."""
         total_chunks = 0
         try:
-            async for chunk in response:
+            async for chunk in stream:
                 total_chunks += 1
                 if chunk.choices:
                     delta = chunk.choices[0].delta
@@ -315,30 +315,14 @@ class LLMClient:
             logger.debug(
                 f"Async stream processing ended for model {model_name}. Total chunks processed: {total_chunks}"
             )
-            # Explicitly try to close the underlying stream resource.
-            # The 'response' object here *is* the async iterator returned by the openai library.
-            if hasattr(response, "aclose"):
-                try:
-                    logger.info(
-                        f"Explicitly calling aclose() on the LLM response stream for model {model_name}."
-                    )
-                    await response.aclose()  # <-- EXPLICITLY AWAIT aclose() HERE
-                    logger.info(
-                        f"Successfully awaited aclose() for model {model_name}."
-                    )
-                except Exception as close_err:
-                    # Log error but don't prevent the function from finishing
-                    logger.warning(
-                        f"Error during explicit aclose() for model {model_name}: {close_err}"
-                    )
 
     def _sync_stream_processor(
-        self, response: Iterator, model_name: str
+        self, stream: Iterator, model_name: str
     ) -> Generator[str, None, None]:
         """Helper to process sync stream chunks and handle errors."""
         total_chunks = 0
         try:
-            for chunk in response:
+            for chunk in stream:
                 total_chunks += 1
                 if chunk.choices:
                     delta = chunk.choices[0].delta

@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 class NavigationBar(QWidget):
     page_changed = Signal(int)
-    chat_selected = Signal(str)
+    chat_selected = Signal(int)
     new_chat_clicked = Signal()
 
     def __init__(self, parent=None):
@@ -206,7 +206,7 @@ class NavigationBar(QWidget):
             # Cannot directly show QMessageBox here because the navigation bar is a child component
             # Error handling will be managed by MainWindow
 
-    def _add_chat_item(self, title, group, chat_id, index=None):
+    def _add_chat_item(self, title, group, chat_id, index=None, auto_select=True):
         """Add chat item to the specified group"""
         if group not in self.groups:
             return
@@ -291,7 +291,8 @@ class NavigationBar(QWidget):
         self.groups[group]["items"].append(chat_btn)
 
         # Automatically select the newly added chat
-        self._on_chat_clicked(chat_btn)
+        if auto_select:
+            self._on_chat_clicked(chat_btn)
 
     def _on_chat_clicked(self, chat_btn):
         """Chat item click handler"""
@@ -384,11 +385,38 @@ class NavigationBar(QWidget):
                 ]
                 for chat_data in group_chats:
                     self._add_chat_item(
-                        chat_data["title"], chat_data["group"], chat_data["id"]
+                        chat_data["title"],
+                        chat_data["group"],
+                        chat_data["id"],
+                        auto_select=False,  # Prevent auto-selection during initialization
                     )
 
         # Add spacer at the bottom again (after adding all groups and items)
         self.chats_container_layout.addItem(self.bottom_spacer)
+
+        # # Optionally select one chat after all are added (e.g., the first one)
+        # # Check each group in order of priority
+        # if chat_data_list:
+        #     selected = False
+        #     for group_name in self.group_order:
+        #         if self.groups[group_name]["items"]:
+        #             # Select the first chat in this group
+        #             self._on_chat_clicked(self.groups[group_name]["items"][0])
+        #             selected = True
+        #             break
+
+        #     # If we need to track the current selection, store it
+        #     if selected and hasattr(self, "current_chat_id"):
+        #         first_chat_btn = next(
+        #             (
+        #                 group["items"][0]
+        #                 for group in self.groups.values()
+        #                 if group["items"]
+        #             ),
+        #             None,
+        #         )
+        #         if first_chat_btn:
+        #             self.current_chat_id = first_chat_btn.property("chat_id")
 
 
 class MainWindow(QMainWindow):
@@ -401,6 +429,7 @@ class MainWindow(QMainWindow):
         self.main_controller = MainController(
             self.services["news_service"],
             self.services["setting_service"],
+            self.services["chat_service"],
         )
 
         self.setWindowTitle("SmartInfo - Minimalist")  # Updated Title
@@ -568,7 +597,9 @@ class MainWindow(QMainWindow):
 
             # Only update UI after successful database operation
             # Add chat to top of Today group
-            self.nav_bar._add_chat_item("New Chat", "Today", chat_id, index=0)
+            self.nav_bar._add_chat_item(
+                "New Chat", "Today", chat_id, index=0, auto_select=True
+            )
 
             # Switch to chat tab
             self.stack.setCurrentIndex(1)
@@ -591,7 +622,7 @@ class MainWindow(QMainWindow):
             logger.error(f"Failed to create new chat: {e}", exc_info=True)
             QMessageBox.critical(self, "Error", f"Unable to create new chat: {e}")
 
-    def _handle_chat_selection(self, chat_id: str):
+    def _handle_chat_selection(self, chat_id: int):
         """Handle chat selection"""
         logger.info(f"Selected chat: {chat_id}")
 
@@ -606,8 +637,10 @@ class MainWindow(QMainWindow):
             if hasattr(self, "chat_tab") and self.chat_tab:
                 if hasattr(self.chat_tab, "load_chat"):
                     self.chat_tab.load_chat(chat_id)
-                elif hasattr(self.chat_tab, "load_history_item"):
-                    self.chat_tab.load_history_item(chat_id)
+                else:
+                    logger.warning("Chat tab does not have load_chat method")
+            else:
+                logger.warning("Chat tab does not exist")
 
         except Exception as e:
             logger.error(f"Failed to load chat {chat_id}: {e}", exc_info=True)

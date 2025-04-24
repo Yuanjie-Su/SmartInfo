@@ -14,7 +14,7 @@ from src.db.repositories import ChatRepository, MessageRepository
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_QA_MODEL = "deepseek-chat"
+DEFAULT_QA_MODEL = "deepseek-v3-250324"
 
 
 class ChatService:
@@ -27,18 +27,25 @@ class ChatService:
     ):
         self._chat_repo = chat_repo
         self._message_repo = message_repo
+        self._llm_pool = None  # Will be set after initialization
+        self._qa_repo = None  # For backward compatibility
+
+    def set_llm_pool(self, llm_pool):
+        """Set the LLM client pool after initialization"""
+        self._llm_pool = llm_pool
+        logger.info("LLM client pool assigned to ChatService")
 
     # --- Chat Management ---
 
-    def create_chat(self, title: str = "新建聊天") -> Optional[Dict[str, Any]]:
+    def create_chat(self, title: str = "New Chat") -> Optional[Dict[str, Any]]:
         """
-        创建一个新的聊天会话。
+        Create a new chat session.
 
         Args:
-            title: 聊天标题，默认为"新建聊天"
+            title: Chat title, default is "New Chat"
 
         Returns:
-            包含新创建聊天信息的字典，如果创建失败则返回None
+            A dictionary containing the information of the newly created chat, or None if creation fails
         """
         chat_id = self._chat_repo.create_chat(title)
         if chat_id is not None:
@@ -47,19 +54,19 @@ class ChatService:
 
     def get_chat(self, chat_id: int) -> Optional[Dict[str, Any]]:
         """
-        获取指定ID的聊天信息，包括消息内容。
+        Get chat information for the specified ID, including message content.
 
         Args:
-            chat_id: 聊天ID
+            chat_id: Chat ID
 
         Returns:
-            包含聊天信息和消息内容的字典，如果不存在则返回None
+            A dictionary containing chat information and message content, or None if it does not exist
         """
         chat = self._chat_repo.get_chat(chat_id)
         if not chat:
             return None
 
-        # 获取聊天中的所有消息
+        # Get all messages in the chat
         messages = self._message_repo.get_messages(chat_id)
         chat["messages"] = messages
 
@@ -67,35 +74,35 @@ class ChatService:
 
     def update_chat_title(self, chat_id: int, title: str) -> bool:
         """
-        更新聊天标题。
+        Update the chat title.
 
         Args:
-            chat_id: 聊天ID
-            title: 新标题
+            chat_id: Chat ID
+            title: New title
 
         Returns:
-            更新是否成功
+            Whether the update was successful
         """
         return self._chat_repo.update_chat_title(chat_id, title)
 
     def delete_chat(self, chat_id: int) -> bool:
         """
-        删除指定ID的聊天及其所有消息。
+        Delete the chat and all its messages for the specified ID.
 
         Args:
-            chat_id: 聊天ID
+            chat_id: Chat ID
 
         Returns:
-            删除是否成功
+            Whether the deletion was successful
         """
         return self._chat_repo.delete_chat(chat_id)
 
     def clear_all_chats(self) -> bool:
         """
-        清空所有聊天记录。
+        Clear all chat records.
 
         Returns:
-            操作是否成功
+            Whether the operation was successful
         """
         return self._chat_repo.clear_all_chats()
 
@@ -105,46 +112,46 @@ class ChatService:
         self, chat_id: int, sender: str, content: str
     ) -> Optional[Dict[str, Any]]:
         """
-        添加一条消息到指定聊天。
+        Add a message to the specified chat.
 
         Args:
-            chat_id: 聊天ID
-            sender: 发送者，如 "You" 或 "Assistant"
-            content: 消息内容
+            chat_id: Chat ID
+            sender: Sender, such as "You" or "Assistant"
+            content: Message content
 
         Returns:
-            新添加的消息信息，如果添加失败则返回None
+            The information of the newly added message, or None if adding fails
         """
         message_id = self._message_repo.add_message(chat_id, sender, content)
         if message_id is None:
             return None
 
-        # 更新聊天的时间戳
+        # Update the chat's timestamp
         self._chat_repo.update_chat_timestamp(chat_id)
 
         return self._message_repo.get_message(message_id)
 
     def get_messages(self, chat_id: int) -> List[Dict[str, Any]]:
         """
-        获取指定聊天的所有消息。
+        Get all messages for the specified chat.
 
         Args:
-            chat_id: 聊天ID
+            chat_id: Chat ID
 
         Returns:
-            消息列表
+            List of messages
         """
         return self._message_repo.get_messages(chat_id)
 
     def delete_message(self, message_id: int) -> bool:
         """
-        删除指定ID的消息。
+        Delete the message for the specified ID.
 
         Args:
-            message_id: 消息ID
+            message_id: Message ID
 
         Returns:
-            删除是否成功
+            Whether the deletion was successful
         """
         return self._message_repo.delete_message(message_id)
 
@@ -152,57 +159,49 @@ class ChatService:
 
     def get_all_chats(self, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
         """
-        获取所有聊天会话，并按更新时间排序。
+        Get all chat sessions, sorted by update time.
 
         Args:
-            limit: 返回数量限制
-            offset: 分页偏移量
+            limit: Limit on the number of returned results
+            offset: Pagination offset
 
         Returns:
-            聊天列表
+            List of chats
         """
         chats = self._chat_repo.get_all_chats(limit, offset)
-
-        # 为每个聊天添加最后一条消息的预览
-        for chat in chats:
-            last_messages = self._message_repo.get_chat_last_messages(chat["id"], 1)
-            if last_messages:
-                chat["last_message"] = last_messages[0]
-            else:
-                chat["last_message"] = None
 
         return chats
 
     def get_grouped_chats(self) -> Dict[str, List[Dict[str, Any]]]:
         """
-        获取分组后的聊天会话，按 Today、Yesterday、Others 分组。
+        Get grouped chat sessions, grouped by Today, Yesterday, Others.
 
         Returns:
-            按日期分组的聊天字典
+            A dictionary of chats grouped by date
         """
-        # 获取所有聊天
-        all_chats = self.get_all_chats(limit=100)  # 适当限制数量
+        # Get all chats
+        all_chats = self.get_all_chats(limit=100)  # Limit the number appropriately
 
-        # 计算日期界限
+        # Calculate date boundaries
         today = datetime.now().date()
         yesterday = today - timedelta(days=1)
 
-        # 初始化分组
+        # Initialize groups
         grouped_chats = {"Today": [], "Yesterday": [], "Others": []}
 
-        # 对聊天进行分组
+        # Group chats
         for chat in all_chats:
             try:
-                # 尝试解析聊天创建时间
+                # Try to parse the chat creation time
                 chat_date_str = chat.get("created_at") or chat.get("updated_at")
                 if not chat_date_str:
-                    # 如果没有时间信息，放入Others组
+                    # If there is no time information, put it in the Others group
                     grouped_chats["Others"].append(chat)
                     continue
 
                 chat_date = datetime.fromisoformat(chat_date_str).date()
 
-                # 根据日期分组
+                # Group by date
                 if chat_date == today:
                     grouped_chats["Today"].append(chat)
                 elif chat_date == yesterday:
@@ -210,7 +209,7 @@ class ChatService:
                 else:
                     grouped_chats["Others"].append(chat)
             except (ValueError, TypeError):
-                # 日期解析错误，放入Others组
+                # Date parsing error, put it in the Others group
                 grouped_chats["Others"].append(chat)
 
         return grouped_chats
@@ -218,133 +217,212 @@ class ChatService:
     # --- Question Answering ---
 
     async def answer_question(
-        self, question: str, chat_id: Optional[int] = None
+        self, question: str, chat_id: Optional[int] = None, stream_callback=None
     ) -> Dict[str, Any]:
         """
-        回答问题并将问答对存储到聊天记录中。
+        Answer the question and store the Q&A pair in the chat record.
 
         Args:
-            question: 用户问题
-            chat_id: 可选的聊天ID，如果提供则添加到现有聊天，否则创建新聊天
+            question: User question
+            chat_id: Optional chat ID, if provided, add to the existing chat, otherwise create a new chat
+            stream_callback: Optional callback function for handling streamed response text chunks
 
         Returns:
-            包含回答和聊天信息的字典
+            A dictionary containing the answer and chat information
         """
         if not question or not question.strip():
             return {
-                "answer": "请输入有效的问题。",
-                "error": "空问题",
+                "answer": "Please enter a valid question.",
+                "error": "Empty question",
             }
 
         try:
-            logger.info(f"通过LLM回答问题: '{question}'")
+            logger.info(f"Answering question via LLM: '{question}'")
 
-            # 获取API key
-            from src.services.setting_service import SettingService
-            from src.config import init_config
-            from src.db.repositories import ApiKeyRepository, SystemConfigRepository
-
-            config = init_config()
-            api_key_repo = ApiKeyRepository()
-            system_config_repo = SystemConfigRepository()
-            setting_service = SettingService(config, api_key_repo, system_config_repo)
-            volcengine_api_key = setting_service.get_api_key("volcengine")
-
-            if not volcengine_api_key:
+            # Check if LLM client pool is configured
+            if not self._llm_pool:
+                logger.error("LLM client pool is not configured")
                 return {
-                    "answer": "LLM API key未配置。请检查设置。",
-                    "error": "API key缺失",
+                    "answer": "LLM service is not properly configured. Please try again later.",
+                    "error": "LLM service unavailable",
                 }
 
-            # 创建LLMClient实例
-            from src.services.llm_client import LLMClient
-
-            # 准备提示词
+            # Prepare the prompt
             prompt = self._build_direct_qa_prompt(question)
 
-            # 使用上下文管理器创建并调用LLM
-            logger.debug("创建临时LLMClient并发送查询...")
-            async with LLMClient(
-                base_url="https://ark.cn-beijing.volces.com/api/v3",
-                api_key=volcengine_api_key,
-                async_mode=True,
-            ) as llm_client:
-                llm_response = await llm_client.get_completion_content(
-                    model=DEFAULT_QA_MODEL,
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": "You are a helpful assistant that answers questions clearly and concisely.",
-                        },
-                        {"role": "user", "content": prompt},
-                    ],
-                    max_tokens=1024,
-                    temperature=0.7,
+            # Prepare for storing chat records
+            result = {}
+
+            # If no chat ID is provided, create a new chat
+            if chat_id is None:
+                # Use the first 30 characters of the question as the chat title
+                title = question[:30] + ("..." if len(question) > 30 else "")
+                new_chat = self.create_chat(title)
+                if new_chat:
+                    chat_id = new_chat["id"]
+                    result["chat_id"] = chat_id
+                    result["is_new_chat"] = True
+                else:
+                    logger.error("Failed to create new chat")
+                    return {
+                        "answer": "Unable to create new chat record.",
+                        "error": "Unable to create new chat",
+                    }
+            else:
+                # Use existing chat
+                result["chat_id"] = chat_id
+                result["is_new_chat"] = False
+
+            # Save user question
+            user_message = self.add_message(chat_id, "You", question)
+            if not user_message:
+                logger.error(f"Failed to add user question to chat {chat_id}")
+
+            # Initialize system answer (to be filled in during streaming)
+            assistant_message_id = self._message_repo.add_message(
+                chat_id, "Assistant", ""
+            )
+            if not assistant_message_id:
+                logger.error(
+                    f"Failed to create assistant message placeholder, chat ID: {chat_id}"
+                )
+                return {
+                    "answer": "Unable to create reply record.",
+                    "error": "Database error",
+                }
+
+            # Record message ID for updates
+            result["message_id"] = assistant_message_id
+            full_answer = ""
+
+            try:
+                # Use shared LLM client pool
+                async with self._llm_pool.context() as llm_client:
+                    # Use streaming API to get response
+                    stream_generator = await llm_client.stream_completion_content(
+                        model=DEFAULT_QA_MODEL,
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": "You are a helpful assistant that answers questions clearly and concisely.",
+                            },
+                            {"role": "user", "content": prompt},
+                        ],
+                        max_tokens=1024,
+                        temperature=0.7,
+                    )
+
+                    if stream_generator:
+                        # Process streaming response
+                        async for text_chunk in stream_generator:
+                            # Accumulate full answer
+                            full_answer += text_chunk
+
+                            # Regularly update the answer in the database
+                            if (
+                                len(full_answer) % 50 == 0
+                            ):  # Update approximately every 50 characters
+                                self._message_repo.update_message_content(
+                                    assistant_message_id, full_answer
+                                )
+
+                            # If a callback function is provided, call it
+                            if stream_callback:
+                                callback_data = {
+                                    "text_chunk": text_chunk,
+                                    "full_text": full_answer,
+                                    "message_id": assistant_message_id,
+                                    "chat_id": chat_id,
+                                    "is_final": False,
+                                }
+                                stream_callback(callback_data)
+
+                if not stream_generator:
+                    # Streaming request failed
+                    error_msg = "Unable to establish LLM streaming connection"
+                    logger.error(f"LLM streaming query failed: {error_msg}")
+                    # Update message with error prompt
+                    self._message_repo.update_message_content(
+                        assistant_message_id,
+                        f"Sorry, an error occurred while answering the question: {error_msg}",
+                    )
+                    return {
+                        "answer": f"Sorry, an error occurred while answering the question: {error_msg}",
+                        "error": error_msg,
+                        "message_id": assistant_message_id,
+                        "chat_id": chat_id,
+                    }
+
+            except Exception as e:
+                logger.error(f"Error during LLM call: {e}", exc_info=True)
+                error_msg = f"LLM call failed: {str(e)}"
+                self._message_repo.update_message_content(
+                    assistant_message_id,
+                    f"Sorry, an error occurred while answering the question: {error_msg}",
+                )
+                return {
+                    "answer": f"Sorry, an error occurred while calling the LLM service: {error_msg}",
+                    "error": error_msg,
+                    "message_id": assistant_message_id,
+                    "chat_id": chat_id,
+                }
+
+            # After streaming is complete, ensure final update of database content
+            if full_answer:
+                logger.info(f"Received complete LLM answer: '{full_answer[:100]}...'")
+                self._message_repo.update_message_content(
+                    assistant_message_id, full_answer
                 )
 
-            # 处理响应
-            if llm_response and llm_response.strip():
-                answer = llm_response.strip()
-                logger.info(f"收到LLM回答: '{answer[:100]}...'")
+                # Final callback indicating stream is complete
+                if stream_callback:
+                    callback_data = {
+                        "text_chunk": "",
+                        "full_text": full_answer,
+                        "message_id": assistant_message_id,
+                        "chat_id": chat_id,
+                        "is_final": True,
+                    }
+                    stream_callback(callback_data)
 
-                # 处理存储聊天记录
-                result = {"answer": answer}
-
-                # 如果没有提供聊天ID，创建一个新聊天
-                if chat_id is None:
-                    # 使用问题的前30个字符作为聊天标题
-                    title = question[:30] + ("..." if len(question) > 30 else "")
-                    new_chat = self.create_chat(title)
-                    if new_chat:
-                        chat_id = new_chat["id"]
-                        result["chat_id"] = chat_id
-                        result["is_new_chat"] = True
-                    else:
-                        logger.error("创建新聊天失败")
-                        return {
-                            "answer": answer,
-                            "error": "无法创建新聊天",
-                        }
-                else:
-                    # 使用现有聊天
-                    result["chat_id"] = chat_id
-                    result["is_new_chat"] = False
-
-                # 保存用户问题
-                user_message = self.add_message(chat_id, "You", question)
-                if not user_message:
-                    logger.error(f"将用户问题添加到聊天 {chat_id} 失败")
-
-                # 保存LLM回答
-                assistant_message = self.add_message(chat_id, "Assistant", answer)
-                if not assistant_message:
-                    logger.error(f"将助手回答添加到聊天 {chat_id} 失败")
-
-                # 如果提供了旧的QA存储库，也保存一份（向后兼容）
-                if self._qa_repo:
+                # If an old QA repository is provided, also save a copy (for backward compatibility)
+                if hasattr(self, "_qa_repo") and self._qa_repo:
                     try:
-                        self._qa_repo.add_qa(question, answer, "[]")
+                        self._qa_repo.add_qa(question, full_answer, "[]")
                     except Exception as db_err:
                         logger.error(
-                            f"保存Q&A到旧历史记录失败: {db_err}", exc_info=True
+                            f"Failed to save Q&A to old history: {db_err}",
+                            exc_info=True,
                         )
 
+                result["answer"] = full_answer
                 return result
             else:
-                error_msg = "LLM返回空响应"
-                logger.error(f"LLM查询失败: {error_msg}")
+                error_msg = "LLM returned an empty response"
+                logger.error(f"LLM query failed: {error_msg}")
+                # Update message with error prompt
+                self._message_repo.update_message_content(
+                    assistant_message_id,
+                    f"Sorry, an error occurred while answering the question: {error_msg}",
+                )
                 return {
-                    "answer": f"抱歉，回答问题时出错: {error_msg}",
+                    "answer": f"Sorry, an error occurred while answering the question: {error_msg}",
                     "error": error_msg,
+                    "message_id": assistant_message_id,
+                    "chat_id": chat_id,
                 }
 
         except Exception as e:
-            logger.error(f"问答过程中出错: {e}", exc_info=True)
+            logger.error(f"Error during Q&A process: {e}", exc_info=True)
             return {
-                "answer": f"处理您的问题时发生意外错误。",
+                "answer": f"An unexpected error occurred while processing your question.",
                 "error": str(e),
+                "chat_id": chat_id if "chat_id" in locals() else None,
+                "message_id": (
+                    assistant_message_id if "assistant_message_id" in locals() else None
+                ),
             }
 
     def _build_direct_qa_prompt(self, question: str) -> str:
-        """构建提示词以直接向LLM提问。"""
-        return f"请直接回答以下问题:\n\n问题: {question}\n\n回答: "
+        """Build a prompt to directly ask the LLM."""
+        return f"Please directly answer the following question:\n\nQuestion: {question}\n\nAnswer: "

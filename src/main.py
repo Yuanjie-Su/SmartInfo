@@ -6,12 +6,15 @@ SmartInfo - Intelligent News Analysis and Knowledge Management Tool
 Main Program Entry Point (Refactored Structure)
 """
 
+import atexit
 import sys
 import os
 import logging
 import argparse
-from typing import Any, Dict
+import asyncio
+from typing import Any, Dict, Optional
 from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QObject, Signal, QThread, QCoreApplication
 
 # --- Project Setup ---
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -32,9 +35,14 @@ from src.db.repositories import (
     MessageRepository,
 )
 from src.services.llm_client import LLMClient
+from src.services.llm_client_pool import LLMClientPool
 from src.services.setting_service import SettingService
 from src.services.news_service import NewsService
 from src.services.chat_service import ChatService
+
+
+# --- Global reference to the pool for cleanup ---
+_llm_pool_instance: Optional[LLMClientPool] = None
 
 # --- Configure Logging ---
 log_file_path = "smartinfo.log"
@@ -83,6 +91,7 @@ def setup_logging(level_name: str):
 
 def initialize_services(config: AppConfig) -> Dict[str, Any]:
     """Initialize all application services"""
+    global _llm_pool_instance  # Reference the global variable
     logger.info("Initializing services...")
     try:
         # Repositories
@@ -108,8 +117,19 @@ def initialize_services(config: AppConfig) -> Dict[str, Any]:
                 "Volcano Engine API key not configured. LLM-dependent features may fail."
             )
 
+        # Instantiate LLMClientPool (but don't initialize)
+        volcengine_base_url = "https://ark.cn-beijing.volces.com/api/v3"
+        _llm_pool_instance = LLMClientPool(  # Assign to global var
+            pool_size=5, base_url=volcengine_base_url, api_key=volcengine_api_key
+        )
+        logger.info("LLMClientPool instance created (lazy initialization).")
+
+        # Initialize services without LLM pool first (will be updated when pool is ready)
         news_service = NewsService(news_repo, source_repo, category_repo)
+        news_service.set_llm_pool(_llm_pool_instance)
+
         chat_service = ChatService(chat_repo, message_repo)
+        chat_service.set_llm_pool(_llm_pool_instance)
 
         logger.info("Services initialized successfully.")
         return {
@@ -120,6 +140,28 @@ def initialize_services(config: AppConfig) -> Dict[str, Any]:
     except Exception as e:
         logger.critical(f"Failed to initialize services: {e}", exc_info=True)
         sys.exit(f"Service Initialization Error: {e}")
+
+
+def close_llm_pool_sync():
+    """Synchronous wrapper to close the LLM pool."""
+    global _llm_pool_instance
+    if _llm_pool_instance and _llm_pool_instance._initialized:  # Check if initialized
+        logger.info("Attempting synchronous close of LLM pool...")
+        try:
+            # Create a temporary event loop to run the async close method
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(_llm_pool_instance.close())
+            loop.close()
+            logger.info("LLM Pool closed via synchronous wrapper.")
+        except Exception as e:
+            logger.error(f"Error closing LLM pool synchronously: {e}", exc_info=True)
+        finally:
+            asyncio.set_event_loop(None)  # Clean up loop association
+    elif _llm_pool_instance:
+        logger.info("LLM Pool exists but was never initialized, no cleanup needed.")
+    else:
+        logger.info("No LLM Pool instance found for cleanup.")
 
 
 def run_gui(app: QApplication, services: Dict[str, Any]):
@@ -153,6 +195,10 @@ def main():
     args = parse_args()
     setup_logging(args.log_level)
 
+    # Track services for proper cleanup
+    services = None
+    app = None
+
     try:
         # 1. Initialize Configuration
         config = init_config()
@@ -164,7 +210,12 @@ def main():
         # This also ensures DB paths based on config are correct and tables exist
         init_db_connection()
 
-        # 4. Initialize Services
+        # 4. Register cleanup function using atexit
+        # This is generally more reliable than aboutToQuit for non-Qt resources
+        atexit.register(close_llm_pool_sync)
+        logger.info("Registered LLM pool cleanup with atexit.")
+
+        # 5. Initialize Services
         services = initialize_services(config)
 
         # --- Handle Command Line Arguments ---
@@ -176,7 +227,6 @@ def main():
             if confirm == "YES":
                 logger.info("Resetting all database tables...")
                 # Clear SQLite tables via repos
-                QARepository().clear_history()
                 ApiKeyRepository().delete_all()
                 SystemConfigRepository().delete_all()
                 NewsRepository().clear_all()
@@ -197,7 +247,7 @@ def main():
             )
             if confirm == "YES":
                 NewsSourceRepository().delete_all()
-                logger.info("All news sources reseted.")
+                logger.info("All news sources reset.")
             else:
                 logger.info("Reset news sources aborted.")
 
@@ -220,6 +270,7 @@ def main():
             f"An unhandled error occurred during application startup: {e}",
             exc_info=True,
         )
+        # Clean up if we have services initialized
         sys.exit(f"Fatal Error: {e}")
     finally:
         logger.info("-------------------- Application Terminating --------------------")

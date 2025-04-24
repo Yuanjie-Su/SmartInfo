@@ -14,24 +14,16 @@ logger = logging.getLogger(__name__)
 class MessageRepository(BaseRepository):
     """Repository for messages table operations."""
 
-    def add_message(
-        self, chat_id: int, sender: str, content: str
-    ) -> Optional[int]:
+    def add_message(self, chat_id: int, sender: str, content: str) -> Optional[int]:
         """添加一条新消息到特定聊天会话。"""
         # 获取当前聊天中的最大序列号
         max_seq = self._get_max_sequence_number(chat_id)
-        sequence_number = max_seq + 1 if max_seq is not None else 1
-        
+        sequence_number = max_seq + 1
+
         now_str = datetime.now().isoformat()
         sql = f"""INSERT INTO {MESSAGES_TABLE} (chat_id, sender, content, timestamp, sequence_number)
                 VALUES (?, ?, ?, ?, ?)"""
-        params = (
-            chat_id,
-            sender,
-            content,
-            now_str,
-            sequence_number
-        )
+        params = (chat_id, sender, content, now_str, sequence_number)
 
         query = self._execute(sql, params, commit=True)
 
@@ -51,15 +43,26 @@ class MessageRepository(BaseRepository):
             logger.error(f"Failed to execute add message to chat {chat_id}.")
             return None
 
-    def _get_max_sequence_number(self, chat_id: int) -> Optional[int]:
+    def _get_max_sequence_number(self, chat_id: int) -> int:
         """获取特定聊天中的最大序列号。"""
         sql = f"""SELECT MAX(sequence_number) FROM {MESSAGES_TABLE}
                 WHERE chat_id = ?"""
         row = self._fetchone(sql, (chat_id,))
-        
+
         if row and row[0] is not None:
-            return int(row[0])
-        return 0  # 如果没有消息，返回0
+            try:
+                # 尝试将结果转换为整数
+                return int(row[0])
+            except (ValueError, TypeError):
+                # 如果转换失败（虽然理论上 MAX 应该返回数字或 None），记录错误并返回 0
+                logger.error(
+                    f"Failed to convert max sequence number '{row[0]}' to int for chat_id {chat_id}. Returning 0."
+                )
+                return 0
+        else:
+            # 如果没有找到记录 (row is None) 或者 MAX 结果是 NULL (row[0] is None)，
+            # 表示这是该聊天的第一条消息，最大序号视为 0
+            return 0
 
     def get_messages(self, chat_id: int) -> List[Dict[str, Any]]:
         """获取特定聊天会话的所有消息，按序列号排序。"""
@@ -68,17 +71,19 @@ class MessageRepository(BaseRepository):
                 WHERE chat_id = ?
                 ORDER BY sequence_number ASC"""
         rows = self._fetchall(sql, (chat_id,))
-        
+
         messages = []
         for row in rows:
-            messages.append({
-                "id": row[0],
-                "chat_id": row[1],
-                "sender": row[2],
-                "content": row[3],
-                "timestamp": row[4],
-                "sequence_number": row[5]
-            })
+            messages.append(
+                {
+                    "id": row[0],
+                    "chat_id": row[1],
+                    "sender": row[2],
+                    "content": row[3],
+                    "timestamp": row[4],
+                    "sequence_number": row[5],
+                }
+            )
         return messages
 
     def get_message(self, message_id: int) -> Optional[Dict[str, Any]]:
@@ -87,7 +92,7 @@ class MessageRepository(BaseRepository):
                 FROM {MESSAGES_TABLE}
                 WHERE id = ?"""
         row = self._fetchone(sql, (message_id,))
-        
+
         if row:
             return {
                 "id": row[0],
@@ -95,7 +100,7 @@ class MessageRepository(BaseRepository):
                 "sender": row[2],
                 "content": row[3],
                 "timestamp": row[4],
-                "sequence_number": row[5]
+                "sequence_number": row[5],
             }
         return None
 
@@ -103,7 +108,7 @@ class MessageRepository(BaseRepository):
         """删除指定ID的消息。"""
         sql = f"DELETE FROM {MESSAGES_TABLE} WHERE id = ?"
         query = self._execute(sql, (message_id,), commit=True)
-        
+
         if query:
             rows_affected = self._get_rows_affected(query)
             deleted = rows_affected > 0
@@ -118,7 +123,7 @@ class MessageRepository(BaseRepository):
         """删除特定聊天会话的所有消息。"""
         sql = f"DELETE FROM {MESSAGES_TABLE} WHERE chat_id = ?"
         query = self._execute(sql, (chat_id,), commit=True)
-        
+
         if query:
             rows_affected = self._get_rows_affected(query)
             deleted = rows_affected > 0
@@ -129,23 +134,25 @@ class MessageRepository(BaseRepository):
             return True  # 即使没有删除任何行，也认为操作成功
         return False
 
-    def get_chat_last_messages(self, chat_id: int, limit: int = 1) -> List[Dict[str, Any]]:
-        """获取特定聊天会话的最后几条消息，用于预览。"""
-        sql = f"""SELECT id, chat_id, sender, content, timestamp, sequence_number
-                FROM {MESSAGES_TABLE}
-                WHERE chat_id = ?
-                ORDER BY sequence_number DESC
-                LIMIT ?"""
-        rows = self._fetchall(sql, (chat_id, limit))
-        
-        messages = []
-        for row in rows:
-            messages.append({
-                "id": row[0],
-                "chat_id": row[1],
-                "sender": row[2],
-                "content": row[3],
-                "timestamp": row[4],
-                "sequence_number": row[5]
-            })
-        return messages 
+    def update_message_content(self, message_id: int, content: str) -> bool:
+        """更新指定消息ID的内容。
+
+        Args:
+            message_id: 消息ID
+            content: 新的消息内容
+
+        Returns:
+            更新是否成功
+        """
+        sql = f"UPDATE {MESSAGES_TABLE} SET content = ? WHERE id = ?"
+        query = self._execute(sql, (content, message_id), commit=True)
+
+        if query:
+            rows_affected = self._get_rows_affected(query)
+            updated = rows_affected > 0
+            if updated:
+                logger.debug(f"Updated content for message ID {message_id}")
+            else:
+                logger.warning(f"No message found with ID {message_id} to update")
+            return updated
+        return False

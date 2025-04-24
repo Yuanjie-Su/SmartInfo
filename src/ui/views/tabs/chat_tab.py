@@ -8,6 +8,7 @@ Implements intelligent question-answering chat functionality based on new databa
 
 import logging
 import asyncio
+import time
 from typing import List, Dict, Optional, Any
 
 from PySide6.QtWidgets import (
@@ -46,10 +47,15 @@ class ChatTab(QWidget):
         self.controller = controller
         # Connect controller signals
         self.controller.answer_received.connect(self._on_answer_received)
+        self.controller.streaming_chunk_received.connect(self._on_streaming_chunk)
         self.controller.error_occurred.connect(self._on_chat_error)
 
         # Track the current active chat ID
         self.current_chat_id = None
+
+        # Track for streaming messages
+        self.current_message_id = None
+        self.current_streaming_content = ""
 
         self._setup_ui()
 
@@ -87,6 +93,38 @@ class ChatTab(QWidget):
         font = self.chat_display.font()
         font.setPointSize(font.pointSize() + 1)
         self.chat_display.setFont(font)
+
+        # Add CSS for typing animation
+        self.chat_display.document().setDefaultStyleSheet(
+            """
+            .typing-indicator {
+                display: inline-block;
+                text-align: center;
+            }
+            .typing-indicator .dot {
+                display: inline-block;
+                width: 8px;
+                height: 8px;
+                border-radius: 50%;
+                margin: 0 3px;
+                background-color: #07c160;
+                opacity: 0.6;
+                animation: typing 1.4s infinite both;
+            }
+            .typing-indicator .dot:nth-child(2) {
+                animation-delay: 0.2s;
+            }
+            .typing-indicator .dot:nth-child(3) {
+                animation-delay: 0.4s;
+            }
+            @keyframes typing {
+                0% { opacity: 0.6; transform: scale(1); }
+                50% { opacity: 1; transform: scale(1.2); }
+                100% { opacity: 0.6; transform: scale(1); }
+            }
+        """
+        )
+
         chat_container_layout.addWidget(self.chat_display, 1)
 
         chat_scroll.setWidget(chat_container)
@@ -162,6 +200,8 @@ class ChatTab(QWidget):
 
         # Reset current chat ID
         self.current_chat_id = None
+        self.current_message_id = None
+        self.current_streaming_content = ""
 
     def load_chat(self, chat_id: int):
         """Load chat session with specified ID"""
@@ -170,6 +210,8 @@ class ChatTab(QWidget):
         try:
             # Save current chat ID
             self.current_chat_id = chat_id
+            self.current_message_id = None
+            self.current_streaming_content = ""
 
             # Get chat history from controller
             chat = self.controller.get_chat(chat_id)
@@ -219,6 +261,44 @@ class ChatTab(QWidget):
         self.question_input.clear()
 
         try:
+            # Create placeholder for assistant response with typing indicator
+            assistant_msg_id = f"assistant-msg-{int(time.time() * 1000)}"
+
+            # Add a placeholder div with typing indicator for the system response
+            typing_html = f"""
+            <div style='clear:both;'></div>
+            <div style='position: relative; padding-left: 55px;' id='{assistant_msg_id}-container'>
+                <div style='position: absolute; left: 15px; width: 40px; height: 40px; 
+                    background-color: #e7f7ed; border-radius: 50%; text-align: center; 
+                    line-height: 40px; color: #07c160; font-size: 20px;'>🤖</div>
+                <div style='background: #f5f7fa; color: #2a3142; border-radius: 18px 18px 18px 4px; 
+                    padding: 12px 18px; max-width: 70%; margin: 8px auto 15px 70px; float: left; 
+                    text-align: left; box-shadow: 0 1px 2px rgba(0,0,0,0.1); line-height: 1.4;' 
+                    id='{assistant_msg_id}'>
+                    <div style='font-weight: bold; color: #07c160; margin-bottom: 5px; font-size: 14px;'>
+                        🤖 System
+                    </div>
+                    <span class='typing-indicator'>
+                        <span class='dot'></span>
+                        <span class='dot'></span>
+                        <span class='dot'></span>
+                    </span>
+                </div>
+            </div>
+            <div style='clear:both;'></div>
+            """
+
+            # Insert typing indicator
+            cursor = self.chat_display.textCursor()
+            cursor.movePosition(cursor.MoveOperation.End)
+            self.chat_display.setTextCursor(cursor)
+            self.chat_display.insertHtml(typing_html)
+            self.chat_display.ensureCursorVisible()
+
+            # Store message ID for streaming updates
+            self.current_streaming_message_id = assistant_msg_id
+            self.current_streaming_content = ""
+
             # Use AsyncTaskRunner to avoid UI freezing
             self.controller.ask_question(question, self.current_chat_id)
 
@@ -232,35 +312,101 @@ class ChatTab(QWidget):
             self.send_button.setEnabled(True)
             self.send_button.setText("Send")
 
+    @Slot(dict)
+    def _on_streaming_chunk(self, chunk_data: Dict[str, Any]):
+        """Handle streaming chunks as they arrive from the LLM"""
+        try:
+            # Get the message ID and chat ID
+            message_id = chunk_data.get("message_id")
+            chat_id = chunk_data.get("chat_id")
+            text_chunk = chunk_data.get("text_chunk", "")
+            full_text = chunk_data.get("full_text", "")
+            is_final = chunk_data.get("is_final", False)
+
+            # Skip if not for the current chat
+            if self.current_chat_id is not None and chat_id != self.current_chat_id:
+                logger.debug(f"Ignoring chunk for different chat: {chat_id}")
+                return
+
+            # Update the current_streaming_content
+            self.current_streaming_content = full_text
+
+            # Find the message element by ID
+            msg_id = self.current_streaming_message_id
+            if msg_id:
+                html = self.chat_display.toHtml()
+
+                # Replace typing indicator with actual content if first chunk
+                if "<span class='typing-indicator'" in html:
+                    html = html.replace(
+                        "<span class='typing-indicator'><span class='dot'></span><span class='dot'></span><span class='dot'></span></span>",
+                        "",
+                    )
+
+                # Now update the message content
+                start_idx = html.find(f"id='{msg_id}'")
+                if start_idx > 0:
+                    div_start = html.find(">", start_idx) + 1
+                    div_end = html.find("</div>", div_start)
+
+                    # Escape the content properly
+                    escaped_content = (
+                        full_text.replace("&", "&amp;")
+                        .replace("<", "&lt;")
+                        .replace(">", "&gt;")
+                        .replace("\n", "<br />")
+                    )
+
+                    # Replace the content
+                    new_html = html[:div_start] + escaped_content + html[div_end:]
+                    self.chat_display.setHtml(new_html)
+
+                # Ensure cursor is visible to auto-scroll
+                self.chat_display.ensureCursorVisible()
+
+                # If final chunk, reset streaming state
+                if is_final:
+                    self.current_streaming_message_id = None
+                    self.current_streaming_content = ""
+
+        except Exception as e:
+            logger.error(f"Error handling streaming chunk: {e}", exc_info=True)
+
     @Slot(object)
     def _on_answer_received(self, result: Dict[str, Any]):
         """Handle results received from chat service."""
         self.send_button.setEnabled(True)
         self.question_input.setEnabled(True)
         self.question_input.setFocus()  # Set focus back to input box
+        self.send_button.setText("Send")
 
         # Update current chat ID (if it's a newly created chat)
         if result.get("is_new_chat", False) and "chat_id" in result:
             self.current_chat_id = result["chat_id"]
 
-        # Remove "Thinking..." message
-        html = self.chat_display.toHtml()
-        html = html.replace(
-            '<p style="-qt-paragraph-type:empty"><br /></p>', ""
-        )  # Remove sometimes added empty paragraph
-        thinking_msg = "<i style='color: #07c160;'>🤖 System is thinking...</i>"
-        # Find last occurrence and cleanly remove it
-        last_occurrence = html.rfind(thinking_msg)
-        if last_occurrence != -1:
-            # Check if it is at the end or followed by a closing tag
-            end_part = html[last_occurrence + len(thinking_msg) :].strip()
-            if end_part.lower() in ["</p>", "</body></html>", ""]:
-                html = html[:last_occurrence]
-            else:  # Alternative: simple replace (may leave empty tags)
-                html = html.replace(thinking_msg, "")
+        # For streaming responses, the content is already in the display
+        # Just need to ensure it's complete and handle any necessary cleanup
+        if (
+            hasattr(self, "current_streaming_message_id")
+            and self.current_streaming_message_id
+        ):
+            # End of streaming, nothing more to do here
+            self.current_streaming_message_id = None
+            self.current_streaming_content = ""
 
-        self.chat_display.setHtml(html)  # Update HTML, remove thinking message
+            # Add reference sources (if any)
+            if self.controller.answer_sources:
+                sources_html = "<div style='margin: 10px 0 0 70px; font-size: 13px; color: #6c757d;'><b>Reference Sources (Similarity):</b><ul style='margin-top: 5px;'>"
+                for src in self.controller.answer_sources:
+                    title = src.get("title", "Unknown Title")
+                    sim = src.get("similarity", 0)
+                    sources_html += f"<li>{title} ({sim}%)</li>"
+                sources_html += "</ul></div>"
+                self.chat_display.append(sources_html)
 
+            return
+
+        # If this was not a streaming response (fallback), handle the old way
         if result and result.get("error"):
             logger.error(f"Chat service returned error: {result['error']}")
             self._add_message_to_chat(
@@ -297,19 +443,20 @@ class ChatTab(QWidget):
         self.send_button.setEnabled(True)
         self.question_input.setEnabled(True)
         self.question_input.setFocus()
+        self.send_button.setText("Send")
 
-        # Remove "Thinking..." message (same logic as in _on_answer_received)
+        # Clear any streaming state
+        self.current_streaming_message_id = None
+        self.current_streaming_content = ""
+
+        # If we have a typing indicator, remove it
         html = self.chat_display.toHtml()
-        html = html.replace('<p style="-qt-paragraph-type:empty"><br /></p>', "")
-        thinking_msg = "<i style='color: #07c160;'>🤖 System is thinking...</i>"
-        last_occurrence = html.rfind(thinking_msg)
-        if last_occurrence != -1:
-            end_part = html[last_occurrence + len(thinking_msg) :].strip()
-            if end_part.lower() in ["</p>", "</body></html>", ""]:
-                html = html[:last_occurrence]
-            else:
-                html = html.replace(thinking_msg, "")
-        self.chat_display.setHtml(html)
+        if "typing-indicator" in html:
+            html = html.replace(
+                "<span class='typing-indicator'><span class='dot'></span><span class='dot'></span><span class='dot'></span></span>",
+                "<span style='color: #d32f2f;'>Error: processing failed</span>",
+            )
+            self.chat_display.setHtml(html)
 
         logger.error(f"Chat task execution failed: {error}", exc_info=error)
         self._add_message_to_chat(
@@ -319,7 +466,7 @@ class ChatTab(QWidget):
         self.chat_display.ensureCursorVisible()
 
     def _add_message_to_chat(self, sender: str, message: str, error: bool = False):
-        """Add message to chat display area (modern bubble style)"""
+        """Add message to chat display area with modern styling"""
         # Basic HTML escape
         message = (
             message.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -329,57 +476,51 @@ class ChatTab(QWidget):
 
         # Modern chat bubble style
         if "You" in sender:
+            # User message - right-aligned bubble
             bubble_style = (
-                "background: #07c160; color: #fff; border-radius: 18px 18px 4px 18px; padding: 12px 18px; "
-                "max-width: 70%; margin: 8px 0 15px auto; float: right; text-align: left; "
-                "box-shadow: 0 1px 2px rgba(0,0,0,0.1); line-height: 1.4;"
+                "background: #f0f0f0; color: #000; border-radius: 18px 18px 0 18px; "
+                "padding: 12px 18px; max-width: 80%; margin: 8px 8px 15px auto; "
+                "float: right; text-align: left; box-shadow: 0 1px 2px rgba(0,0,0,0.1); "
+                "line-height: 1.4; font-size: 15px;"
             )
-            sender_style = (
-                "font-weight: bold; color: #fff; margin-bottom: 5px; font-size: 14px;"
-            )
+            # No sender label for user messages
             message_html = f"""
             <div style='clear:both;'></div>
-            <div style='{bubble_style}'>
-                <div style='{sender_style}'>{sender}</div>{message}
-            </div>
+            <div style='{bubble_style}'>{message}</div>
             <div style='clear:both;'></div>
             """
         elif error or "System Error" in sender:
+            # Error message styling
             bubble_style = (
-                "background: #ffebee; color: #d32f2f; border-radius: 18px 18px 18px 4px; padding: 12px 18px; "
-                "max-width: 70%; margin: 8px auto 15px 0; float: left; text-align: left; "
-                "box-shadow: 0 1px 2px rgba(0,0,0,0.1); line-height: 1.4;"
+                "background: #ffebee; color: #d32f2f; border-radius: 18px 18px 18px 0; "
+                "padding: 12px 18px; max-width: 80%; margin: 8px auto 15px 8px; "
+                "float: left; text-align: left; box-shadow: 0 1px 2px rgba(0,0,0,0.1); "
+                "line-height: 1.4; font-size: 15px;"
             )
-            sender_style = "font-weight: bold; color: #d32f2f; margin-bottom: 5px; font-size: 14px;"
+            sender_style = "font-weight: bold; color: #d32f2f; margin-bottom: 5px;"
             message_html = f"""
             <div style='clear:both;'></div>
             <div style='{bubble_style}'>
-                <div style='{sender_style}'>{sender}</div>{message}
+                <div style='{sender_style}'>Error</div>{message}
             </div>
             <div style='clear:both;'></div>
             """
-        else:  # System/AI
+        else:  # System/AI message
+            # Generate a message ID for potential updates
+            msg_id = f"msg-{int(time.time() * 1000)}"
+
+            # AI message - left-aligned bubble
             bubble_style = (
-                "background: #f5f7fa; color: #2a3142; border-radius: 18px 18px 18px 4px; padding: 12px 18px; "
-                "max-width: 70%; margin: 8px auto 15px 70px; float: left; text-align: left; "
-                "box-shadow: 0 1px 2px rgba(0,0,0,0.1); line-height: 1.4;"
-            )
-            sender_style = "font-weight: bold; color: #07c160; margin-bottom: 5px; font-size: 14px;"
-            # Add system avatar
-            avatar_html = (
-                "<div style='position: absolute; left: 15px; width: 40px; height: 40px; "
-                + "background-color: #e7f7ed; border-radius: 50%; text-align: center; "
-                + "line-height: 40px; color: #07c160; font-size: 20px;'>🤖</div>"
+                "background: #ffffff; color: #000000; border-radius: 18px 18px 18px 0; "
+                "padding: 12px 18px; max-width: 80%; margin: 8px auto 15px 8px; "
+                "float: left; text-align: left; box-shadow: 0 1px 1px rgba(0,0,0,0.1); "
+                "line-height: 1.5; font-size: 15px;"
             )
 
+            # No avatar, simple clean design
             message_html = f"""
             <div style='clear:both;'></div>
-            <div style='position: relative; padding-left: 55px;'>
-                {avatar_html}
-                <div style='{bubble_style}'>
-                    <div style='{sender_style}'>{sender}</div>{message}
-                </div>
-            </div>
+            <div id='{msg_id}' style='{bubble_style}'>{message}</div>
             <div style='clear:both;'></div>
             """
 

@@ -186,17 +186,17 @@ class NewsTab(QWidget):
 
         # Check if fetching is already in progress
         is_already_fetching = self.controller._is_fetching
-        
+
         if is_already_fetching:
             # If already fetching, filter out sources that are already being processed
             new_sources = self.controller.filter_new_sources(selected_sources)
-            
+
             if not new_sources:
                 QMessageBox.information(
                     self, "Notice", "All selected sources are already being processed."
                 )
                 return
-                
+
             # Ensure progress dialog is visible and add new sources
             if self.fetch_progress_dialog is None:
                 self.fetch_progress_dialog = FetchProgressDialog(new_sources, self)
@@ -210,15 +210,15 @@ class NewsTab(QWidget):
             else:
                 # Update dialog with new sources
                 self.fetch_progress_dialog.add_sources_to_table(new_sources)
-                
+
             self.fetch_progress_dialog.setWindowTitle("News Fetch Progress")
             self.fetch_progress_dialog.show()
             self.fetch_progress_dialog.raise_()
-            
+
             # Add new sources to existing fetch process
             self.controller.add_sources_to_fetch(new_sources)
             return
-            
+
         # Creating new fetch process
         if self.fetch_progress_dialog is None:
             self.fetch_progress_dialog = FetchProgressDialog(selected_sources, self)
@@ -262,10 +262,10 @@ class NewsTab(QWidget):
     def _handle_category_change(self):
         """Handles category selection change and updates the corresponding data source filter list."""
         category_id = self.category_filter.currentData()
-        
+
         # Get all news sources corresponding to the currently selected category
         source_names = self.controller.get_source_names_by_category(category_id)
-        
+
         # Update the news source dropdown
         self.source_filter.blockSignals(True)
         self.source_filter.clear()
@@ -274,7 +274,7 @@ class NewsTab(QWidget):
             self.source_filter.addItem(name, name)
         self.source_filter.setCurrentIndex(0)  # Default select "All"
         self.source_filter.blockSignals(False)
-        
+
         # Apply filters to update the table
         self._trigger_filter_apply()
 
@@ -310,9 +310,7 @@ class NewsTab(QWidget):
             if summary:
                 preview_html += f"<p><strong>Summary: </strong>{summary.replace(chr(10), '<br>')}</p>"  # Use chr(10) for newline
             if analysis:
-                preview_html += (
-                    f"<p><strong>Analysis:</strong>{analysis.replace(chr(10), '<br>')}</p>"
-                )
+                preview_html += f"<p><strong>Analysis:</strong>{analysis.replace(chr(10), '<br>')}</p>"
 
             self.preview_text.setHtml(preview_html)
         else:
@@ -420,13 +418,13 @@ class NewsTab(QWidget):
     def _handle_fetch_finished(self, final_message: str):
         """Handles the end of the fetch process."""
         logger.info(f"NewsTab received fetch finished signal: {final_message}")
-        
+
         # Update the progress dialog if it exists
         if self.fetch_progress_dialog:
             self.fetch_progress_dialog.set_final_status(final_message)
 
         # Trigger a refresh of news list implicitly by controller
-        self.controller.refresh_news() # Controller should do this
+        self.controller.refresh_news()  # Controller should do this
 
     @Slot(str, str)
     def _show_error_message(self, title: str, message: str):
@@ -487,18 +485,24 @@ class NewsTab(QWidget):
         Handles the click event of the right-click menu "View Analysis".
         Opens a new dialog to show details and triggers LLM analysis if needed.
         """
-        if not self.controller.proxy_model or not self.controller.news_model or not proxy_index.isValid():
+        if (
+            not self.controller.proxy_model
+            or not self.controller.news_model
+            or not proxy_index.isValid()
+        ):
             logger.warning("Unable to display analysis: Model or index is invalid.")
-            self._show_error_message("Error", "Unable to retrieve data for the selected item.")
+            self._show_error_message(
+                "Error", "Unable to retrieve data for the selected item."
+            )
             return
 
         # --- Get the required data from the model ---
         news_details = self.controller.get_news_details(proxy_index)
-        
+
         if not news_details:
             self._show_error_message("Error", "Unable to retrieve news details.")
             return
-            
+
         news_id = news_details.get("id")
         title = news_details.get("title", "")
         url = news_details.get("url", "")
@@ -511,24 +515,29 @@ class NewsTab(QWidget):
         # --- Create and display AnalysisDetailDialog ---
         try:
             # Check if there is already an instance of this dialog (hope to open only one window for each analysis)
-            dialog_key = f"analysis_{news_id}" # Use news_id as a unique identifier
-            if dialog_key in self.llm_stream_dialogs and self.llm_stream_dialogs[dialog_key].isVisible():
-                 existing_dialog = self.llm_stream_dialogs[dialog_key]
-                 existing_dialog.raise_()
-                 existing_dialog.activateWindow()
-                 logger.debug(f"Analysis dialog for ID {news_id} already open.")
-                 return # Do not open again
-
+            dialog_key = f"analysis_{news_id}"  # Use news_id as a unique identifier
+            if (
+                dialog_key in self.llm_stream_dialogs
+                and self.llm_stream_dialogs[dialog_key].isVisible()
+            ):
+                existing_dialog = self.llm_stream_dialogs[dialog_key]
+                existing_dialog.raise_()
+                existing_dialog.activateWindow()
+                logger.debug(f"Analysis dialog for ID {news_id} already open.")
+                return  # Do not open again
 
             logger.info(f"Opening analysis detail dialog for news ID {news_id}.")
             self.analysis_dialog = AnalysisDetailDialog(
                 news_id=news_id,
-                controller=self.controller, # Pass the controller to the dialog for signal connection
-                parent=self # Set parent window
+                controller=self.controller,  # Pass the controller to the dialog for signal connection
+                parent=self,  # Set parent window
             )
-            self.llm_stream_dialogs[dialog_key] = self.analysis_dialog # Track opened dialog
-            self.analysis_dialog.finished.connect(lambda result, key=dialog_key: self._analysis_dialog_closed(key))
-
+            self.llm_stream_dialogs[dialog_key] = (
+                self.analysis_dialog
+            )  # Track opened dialog
+            self.analysis_dialog.finished.connect(
+                lambda result, key=dialog_key: self._analysis_dialog_closed(key)
+            )
 
             self.analysis_dialog.set_details(title, url, date, summary, source_name)
 
@@ -551,13 +560,15 @@ class NewsTab(QWidget):
             logger.error(f"Error showing analysis detail dialog: {e}", exc_info=True)
             QMessageBox.critical(self, "Error", "Failed to show analysis details.")
             if self.analysis_dialog:
-                self.analysis_dialog.set_analysis_content("An error occurred, failed to load analysis results.")
+                self.analysis_dialog.set_analysis_content(
+                    "An error occurred, failed to load analysis results."
+                )
                 # If dialog exists but couldn't be shown, ensure it's closed properly
                 dialog_key = f"analysis_{news_id}"
                 self._analysis_dialog_closed(dialog_key)
 
     # --- New: Dialog close handling ---
-    @Slot(str) # Parameter is the previously set dialog_key
+    @Slot(str)  # Parameter is the previously set dialog_key
     def _analysis_dialog_closed(self, dialog_key: str):
         """When the analysis detail dialog is closed, remove it from the tracking dictionary."""
         if dialog_key in self.llm_stream_dialogs:

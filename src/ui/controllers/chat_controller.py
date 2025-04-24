@@ -12,6 +12,7 @@ class ChatController(QObject):
 
     history_loaded = Signal(list)
     answer_received = Signal(dict)
+    streaming_chunk_received = Signal(dict)  # New signal for streaming chunks
     error_occurred = Signal(Exception)
     grouped_chats_loaded = Signal(dict)  # Signal for sending the grouped chat list
 
@@ -19,6 +20,7 @@ class ChatController(QObject):
         super().__init__(parent)
         self._service = chat_service
         self.answer_sources = []  # Store reference sources, if any
+        self._current_streaming_answer = ""  # Track streaming answer state
 
     def load_history(self, limit: int = 20):
         """
@@ -81,14 +83,36 @@ class ChatController(QObject):
         try:
             # Save the current chat ID for use in the callback
             self._current_chat_id = chat_id
+            self._current_streaming_answer = ""
 
             # Use AsyncTaskRunner to asynchronously call the service method
-            runner = AsyncTaskRunner(self._service.answer_question, question, chat_id)
+            runner = AsyncTaskRunner(
+                self._service.answer_question,
+                question,
+                chat_id,
+                self._handle_streaming_chunk,
+            )
             runner.setAutoDelete(True)
             runner.signals.finished.connect(self._on_answer_received)
             runner.signals.error.connect(self.error_occurred)
             QThreadPool.globalInstance().start(runner)
 
+        except Exception as e:
+            self.error_occurred.emit(e)
+
+    def _handle_streaming_chunk(self, chunk_data):
+        """
+        Handle the streaming chunks from the LLM
+
+        Args:
+            chunk_data: Dictionary containing streaming chunk data
+        """
+        try:
+            # Add to the current streaming answer
+            self._current_streaming_answer = chunk_data["full_text"]
+
+            # Emit the streaming chunk signal
+            self.streaming_chunk_received.emit(chunk_data)
         except Exception as e:
             self.error_occurred.emit(e)
 
@@ -98,7 +122,15 @@ class ChatController(QObject):
         if hasattr(self, "_current_chat_id") and self._current_chat_id:
             result["chat_id"] = self._current_chat_id
 
-        # Emit the signal for receiving the answer
+        # If this is a streaming response, the full answer may already be in the result
+        # If not, use our accumulated answer
+        if "answer" not in result and self._current_streaming_answer:
+            result["answer"] = self._current_streaming_answer
+
+        # Reset streaming state
+        self._current_streaming_answer = ""
+
+        # Emit the signal for receiving the complete answer
         self.answer_received.emit(result)
 
     def create_new_chat(self, title: str = "New Chat") -> Optional[Dict[str, Any]]:

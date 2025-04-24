@@ -33,10 +33,13 @@ DEFAULT_RETRY_BASE_DELAY = 1.0  # Base delay in seconds
 DEFAULT_JITTER_FACTOR = 0.1
 DEFAULT_MAX_CONCURRENT_REQUESTS = 10
 
+
 # ---- Retry Utilities ----
-def calculate_backoff(attempt: int, base_delay: float = DEFAULT_RETRY_BASE_DELAY) -> float:
+def calculate_backoff(
+    attempt: int, base_delay: float = DEFAULT_RETRY_BASE_DELAY
+) -> float:
     """Calculate exponential backoff with jitter"""
-    delay = base_delay * (2 ** attempt)
+    delay = base_delay * (2**attempt)
     jitter = delay * DEFAULT_JITTER_FACTOR
     return delay + random.uniform(-jitter, jitter)
 
@@ -63,11 +66,11 @@ class AiohttpCrawler:
         self.headers = headers or {}
         if "User-Agent" not in self.headers and self.user_agent:
             self.headers["User-Agent"] = self.user_agent
-            
+
         # Add connection pooling settings
         self.conn_timeout = aiohttp.ClientTimeout(total=None)
         self.tcp_connector = None  # Will be initialized when session is created
-        
+
         # Track processed domains to implement per-domain rate limiting
         self.domain_timestamps = {}
         self.domain_locks: Dict[str, asyncio.Lock] = {}
@@ -75,7 +78,7 @@ class AiohttpCrawler:
     async def _enforce_domain_rate_limit(self, url: str) -> None:
         """Enforce rate limiting per domain to avoid overloading servers"""
         domain = urlparse(url).netloc
-        
+
         # Get or create a lock for this domain to enforce per-domain serialization
         lock = self.domain_locks.get(domain)
         if lock is None:
@@ -85,12 +88,12 @@ class AiohttpCrawler:
         async with lock:
             last_access = self.domain_timestamps.get(domain, 0)
             now = time.time()
-            
+
             # If we've accessed this domain recently, wait a bit
             if now - last_access < 1.0:  # 1 second between requests to same domain
                 delay = 1.0 - (now - last_access)
                 await asyncio.sleep(delay)
-                
+
             # Update the last access time
             self.domain_timestamps[domain] = time.time()
 
@@ -102,19 +105,19 @@ class AiohttpCrawler:
         """Fetch the raw HTML content of a single URL with retries."""
         # Enforce rate limiting
         await self._enforce_domain_rate_limit(url)
-        
+
         html_content = ""
         error_message = ""
         final_url = url
         fetch_start_time = time.time()
-        
+
         # Use semaphore to limit concurrent requests
         async with self.semaphore:
             retry_attempt = 0
             while retry_attempt <= self.max_retries:
                 try:
                     logger.info(f"[Worker] Fetching: {url} (Attempt {retry_attempt+1})")
-                    
+
                     # Improved request with proper timeout handling
                     async with session.get(
                         url,
@@ -129,23 +132,31 @@ class AiohttpCrawler:
                         chunks = []
                         async for chunk in response.content.iter_chunked(8192):
                             chunks.append(chunk)
-                            
-                        raw_content = b''.join(chunks)
+
+                        raw_content = b"".join(chunks)
 
                         # Attempt to decode the content more efficiently
                         encoding = response.charset
                         try:
                             if encoding:
-                                html_content = raw_content.decode(encoding, errors="replace")
+                                html_content = raw_content.decode(
+                                    encoding, errors="replace"
+                                )
                             else:
                                 # Use faster charset detection
-                                matches = charset_normalizer.from_bytes(raw_content).best()
+                                matches = charset_normalizer.from_bytes(
+                                    raw_content
+                                ).best()
                                 if matches:
                                     detected_encoding = matches.encoding
-                                    html_content = raw_content.decode(detected_encoding, errors="replace")
+                                    html_content = raw_content.decode(
+                                        detected_encoding, errors="replace"
+                                    )
                                 else:
-                                    html_content = raw_content.decode("utf-8", errors="replace")
-                                    
+                                    html_content = raw_content.decode(
+                                        "utf-8", errors="replace"
+                                    )
+
                         except Exception as decode_err:
                             error_message = f"Decoding error: {decode_err}"
                             logger.error(f"Error decoding {url}: {decode_err}")
@@ -162,12 +173,14 @@ class AiohttpCrawler:
                     )
                     # Success - break out of retry loop
                     break
-                    
+
                 except aiohttp.ClientResponseError as e:
                     error_message = f"HTTP error: {e.status} {e.message}"
                     logger.error(f"HTTP error for {url}: {e.status} - {e.message}")
                 except asyncio.TimeoutError:
-                    error_message = f"Request timed out (>{self.request_timeout} seconds)"
+                    error_message = (
+                        f"Request timed out (>{self.request_timeout} seconds)"
+                    )
                     logger.error(f"Request timed out for {url}")
                 except aiohttp.ClientError as e:
                     error_message = f"Client error: {e}"
@@ -175,21 +188,23 @@ class AiohttpCrawler:
                 except Exception as e:
                     error_message = f"Unexpected error: {e}"
                     logger.exception(f"Unexpected error while fetching {url}")
-                    
+
                 # Handle retries
                 retry_attempt += 1
                 if retry_attempt <= self.max_retries:
                     backoff = calculate_backoff(retry_attempt - 1)
-                    logger.info(f"Retrying {url} in {backoff:.2f} seconds (attempt {retry_attempt}/{self.max_retries})")
+                    logger.info(
+                        f"Retrying {url} in {backoff:.2f} seconds (attempt {retry_attempt}/{self.max_retries})"
+                    )
                     await asyncio.sleep(backoff)
-                    
+
         result = {
             "original_url": url,
             "final_url": final_url,
             "content": html_content,
             "error": error_message,
         }
-            
+
         return result
 
     async def process_urls(
@@ -198,18 +213,18 @@ class AiohttpCrawler:
         batch_size: Optional[int] = None,
     ) -> AsyncGenerator[Dict[str, str], None]:
         """Process a list of URLs and yield results containing raw HTML.
-        
+
         Args:
             urls: List of URLs to process
             batch_size: Optional batch size to process URLs in chunks
         """
         if not urls:
             return  # Empty URL list, return immediately
-            
+
         # Determine batch size if not provided
         if batch_size is None:
             batch_size = min(len(urls), self.max_concurrent_requests * 2)
-            
+
         # Create session with connection pooling
         self.tcp_connector = aiohttp.TCPConnector(
             limit=self.max_concurrent_requests,
@@ -217,7 +232,7 @@ class AiohttpCrawler:
             enable_cleanup_closed=True,
             force_close=False,  # Keep connections open for reuse
         )
-        
+
         async with aiohttp.ClientSession(
             headers=self.headers,
             timeout=self.conn_timeout,
@@ -225,7 +240,7 @@ class AiohttpCrawler:
         ) as session:
             # Process URLs in batches for better resource management
             for i in range(0, len(urls), batch_size):
-                batch = urls[i:i+batch_size]
+                batch = urls[i : i + batch_size]
                 tasks = [
                     asyncio.create_task(
                         self._fetch_single(session, url),
@@ -233,7 +248,7 @@ class AiohttpCrawler:
                     )
                     for url in batch
                 ]
-                
+
                 # Process completed tasks
                 for future in asyncio.as_completed(tasks):
                     try:
@@ -244,9 +259,15 @@ class AiohttpCrawler:
                                 f"Error processing URL {result.get('original_url', 'unknown')}: {result['error']}"
                             )
                     except Exception as e:
-                        task_name = future.get_name() if hasattr(future, "get_name") else "unknown_task"
-                        logger.error(f"Task {task_name} raised an exception: {e}", exc_info=True)
-                        
+                        task_name = (
+                            future.get_name()
+                            if hasattr(future, "get_name")
+                            else "unknown_task"
+                        )
+                        logger.error(
+                            f"Task {task_name} raised an exception: {e}", exc_info=True
+                        )
+
                         # Extract URL from task name
                         original_url = (
                             task_name.replace("fetch_", "")
@@ -259,57 +280,58 @@ class AiohttpCrawler:
                             "content": "",
                             "error": f"Task execution failed: {e}",
                         }
-                        
+
                 # Small pause between batches to avoid overwhelming resources
                 if i + batch_size < len(urls):
                     await asyncio.sleep(0.5)
+
 
 # ---- Playwright Crawler Class ----
 class PlaywrightCrawler:
     """
     A crawler that uses Playwright to asynchronously fetch raw HTML content from web pages.
     Optimized for performance with browser context reuse and smart retries.
-    
+
     Can be used as an async context manager:
-    
+
     async with PlaywrightCrawler() as crawler:
         async for result in crawler.process_urls(urls):
             # Process result
     """
 
     def __init__(
-            self,
-            headless: bool = True,
-            max_concurrent_pages: int = DEFAULT_MAX_CONCURRENT_REQUESTS,
-            page_timeout: int = 10000,  # ms
-            browser_args: Optional[Dict[str, Any]] = None,
-            user_agent: Optional[str] = None,
-            user_agent_rotation: bool = True, 
-            max_retries: int = DEFAULT_MAX_RETRY_ATTEMPTS,
-        ):
-            self.headless = headless
-            self.page_timeout = page_timeout
-            self.max_retries = max_retries
-            self.browser_args = browser_args or {}
-            self.user_agent = user_agent
-            self.user_agent_rotation = user_agent_rotation
-            self.semaphore = asyncio.Semaphore(max_concurrent_pages)
-            self.pw_instance: Optional[Playwright] = None
-            self.browser: Optional[Browser] = None
-            self._start_lock = asyncio.Lock()
-            self._browser_initialized = False
-            
-            # Add performance optimizations
-            self.context_pool = []
-            self.context_pool_size = max_concurrent_pages
-            self.context_pool_lock = asyncio.Lock()
-            
-            # Track processed domains to implement per-domain rate limiting
-            self.domain_timestamps = {}
-            self.domain_locks: Dict[str, asyncio.Lock] = {}
+        self,
+        headless: bool = True,
+        max_concurrent_pages: int = DEFAULT_MAX_CONCURRENT_REQUESTS,
+        page_timeout: int = 10000,  # ms
+        browser_args: Optional[Dict[str, Any]] = None,
+        user_agent: Optional[str] = None,
+        user_agent_rotation: bool = True,
+        max_retries: int = DEFAULT_MAX_RETRY_ATTEMPTS,
+    ):
+        self.headless = headless
+        self.page_timeout = page_timeout
+        self.max_retries = max_retries
+        self.browser_args = browser_args or {}
+        self.user_agent = user_agent
+        self.user_agent_rotation = user_agent_rotation
+        self.semaphore = asyncio.Semaphore(max_concurrent_pages)
+        self.pw_instance: Optional[Playwright] = None
+        self.browser: Optional[Browser] = None
+        self._start_lock = asyncio.Lock()
+        self._browser_initialized = False
 
-            # Initialize user agent list for rotation
-            self.user_agents = self._initialize_user_agents(user_agent)
+        # Add performance optimizations
+        self.context_pool = []
+        self.context_pool_size = max_concurrent_pages
+        self.context_pool_lock = asyncio.Lock()
+
+        # Track processed domains to implement per-domain rate limiting
+        self.domain_timestamps = {}
+        self.domain_locks: Dict[str, asyncio.Lock] = {}
+
+        # Initialize user agent list for rotation
+        self.user_agents = self._initialize_user_agents(user_agent)
 
     async def __aenter__(self):
         """Async enter method for context manager support."""
@@ -320,7 +342,7 @@ class PlaywrightCrawler:
         """Async exit method for context manager support."""
         await self.shutdown()
         return False  # Don't suppress exceptions
-    
+
     def _initialize_user_agents(self, default_user_agent: Optional[str]) -> List[str]:
         """Initialize a list of user agents for rotation"""
         # Common user agents representing different browsers and devices
@@ -340,37 +362,39 @@ class PlaywrightCrawler:
             # Safari on iOS
             "Mozilla/5.0 (iPhone; CPU iPhone OS 14_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1 Mobile/15E148 Safari/604.1",
         ]
-        
+
         # If a default user agent is provided, add it to the beginning of the list
         if default_user_agent:
             return [default_user_agent] + common_user_agents
-        
+
         # Use a custom user agent as the default if none is provided
         default = "SmartInfo/1.0 (Playwright)"
         return [default] + common_user_agents
-    
+
     def _get_random_user_agent(self) -> str:
         """Get a random user agent from the list"""
         if not self.user_agent_rotation or len(self.user_agents) <= 1:
             return self.user_agents[0]
-        
+
         return random.choice(self.user_agents)
-    
+
     async def _initialize_context_pool(self):
         """Initialize a pool of browser contexts with diverse user agents for performance"""
         async with self.context_pool_lock:
-            logger.info(f"Initializing context pool with {self.context_pool_size} contexts")
+            logger.info(
+                f"Initializing context pool with {self.context_pool_size} contexts"
+            )
             for i in range(self.context_pool_size):
                 # Get a user agent - either the fixed one or a random one if rotation is enabled
                 user_agent = self._get_random_user_agent()
-                
+
                 # Create device descriptor with a unique fingerprint
                 viewport = {"width": 1280, "height": 720}
                 if i % 3 == 1:  # Small variation in viewport sizes
                     viewport = {"width": 1366, "height": 768}
                 elif i % 3 == 2:
                     viewport = {"width": 1920, "height": 1080}
-                
+
                 # Create a context with this user agent and viewport
                 context = await self.browser.new_context(
                     user_agent=user_agent,
@@ -380,15 +404,17 @@ class PlaywrightCrawler:
                     # locale=random.choice(["en-US", "en-GB", "en-CA"]),
                     # timezone_id=random.choice(["America/New_York", "Europe/London", "Asia/Shanghai"]),
                 )
-                
+
                 # Store the user agent with the context
-                self.context_pool.append({
-                    "context": context, 
-                    "in_use": False,
-                    "user_agent": user_agent,
-                    "viewport": viewport
-                })
-                
+                self.context_pool.append(
+                    {
+                        "context": context,
+                        "in_use": False,
+                        "user_agent": user_agent,
+                        "viewport": viewport,
+                    }
+                )
+
             logger.info("Context pool initialized with diverse browser profiles")
 
     async def _get_context_from_pool(self):
@@ -399,7 +425,7 @@ class PlaywrightCrawler:
                 if not item["in_use"]:
                     item["in_use"] = True
                     return item
-            
+
             # If all contexts are in use, create a new one
             logger.info("All contexts in use, creating a new one")
             context = await self.browser.new_context(user_agent=self.user_agent)
@@ -423,9 +449,13 @@ class PlaywrightCrawler:
 
         async with self._start_lock:
             # Double-check after acquiring the lock (double-checked locking pattern)
-            if self._browser_initialized and self.browser and self.browser.is_connected():
+            if (
+                self._browser_initialized
+                and self.browser
+                and self.browser.is_connected()
+            ):
                 return
-                
+
             if self.pw_instance is None:
                 try:
                     logger.info("Starting Playwright...")
@@ -437,7 +467,7 @@ class PlaywrightCrawler:
                 launch_args = {
                     "headless": self.headless,
                 }
-                
+
                 # Add chromium-specific args for better performance
                 chromium_args = self.browser_args.get("args", [])
                 if not any("disable-dev-shm-usage" in arg for arg in chromium_args):
@@ -448,20 +478,20 @@ class PlaywrightCrawler:
                     chromium_args.append("--disable-setuid-sandbox")
                 if not any("no-sandbox" in arg for arg in chromium_args):
                     chromium_args.append("--no-sandbox")
-                
+
                 # Add args to launch options if there are any
                 if chromium_args:
                     launch_args["args"] = chromium_args
-                
+
                 self.browser = await self.pw_instance.chromium.launch(**launch_args)
                 logger.info("Browser started successfully.")
-                
+
                 # Initialize context pool
                 await self._initialize_context_pool()
-                
+
                 # Set the initialization flag
                 self._browser_initialized = True
-                
+
             except Exception as e:
                 await self.shutdown()
                 raise RuntimeError(f"Unable to start browser: {e}") from e
@@ -478,7 +508,7 @@ class PlaywrightCrawler:
                     except Exception as e:
                         logger.error(f"Error closing context: {e}")
                 self.context_pool = []
-                
+
             if self.browser:
                 try:
                     await self.browser.close()
@@ -500,7 +530,7 @@ class PlaywrightCrawler:
     async def _enforce_domain_rate_limit(self, url: str) -> None:
         """Enforce rate limiting per domain to avoid overloading servers"""
         domain = urlparse(url).netloc
-        
+
         # Get or create a lock for this domain to enforce per-domain serialization
         lock = self.domain_locks.get(domain)
         if lock is None:
@@ -510,30 +540,34 @@ class PlaywrightCrawler:
         async with lock:
             last_access = self.domain_timestamps.get(domain, 0)
             now = time.time()
-            
+
             # If we've accessed this domain recently, wait a bit
             if now - last_access < 1.0:  # 1 second between requests to same domain
                 delay = 1.0 - (now - last_access)
                 await asyncio.sleep(delay)
-                
+
             # Update the last access time
             self.domain_timestamps[domain] = time.time()
 
     async def _fetch_single(
         self,
         url: str,
-        scroll_page: bool = True,
+        scroll_page: bool = False,
         max_retries: Optional[int] = None,
     ) -> Dict[str, str]:
         """Fetch the raw HTML content of a single URL with optimized resource handling."""
         if max_retries is None:
             max_retries = self.max_retries
-            
+
         # Enforce rate limiting
         await self._enforce_domain_rate_limit(url)
-            
+
         # Only ensure browser is started if needed
-        if not self._browser_initialized or not self.browser or not self.browser.is_connected():
+        if (
+            not self._browser_initialized
+            or not self.browser
+            or not self.browser.is_connected()
+        ):
             await self._ensure_browser_started()
             if not self.browser or not self.browser.is_connected():
                 logger.error("Browser is not initialized or not connected.")
@@ -543,38 +577,40 @@ class PlaywrightCrawler:
                     "content": "",
                     "error": "Browser initialization failed",
                 }
-            
+
         html_content = ""
         error_message = ""
         final_url = url
         fetch_start_time = time.time()
-        
+
         # Use semaphore for concurrency control
         async with self.semaphore:
             logger.info(f"Starting fetch for {url}")
             context_item = None
             page = None
-            
+
             for attempt in range(max_retries):
                 try:
                     # Get a context from the pool
                     if not context_item:
                         context_item = await self._get_context_from_pool()
-                    
+
                     # Create a new page in the context
                     page = await context_item["context"].new_page()
                     page.set_default_timeout(self.page_timeout)
-                    
+
                     # Set performance optimizations for the page
-                    await page.route("**/*.{png,jpg,jpeg,gif,svg,woff,woff2,ttf,eot}", 
-                                     lambda route: route.abort())
-                    
+                    await page.route(
+                        "**/*.{png,jpg,jpeg,gif,svg,woff,woff2,ttf,eot}",
+                        lambda route: route.abort(),
+                    )
+
                     # Configure efficient page loading
-                    await page.goto(url, 
-                                   wait_until="domcontentloaded", 
-                                   timeout=self.page_timeout)
+                    await page.goto(
+                        url, wait_until="domcontentloaded", timeout=self.page_timeout
+                    )
                     final_url = page.url
-                    
+
                     if scroll_page:
                         await self._scroll_page(page)
 
@@ -582,10 +618,14 @@ class PlaywrightCrawler:
                         # Shorter network idle timeout
                         await page.wait_for_load_state("networkidle", timeout=5000)
                     except PlaywrightTimeoutError:
-                        logger.warning(f"Network idle wait timed out for {final_url}. Continuing.")
+                        logger.warning(
+                            f"Network idle wait timed out for {final_url}. Continuing."
+                        )
                     except PlaywrightError as e:
-                        logger.warning(f"Network idle wait failed for {final_url}: {e}. Continuing.")
-                        
+                        logger.warning(
+                            f"Network idle wait failed for {final_url}: {e}. Continuing."
+                        )
+
                     # Get HTML content efficiently
                     html_content = await page.content()
 
@@ -595,24 +635,28 @@ class PlaywrightCrawler:
                     )
                     error_message = ""
                     break  # Success
-                    
+
                 except PlaywrightTimeoutError as e:
                     error_message = f"Timeout error for {url}: {str(e).splitlines()[0]}"
                     logger.error(f"{error_message} (Attempt {attempt+1}/{max_retries})")
                 except PlaywrightError as e:
-                    error_message = f"Playwright error for {url}: {str(e).splitlines()[0]}"
+                    error_message = (
+                        f"Playwright error for {url}: {str(e).splitlines()[0]}"
+                    )
                     logger.error(f"{error_message} (Attempt {attempt+1}/{max_retries})")
-                    
+
                     # Check for browser disconnection and try to recover
                     if "Target closed" in str(e) or "Browser closed" in str(e):
-                        logger.warning("Browser connection lost, attempting to recover...")
+                        logger.warning(
+                            "Browser connection lost, attempting to recover..."
+                        )
                         self._browser_initialized = False
                         try:
                             await self._ensure_browser_started()
                             context_item = None  # Force getting a new context
                         except Exception as init_err:
                             logger.error(f"Failed to recover browser: {init_err}")
-                            
+
                 except Exception as e:
                     error_message = f"Unexpected error for {url}: {e}"
                     logger.error(f"{error_message} (Attempt {attempt+1}/{max_retries})")
@@ -625,30 +669,32 @@ class PlaywrightCrawler:
                         except Exception as e:
                             logger.warning(f"Error closing page for {url}: {e}")
                         page = None
-                
+
                 # Handle retries with exponential backoff
                 if attempt < max_retries - 1:
                     backoff = calculate_backoff(attempt)
-                    logger.info(f"Retrying {url} in {backoff:.2f} seconds (attempt {attempt+1}/{max_retries})")
+                    logger.info(
+                        f"Retrying {url} in {backoff:.2f} seconds (attempt {attempt+1}/{max_retries})"
+                    )
                     await asyncio.sleep(backoff)
-                    
+
             # Return context to pool
             if context_item:
                 await self._return_context_to_pool(context_item)
-                
+
             if error_message:
                 fetch_duration = time.time() - fetch_start_time
                 logger.error(
                     f"Failed to process {url} after {max_retries} attempts, took {fetch_duration:.2f} seconds."
                 )
-                
+
         result = {
             "original_url": url,
             "final_url": final_url,
             "content": html_content,
             "error": error_message,
         }
-            
+
         return result
 
     async def _scroll_page(
@@ -660,14 +706,14 @@ class PlaywrightCrawler:
             scroll_count = 0
             same_height_count = 0
             MAX_SAME_HEIGHT = 2
-            
+
             while scroll_count < max_scrolls:
                 # More efficient scrolling that avoids unnecessary script evaluation
                 await page.evaluate("window.scrollBy(0, window.innerHeight)")
-                
+
                 # Adaptive scrolling delay
                 await asyncio.sleep(scroll_delay)
-                
+
                 new_height = await page.evaluate("document.body.scrollHeight")
                 if new_height == last_height:
                     same_height_count += 1
@@ -689,7 +735,7 @@ class PlaywrightCrawler:
         batch_size: Optional[int] = None,
     ) -> AsyncGenerator[Dict[str, str], None]:
         """Process URLs in optimized batches with resource management.
-        
+
         Args:
             urls: List of URLs to process
             scroll_pages: Whether to scroll pages during fetching
@@ -700,22 +746,21 @@ class PlaywrightCrawler:
 
         if not self.browser or not self.browser.is_connected():
             await self._ensure_browser_started()
-            
+
         # Determine batch size if not provided
         if batch_size is None:
             batch_size = min(len(urls), self.semaphore._value * 2)
-            
+
         # Process URLs in batches
         for i in range(0, len(urls), batch_size):
-            batch = urls[i:i+batch_size]
+            batch = urls[i : i + batch_size]
             tasks = [
                 asyncio.create_task(
-                    self._fetch_single(url, scroll_pages), 
-                    name=f"fetch_{url[:50]}"
+                    self._fetch_single(url, scroll_pages), name=f"fetch_{url[:50]}"
                 )
                 for url in batch
             ]
-            
+
             # Process completed tasks
             for future in asyncio.as_completed(tasks):
                 try:
@@ -727,7 +772,9 @@ class PlaywrightCrawler:
                         )
                 except Exception as e:
                     task_name = (
-                        future.get_name() if hasattr(future, "get_name") else "unknown_task"
+                        future.get_name()
+                        if hasattr(future, "get_name")
+                        else "unknown_task"
                     )
                     logger.error(
                         f"Task {task_name} raised an unexpected exception: {e}",
@@ -744,7 +791,7 @@ class PlaywrightCrawler:
                         "content": "",
                         "error": f"Task execution failed: {e}",
                     }
-            
+
             # Small pause between batches to avoid overwhelming resources
             if i + batch_size < len(urls):
                 await asyncio.sleep(0.5)
@@ -753,7 +800,7 @@ class PlaywrightCrawler:
 # ---- Resource Monitoring Utilities ----
 class ResourceMonitor:
     """Utility to monitor system resources during crawling"""
-    
+
     def __init__(self, check_interval: float = 5.0):
         self.check_interval = check_interval
         self._monitoring_task = None
@@ -762,19 +809,19 @@ class ResourceMonitor:
             "memory_usage": [],
             "cpu_usage": [],
         }
-        
+
     async def start_monitoring(self):
         """Start monitoring resources"""
         self._stop_event.clear()
         self._monitoring_task = asyncio.create_task(self._monitor_resources())
-        
+
     async def stop_monitoring(self):
         """Stop monitoring resources"""
         if self._monitoring_task:
             self._stop_event.set()
             await self._monitoring_task
             self._monitoring_task = None
-            
+
     async def _monitor_resources(self):
         """Monitor system resources"""
         try:
@@ -782,48 +829,48 @@ class ResourceMonitor:
         except ImportError:
             logger.warning("psutil not available, resource monitoring disabled")
             return
-            
+
         while not self._stop_event.is_set():
             try:
                 # Get current process
                 process = psutil.Process()
-                
+
                 # Memory usage
                 memory_info = process.memory_info()
                 memory_mb = memory_info.rss / (1024 * 1024)
                 self._stats["memory_usage"].append(memory_mb)
-                
+
                 # CPU usage
                 cpu_percent = process.cpu_percent(interval=0.1)
                 self._stats["cpu_usage"].append(cpu_percent)
-                
+
                 if len(self._stats["memory_usage"]) > 50:
                     # Keep only the last 50 measurements
                     self._stats["memory_usage"] = self._stats["memory_usage"][-50:]
                     self._stats["cpu_usage"] = self._stats["cpu_usage"][-50:]
-                    
+
                 # Log if memory usage is high
                 if memory_mb > 500:  # More than 500MB
                     logger.warning(f"High memory usage: {memory_mb:.2f}MB")
-                    
+
             except Exception as e:
                 logger.error(f"Error monitoring resources: {e}")
-                
+
             # Wait for next check
             try:
                 await asyncio.wait_for(self._stop_event.wait(), self.check_interval)
             except asyncio.TimeoutError:
                 pass
-                
+
     def get_stats(self) -> Dict[str, List[float]]:
         """Get the collected stats"""
         return self._stats
-        
+
     def get_summary(self) -> Dict[str, float]:
         """Get a summary of the stats"""
         memory_usage = self._stats["memory_usage"]
         cpu_usage = self._stats["cpu_usage"]
-        
+
         return {
             "avg_memory_mb": sum(memory_usage) / max(1, len(memory_usage)),
             "max_memory_mb": max(memory_usage) if memory_usage else 0,
@@ -841,12 +888,12 @@ async def main_playwright():
         "https://www.xinhuanet.com",
         "https://pro.jiqizhixin.com/reference/ff25ec2f-ffcf-4d75-9503-46ab55afc999",
     ]
-    
+
     output_dir = "crawl_output_playwright_html"
     os.makedirs(output_dir, exist_ok=True)
     results_count = 0
     errors_count = 0
-    
+
     # Create resource monitor
     resource_monitor = ResourceMonitor()
     await resource_monitor.start_monitoring()
@@ -855,8 +902,8 @@ async def main_playwright():
         start_time = time.time()
         # Use the context manager for the crawler with optimized settings
         async with PlaywrightCrawler(
-            headless=True, 
-            max_concurrent_pages=4, 
+            headless=True,
+            max_concurrent_pages=4,
             page_timeout=10000,
             browser_args={"args": ["--disable-dev-shm-usage", "--no-sandbox"]},
         ) as crawler:
@@ -870,7 +917,7 @@ async def main_playwright():
                 print("-" * 40)
                 print(f"Received result #{results_count}")
                 print(f"Original URL: {result['original_url']}")
-                
+
                 if result["error"]:
                     errors_count += 1
                     print(f"Error: {result['error']}")
@@ -886,7 +933,9 @@ async def main_playwright():
                     filename = os.path.join(output_dir, f"{filename_part}.html")
                     try:
                         with open(filename, "w", encoding="utf-8") as f:
-                            f.write(f"<!-- Original URL: {result['original_url']} -->\n")
+                            f.write(
+                                f"<!-- Original URL: {result['original_url']} -->\n"
+                            )
                             f.write(result["content"])
                         print(f"Output saved to: {filename}")
                     except Exception as write_err:
@@ -899,7 +948,7 @@ async def main_playwright():
         logger.info(
             f"Total results received: {results_count}, error count: {errors_count}"
         )
-        
+
         # Print resource usage summary
         await resource_monitor.stop_monitoring()
         stats = resource_monitor.get_summary()
@@ -921,10 +970,10 @@ async def main_aiohttp():
         "https://pro.jiqizhixin.com/reference/ff25ec2f-ffcf-4d75-9503-46ab55afc999",
         "http://www.news.cn/politics/20250409/c3d08c8507bc412ba22f174ac063bea9/c.html",
     ]
-    
+
     # Create crawler with optimized settings
     crawler = AiohttpCrawler(
-        max_concurrent_requests=5, 
+        max_concurrent_requests=5,
         request_timeout=30,
         max_retries=3,
     )
@@ -933,7 +982,7 @@ async def main_aiohttp():
     os.makedirs(output_dir, exist_ok=True)
     results_count = 0
     errors_count = 0
-    
+
     # Create resource monitor
     resource_monitor = ResourceMonitor()
     await resource_monitor.start_monitoring()
@@ -949,7 +998,7 @@ async def main_aiohttp():
             print("-" * 40)
             print(f"Received result #{results_count}")
             print(f"Original URL: {result['original_url']}")
-                
+
             if result["error"]:
                 errors_count += 1
                 print(f"Error: {result['error']}")
@@ -978,7 +1027,7 @@ async def main_aiohttp():
         logger.info(
             f"Total results received: {results_count}, error count: {errors_count}"
         )
-        
+
         # Print resource usage summary
         await resource_monitor.stop_monitoring()
         stats = resource_monitor.get_summary()
