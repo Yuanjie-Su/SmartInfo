@@ -17,9 +17,9 @@ const { Text } = Typography;
 const { Search } = Input;
 
 // Helper to format chat date for grouping
-const formatChatDate = (dateString: string) => {
+const formatChatDate = (timestamp: number | undefined) => {
   const now = new Date();
-  const chatDate = new Date(dateString);
+  const chatDate = timestamp ? new Date(timestamp * 1000) : new Date();
   
   // Same day?
   if (now.toDateString() === chatDate.toDateString()) {
@@ -46,12 +46,8 @@ const groupChatsByDate = (chats: Chat[]) => {
   };
   
   chats.forEach(chat => {
-    const group = formatChatDate(chat.created_at || new Date().toISOString());
-    if (groups[group]) {
-      groups[group].push(chat);
-    } else {
-      groups['Others'].push(chat);
-    }
+    const group = formatChatDate(chat.created_at);
+    groups[group].push(chat);
   });
   
   return groups;

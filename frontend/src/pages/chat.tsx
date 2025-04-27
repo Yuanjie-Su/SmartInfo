@@ -24,7 +24,7 @@ import {
 import MainLayout from '@/components/layout/MainLayout';
 import * as chatService from '@/services/chatService';
 import { handleApiError } from '@/utils/apiErrorHandler';
-import { Chat, Message, ChatQuestion } from '@/utils/types';
+import { Chat, Message, Question } from '@/utils/types';
 
 const { Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
@@ -153,7 +153,7 @@ const ChatPage: React.FC = () => {
       });
       
       // Prepare and send question to LLM
-      const question: ChatQuestion = {
+      const question: Question = {
         chat_id: chatId,
         content: inputMessage
       };
@@ -338,7 +338,7 @@ const ChatPage: React.FC = () => {
                               alignItems: 'center'
                             }}>
                               <Text type="secondary" style={{ fontSize: '0.8rem' }}>
-                                {msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString() : ''}
+                                {msg.timestamp ? new Date(msg.timestamp * 1000).toLocaleTimeString() : ''}
                               </Text>
                               
                               <Button 

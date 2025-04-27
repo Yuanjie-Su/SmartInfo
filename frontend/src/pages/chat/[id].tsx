@@ -75,7 +75,7 @@ const ChatPage: React.FC = () => {
     
     const userMessageData: MessageCreate = {
       chat_id: chat.id,
-      role: 'user',
+      sender: 'user',
       content: newMessage
     };
     
@@ -96,14 +96,13 @@ const ChatPage: React.FC = () => {
       const response = await chatService.askQuestion({
         chat_id: chat.id,
         content: newMessage,
-        model_name: chat.model_name
       });
       
       // If no message_id in response, create new assistant message
       if (!response.message_id) {
         const assistantMessageData: MessageCreate = {
           chat_id: chat.id,
-          role: 'assistant',
+          sender: 'assistant',
           content: response.content
         };
         const assistantMessage = await chatService.createMessage(assistantMessageData);
@@ -121,14 +120,18 @@ const ChatPage: React.FC = () => {
   };
   
   const handleCopyMessage = (content: string) => {
-    navigator.clipboard.writeText(content)
-      .then(() => message.success('Copied to clipboard'))
-      .catch(() => message.error('Failed to copy message'));
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(content)
+        .then(() => message.success('Copied to clipboard'))
+        .catch(() => message.error('Failed to copy message'));
+    } else {
+      message.error('Clipboard functionality is not available in this browser or context');
+    }
   };
   
   const renderMessages = () => {
     return messages.map((msg) => {
-      const isUser = msg.role === 'user';
+      const isUser = msg.sender === 'user';
       
       return (
         <div
@@ -168,7 +171,7 @@ const ChatPage: React.FC = () => {
                   alignItems: 'center'
                 }}>
                   <Text type="secondary" style={{ fontSize: '0.8rem' }}>
-                    {new Date(msg.created_at || '').toLocaleTimeString()}
+                    {msg.timestamp ? new Date(msg.timestamp * 1000).toLocaleTimeString() : ''}
                   </Text>
                   
                   <Space>
@@ -213,9 +216,6 @@ const ChatPage: React.FC = () => {
     <div style={{ height: 'calc(100vh - 150px)', display: 'flex', flexDirection: 'column' }}>
       <div style={{ marginBottom: 16 }}>
         <Title level={3}>{chat.title}</Title>
-        {chat.model_name && (
-          <Text type="secondary">Model: {chat.model_name}</Text>
-        )}
       </div>
       
       <Divider style={{ margin: '0 0 16px 0' }} />

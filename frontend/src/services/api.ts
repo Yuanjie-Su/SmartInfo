@@ -6,6 +6,7 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+  timeout: 10000, // Add timeout to prevent hanging requests
 });
 
 // Request interceptor for adding auth token or other headers if needed
@@ -25,7 +26,12 @@ api.interceptors.response.use(
     return response;
   },
   (error) => {
-    console.error('API Error:', error.response?.data || error.message);
+    // Check if the error is a network error
+    if (error.message === 'Network Error') {
+      console.error('Network error detected - server might be down or unreachable');
+    } else {
+      console.error('API Error:', error.response?.data || error.message);
+    }
     return Promise.reject(error);
   }
 );

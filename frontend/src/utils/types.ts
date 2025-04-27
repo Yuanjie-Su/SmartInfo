@@ -2,9 +2,14 @@
 export interface NewsCategory {
   id: number;
   name: string;
+  source_count?: number;
 }
 
 export interface NewsCategoryCreate {
+  name: string;
+}
+
+export interface NewsCategoryUpdate {
   name: string;
 }
 
@@ -14,7 +19,7 @@ export interface NewsSource {
   name: string;
   url: string;
   category_id: number;
-  category?: NewsCategory;
+  category_name?: string;
 }
 
 export interface NewsSourceCreate {
@@ -23,31 +28,43 @@ export interface NewsSourceCreate {
   category_id: number;
 }
 
-// News Types
-export interface News {
-  id: number;
-  source_id?: number;
-  title: string;
-  content?: string;
-  summary?: string;
-  url: string;
-  source_name: string;
-  category_name: string; 
+export interface NewsSourceUpdate {
+  name?: string;
+  url?: string;
   category_id?: number;
-  analysis?: string;
-  date?: string;
-  source?: NewsSource;
 }
 
-export interface NewsCreate {
-  source_id?: number;
+// News Types
+export interface NewsItem {
+  id: number;
   title: string;
-  content?: string;
-  summary?: string;
   url: string;
-  source_name: string;
-  category_name: string;
+  source_id?: number;
   category_id?: number;
+  summary?: string;
+  content?: string;
+  analysis?: string;
+  date?: string;
+  source_name?: string;
+  category_name?: string; 
+}
+
+export interface NewsItemCreate {
+  title: string;
+  url: string;
+  source_id?: number;
+  category_id?: number;
+  summary?: string;
+  content?: string;
+  should_analyze?: boolean;
+}
+
+export interface NewsItemUpdate {
+  title?: string;
+  source_id?: number;
+  category_id?: number;
+  summary?: string;
+  content?: string;
   analysis?: string;
   date?: string;
 }
@@ -55,16 +72,34 @@ export interface NewsCreate {
 export interface NewsFilterParams {
   category_id?: number;
   source_id?: number;
-  has_analysis?: boolean;
+  analyzed?: boolean;
   page?: number;
   page_size?: number;
   search_term?: string;
 }
 
-export interface NewsAnalysisRequest {
+export interface UpdateAnalysisRequest {
+  analysis: string;
+}
+
+export interface AnalyzeRequest {
   news_ids?: number[];
-  analyze_all?: boolean;
-  force_reanalyze?: boolean;
+  force?: boolean;
+}
+
+export interface FetchSourceRequest {
+  source_id: number;
+}
+
+export interface FetchUrlRequest {
+  url: string;
+  source_id?: number;
+  should_analyze?: boolean;
+}
+
+export interface AnalyzeContentRequest {
+  content: string;
+  instructions: string;
 }
 
 // API Key Types
@@ -84,25 +119,14 @@ export interface ApiKeyCreate {
 }
 
 // System Config Types
-export interface SystemConfig {
-  config_key: string;
-  config_value: string;
-  description?: string;
-}
-
-export interface SystemConfigCreate {
-  config_key: string;
-  config_value: string;
-  description?: string;
+export interface SystemConfigUpdate {
+  settings: Record<string, any>;
 }
 
 // Chat Types
 export interface Chat {
   id: number;
   title: string;
-  system_prompt?: string;
-  model_name?: string;
-  metadata?: string;
   created_at?: number;
   updated_at?: number;
   messages?: Message[];
@@ -110,9 +134,6 @@ export interface Chat {
 
 export interface ChatCreate {
   title: string;
-  system_prompt?: string;
-  model_name?: string;
-  metadata?: string;
 }
 
 // Message Types
@@ -121,9 +142,8 @@ export interface Message {
   chat_id: number;
   sender: string; // "user", "assistant", "system"
   content: string;
-  sequence_number?: number;
+  sequence_number: number;
   timestamp?: number;
-  metadata?: string;
 }
 
 export interface MessageCreate {
@@ -131,25 +151,16 @@ export interface MessageCreate {
   sender: string;
   content: string;
   sequence_number?: number;
-  metadata?: string;
 }
 
-// Chat Question/Answer Types
-export interface ChatQuestion {
-  chat_id?: number;
+// Question/Answer Types
+export interface Question {
   content: string;
-  system_prompt?: string;
-  model_name?: string;
+  chat_id?: number;
 }
 
 export interface ChatAnswer {
-  chat_id?: number;
+  chat_id: number;
   message_id?: number;
   content: string;
-  metadata?: Record<string, any>;
-}
-
-// Settings Update Types
-export interface SettingsUpdate {
-  settings: Record<string, any>;
 } 

@@ -163,10 +163,7 @@ app = FastAPI(
 # Add CORS middleware
 # Configure origins according to your frontend deployment
 origins = [
-    "http://localhost",  # Allow local development origins
-    "http://localhost:3000",  # Example React dev server
-    "http://localhost:8080",  # Example Vue dev server
-    # Add your frontend production URL here, e.g., "https://yourdomain.com"
+    "http://172.18.0.1:3000",  # Example React dev server
 ]
 app.add_middleware(
     CORSMiddleware,

@@ -113,12 +113,12 @@ class ChatService:
         messages = await self._message_repo.get_by_chat_id(chat_id)
         return [
             Message(
-                id=msg["MESSAGE_ID"],
-                chat_id=msg["MESSAGE_CHAT_ID"],
-                sender=msg["MESSAGE_SENDER"],
-                content=msg["MESSAGE_CONTENT"],
-                timestamp=msg["MESSAGE_TIMESTAMP"],
-                sequence_number=msg["MESSAGE_SEQUENCE_NUMBER"],
+                id=msg["id"],
+                chat_id=msg["chat_id"],
+                sender=msg["sender"],
+                content=msg["content"],
+                timestamp=msg["timestamp"],
+                sequence_number=msg["sequence_number"],
             )
             for msg in messages
         ]
@@ -130,12 +130,12 @@ class ChatService:
             return None
 
         return Message(
-            id=message["MESSAGE_ID"],
-            chat_id=message["MESSAGE_CHAT_ID"],
-            sender=message["MESSAGE_SENDER"],
-            content=message["MESSAGE_CONTENT"],
-            timestamp=message["MESSAGE_TIMESTAMP"],
-            sequence_number=message["MESSAGE_SEQUENCE_NUMBER"],
+            id=message["id"],
+            chat_id=message["chat_id"],
+            sender=message["sender"],
+            content=message["content"],
+            timestamp=message["timestamp"],
+            sequence_number=message["sequence_number"],
         )
 
     async def create_message(self, message: MessageCreate) -> Message:

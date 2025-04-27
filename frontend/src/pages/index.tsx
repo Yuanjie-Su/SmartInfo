@@ -23,7 +23,7 @@ import {
   GlobalOutlined,
   ExperimentOutlined
 } from '@ant-design/icons';
-import { News, NewsCategory, NewsSource, NewsFilterParams } from '@/utils/types';
+import { NewsItem, NewsCategory, NewsSource, NewsFilterParams } from '@/utils/types';
 import * as newsService from '@/services/newsService';
 import { handleApiError } from '@/utils/apiErrorHandler';
 import Link from 'next/link';
@@ -34,7 +34,7 @@ const { Option } = Select;
 
 const NewsPage: React.FC = () => {
   // State
-  const [news, setNews] = useState<News[]>([]);
+  const [news, setNews] = useState<NewsItem[]>([]);
   const [categories, setCategories] = useState<NewsCategory[]>([]);
   const [sources, setSources] = useState<NewsSource[]>([]);
   const [loading, setLoading] = useState(false);
@@ -53,7 +53,7 @@ const NewsPage: React.FC = () => {
     try {
       setLoading(true);
       setError(null);
-      const newsData = await newsService.getNews(params);
+      const newsData = await newsService.getNewsItems(params);
       setNews(newsData);
       // 假设API返回的是全部数据，暂时设置一个固定总数
       // 实际情况中，API应该返回总数
@@ -94,7 +94,7 @@ const NewsPage: React.FC = () => {
       
       // 如果选择了分类，获取该分类的来源
       if (value !== undefined) {
-        const sourcesData = await newsService.getSources(value);
+        const sourcesData = await newsService.getSourcesByCategory(value);
         setSources(sourcesData);
       } else {
         // 如果选择"全部"，获取所有来源
