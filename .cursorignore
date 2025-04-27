@@ -1,8 +1,6 @@
 # Python虚拟环境
 venv/
 .venv/
-env/
-ENV/
 virtualenv/
 .virtualenv/
 
@@ -39,13 +37,11 @@ wheels/
 *.log
 logs/
 
-# 本地配置文件
-# Ensure .env files are ignored
-.env*
-!.env.example
-
 # 缓存文件
 .cache/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# node_modules
+node_modules/

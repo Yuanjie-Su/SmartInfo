@@ -39,6 +39,12 @@ wheels/
 *.swo
 .DS_Store
 
+# node_modules
+node_modules/
+
+# Next.js build files
+.next/
+
 # Log files
 *.log
 logs/
@@ -54,6 +60,9 @@ logs/
 .coverage
 htmlcov/
 
+# pytest config
+pytest.ini
+
 # Test data
-test_data/
+tests/
 stastic.py

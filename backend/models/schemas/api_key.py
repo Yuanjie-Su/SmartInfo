@@ -1,0 +1,48 @@
+# backend/models/api_key.py
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+"""
+Pydantic models for API key related data.
+"""
+
+from pydantic import BaseModel, Field, ConfigDict
+from typing import Optional
+
+# --- API Key Models ---
+
+
+class ApiKeyBase(BaseModel):
+    """Base schema for API key data."""
+
+    api_name: str = Field(
+        ..., description="Name of the API (e.g., 'DeepSeek', 'VolcEngine')"
+    )
+    api_key: str = Field(..., description="The API key itself (sensitive data)")
+    description: Optional[str] = Field(
+        None, description="Optional description for the API key"
+    )
+
+
+class ApiKeyCreate(ApiKeyBase):
+    """Schema for creating a new API key."""
+
+    # Inherits all fields from ApiKeyBase
+    pass
+
+
+class ApiKey(ApiKeyBase):
+    """Schema for representing an API key, including database ID and timestamps."""
+
+    id: int = Field(..., description="Unique identifier for the API key")
+    created_date: Optional[int] = Field(
+        None, description="Creation timestamp (Unix epoch integer)"
+    )
+    modified_date: Optional[int] = Field(
+        None, description="Last modification timestamp (Unix epoch integer)"
+    )
+
+    model_config = ConfigDict(
+        from_attributes=True  # Enable ORM mode if mapping directly from ORM objects later
+        # Set from_attributes=False if mapping from raw tuples/dicts
+    )
