@@ -203,8 +203,11 @@ class DatabaseConnectionManager:
             f"""
             CREATE TABLE IF NOT EXISTS {API_CONFIG_TABLE} (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                api_name TEXT NOT NULL UNIQUE,
+                model TEXT NOT NULL,
+                base_url TEXT NOT NULL,
                 api_key TEXT NOT NULL,
+                context INTEGER NOT NULL,
+                max_output_tokens INTEGER NOT NULL,
                 description TEXT,
                 created_date INTEGER NOT NULL,
                 modified_date INTEGER NOT NULL

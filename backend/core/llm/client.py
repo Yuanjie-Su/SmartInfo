@@ -155,7 +155,7 @@ class AsyncLLMClient(LLMClientBase):
             base_url=self.base_url,
             api_key=self.api_key,
             timeout=self.timeout,
-            max_retries=0,  # Disable automatic retries, handle manually
+            max_retries=self.max_retries,
         )
 
     async def close(self) -> None:
@@ -199,7 +199,12 @@ class AsyncLLMClient(LLMClientBase):
             **kwargs: Additional valid parameters for the OpenAI API completions endpoint.
 
         Returns:
-            The generated text content as a single string, or None if failed after retries.
+        The generated text content as a single string.
+
+        Raises:
+            RuntimeError: If completion cannot be obtained after retries.
+            APIError: For non-retryable API errors.
+            Exception: For other unexpected errors.
         """
         model_to_use = model or self.default_model
         if not model_to_use:
@@ -221,54 +226,45 @@ class AsyncLLMClient(LLMClientBase):
 
         logger.debug(f"Requesting async completion from model '{model_to_use}'...")
 
-        for attempt in range(self.max_retries + 1):
-            try:
-                completion = await client.chat.completions.create(**request_params)
+        try:
+            completion = await client.chat.completions.create(**request_params)
 
-                # Log usage
-                if completion.usage:
-                    logger.info(
-                        f"LLM Usage (Model: {model_to_use}): "
-                        f"Prompt={completion.usage.prompt_tokens}, "
-                        f"Completion={completion.usage.completion_tokens}, "
-                        f"Total={completion.usage.total_tokens}"
-                    )
-
-                # Extract content
-                if completion.choices and completion.choices[0].message:
-                    response_content = completion.choices[0].message.content
-                    finish_reason = completion.choices[0].finish_reason
-                    logger.debug(f"Completion received. Finish reason: {finish_reason}")
-                    return response_content if response_content is not None else ""
-                else:
-                    logger.warning(
-                        "LLM response received but no valid choice or message content found."
-                    )
-                    return None
-
-            except (
-                RateLimitError,
-                APITimeoutError,
-                APIConnectionError,
-            ) as transient_error:
-                logger.warning(
-                    f"Transient LLM API error (Attempt {attempt + 1}/{self.max_retries+1}): {transient_error}"
+            # Log usage
+            if completion.usage:
+                logger.info(
+                    f"LLM Usage (Model: {model_to_use}): "
+                    f"Prompt={completion.usage.prompt_tokens}, "
+                    f"Completion={completion.usage.completion_tokens}, "
+                    f"Total={completion.usage.total_tokens}"
                 )
-                if attempt >= self.max_retries:
-                    logger.error("Max retries reached for transient error.")
-                    return None
-                # Exponential backoff
-                wait_time = (2**attempt) + (asyncio.random.random() * 0.5)  # Add jitter
-                logger.info(f"Retrying in {wait_time:.2f} seconds...")
-                await asyncio.sleep(wait_time)
-            except APIError as api_error:
-                logger.error(f"Non-retryable LLM API error: {api_error}", exc_info=True)
-                return None
-            except Exception as e:
-                logger.error(f"Unexpected error during LLM call: {e}", exc_info=True)
-                return None
 
-        return None
+            # Extract content
+            if completion.choices and completion.choices[0].message:
+                response_content = completion.choices[0].message.content
+                finish_reason = completion.choices[0].finish_reason
+                logger.debug(f"Completion received. Finish reason: {finish_reason}")
+                return response_content if response_content is not None else ""
+            else:
+                logger.warning(
+                    "LLM response received but no valid choice or message content found."
+                )
+                raise RuntimeError(
+                    "LLM response received but no valid choice or message content found."
+                )
+
+        except (
+            RateLimitError,
+            APITimeoutError,
+            APIConnectionError,
+        ) as transient_error:
+            logger.warning(f"Transient LLM API error: {transient_error}", exc_info=True)
+            raise
+        except APIError as api_error:
+            logger.error(f"Non-retryable LLM API error: {api_error}", exc_info=True)
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error during LLM call: {e}", exc_info=True)
+            raise
 
     async def stream_completion_content(
         self,
@@ -320,65 +316,58 @@ class AsyncLLMClient(LLMClientBase):
             f"Requesting async streaming completion from model '{model_to_use}'..."
         )
 
-        for attempt in range(self.max_retries + 1):
-            try:
-                stream = await client.chat.completions.create(**request_params)
-                logger.debug("Async LLM stream initiated.")
+        try:
+            stream = await client.chat.completions.create(**request_params)
+            logger.debug("Async LLM stream initiated.")
 
-                # Process the stream
-                total_chunks = 0
-                async for chunk in stream:
-                    total_chunks += 1
-                    if chunk.choices:
-                        delta = chunk.choices[0].delta
-                        finish_reason = chunk.choices[0].finish_reason
-                        if delta and delta.content:
-                            yield delta.content
-                        if finish_reason:
+            # Process the stream
+            total_chunks = 0
+            async for chunk in stream:
+                total_chunks += 1
+                if chunk.choices:
+                    delta = chunk.choices[0].delta
+                    finish_reason = chunk.choices[0].finish_reason
+                    if delta and delta.content:
+                        yield delta.content
+                    if finish_reason:
+                        logger.info(
+                            f"LLM stream finished for model {model_to_use}. "
+                            f"Reason: {finish_reason}. Total chunks: {total_chunks}"
+                        )
+                        # Log usage if available on the *last* chunk
+                        if hasattr(chunk, "usage") and chunk.usage:
                             logger.info(
-                                f"LLM stream finished for model {model_to_use}. "
-                                f"Reason: {finish_reason}. Total chunks: {total_chunks}"
+                                f"LLM API Usage (final chunk): "
+                                f"Prompt={chunk.usage.prompt_tokens}, "
+                                f"Completion={chunk.usage.completion_tokens}, "
+                                f"Total={chunk.usage.total_tokens}"
                             )
-                            # Log usage if available on the *last* chunk
-                            if hasattr(chunk, "usage") and chunk.usage:
-                                logger.info(
-                                    f"LLM API Usage (final chunk): "
-                                    f"Prompt={chunk.usage.prompt_tokens}, "
-                                    f"Completion={chunk.usage.completion_tokens}, "
-                                    f"Total={chunk.usage.total_tokens}"
-                                )
-                            break
+                        break
 
-                logger.debug(
-                    f"Async stream completed for model {model_to_use}, chunks: {total_chunks}"
-                )
-                return  # End the generator after stream is complete
+            logger.debug(
+                f"Async stream completed for model {model_to_use}, chunks: {total_chunks}"
+            )
+            return  # End the generator after stream is complete
 
-            except (
-                RateLimitError,
-                APITimeoutError,
-                APIConnectionError,
-            ) as transient_error:
-                logger.warning(
-                    f"Transient LLM API error initiating stream (Attempt {attempt + 1}/{self.max_retries+1}): {transient_error}"
-                )
-                if attempt >= self.max_retries:
-                    logger.error("Max retries reached for stream initiation.")
-                    raise RuntimeError(
-                        f"Failed to initiate stream after {self.max_retries} retries"
-                    )
-                wait_time = (2**attempt) + (asyncio.random.random() * 0.5)
-                logger.info(f"Retrying stream initiation in {wait_time:.2f} seconds...")
-                await asyncio.sleep(wait_time)
-            except APIError as api_error:
-                logger.error(
-                    f"Non-retryable LLM API error initiating stream: {api_error}",
-                    exc_info=True,
-                )
-                raise
-            except Exception as e:
-                logger.error(f"Unexpected error initiating stream: {e}", exc_info=True)
-                raise
+        except (
+            RateLimitError,
+            APITimeoutError,
+            APIConnectionError,
+        ) as transient_error:
+            logger.warning(
+                f"Transient LLM API error initiating stream: {transient_error}",
+                exc_info=True,
+            )
+            raise
+        except APIError as api_error:
+            logger.error(
+                f"Non-retryable LLM API error initiating stream: {api_error}",
+                exc_info=True,
+            )
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error initiating stream: {e}", exc_info=True)
+            raise
 
 
 class SyncLLMClient(LLMClientBase):
@@ -443,7 +432,12 @@ class SyncLLMClient(LLMClientBase):
             **kwargs: Additional valid parameters for the OpenAI API completions endpoint.
 
         Returns:
-            The generated text content as a single string, or None if failed after retries.
+            The generated text content as a single string.
+
+        Raises:
+            RuntimeError: If completion cannot be obtained after retries.
+            APIError: For non-retryable API errors.
+            Exception: For other unexpected errors.
         """
         model_to_use = model or self.default_model
         if not model_to_use:
@@ -465,54 +459,45 @@ class SyncLLMClient(LLMClientBase):
 
         logger.debug(f"Requesting sync completion from model '{model_to_use}'...")
 
-        for attempt in range(self.max_retries + 1):
-            try:
-                completion = client.chat.completions.create(**request_params)
+        try:
+            completion = client.chat.completions.create(**request_params)
 
-                # Log usage
-                if completion.usage:
-                    logger.info(
-                        f"LLM Usage (Model: {model_to_use}): "
-                        f"Prompt={completion.usage.prompt_tokens}, "
-                        f"Completion={completion.usage.completion_tokens}, "
-                        f"Total={completion.usage.total_tokens}"
-                    )
-
-                # Extract content
-                if completion.choices and completion.choices[0].message:
-                    response_content = completion.choices[0].message.content
-                    finish_reason = completion.choices[0].finish_reason
-                    logger.debug(f"Completion received. Finish reason: {finish_reason}")
-                    return response_content if response_content is not None else ""
-                else:
-                    logger.warning(
-                        "LLM response received but no valid choice or message content found."
-                    )
-                    return None
-
-            except (
-                RateLimitError,
-                APITimeoutError,
-                APIConnectionError,
-            ) as transient_error:
-                logger.warning(
-                    f"Transient LLM API error (Attempt {attempt + 1}/{self.max_retries+1}): {transient_error}"
+            # Log usage
+            if completion.usage:
+                logger.info(
+                    f"LLM Usage (Model: {model_to_use}): "
+                    f"Prompt={completion.usage.prompt_tokens}, "
+                    f"Completion={completion.usage.completion_tokens}, "
+                    f"Total={completion.usage.total_tokens}"
                 )
-                if attempt >= self.max_retries:
-                    logger.error("Max retries reached for transient error.")
-                    return None
-                # Exponential backoff
-                wait_time = (2**attempt) + (time.random() * 0.5)  # Add jitter
-                logger.info(f"Retrying in {wait_time:.2f} seconds...")
-                time.sleep(wait_time)
-            except APIError as api_error:
-                logger.error(f"Non-retryable LLM API error: {api_error}", exc_info=True)
-                return None
-            except Exception as e:
-                logger.error(f"Unexpected error during LLM call: {e}", exc_info=True)
-                return None
 
-        return None
+            # Extract content
+            if completion.choices and completion.choices[0].message:
+                response_content = completion.choices[0].message.content
+                finish_reason = completion.choices[0].finish_reason
+                logger.debug(f"Completion received. Finish reason: {finish_reason}")
+                return response_content if response_content is not None else ""
+            else:
+                logger.warning(
+                    "LLM response received but no valid choice or message content found."
+                )
+                raise RuntimeError(
+                    "LLM response received but no valid choice or message content found."
+                )
+
+        except (
+            RateLimitError,
+            APITimeoutError,
+            APIConnectionError,
+        ) as transient_error:
+            logger.warning(f"Transient LLM API error: {transient_error}", exc_info=True)
+            raise
+        except APIError as api_error:
+            logger.error(f"Non-retryable LLM API error: {api_error}", exc_info=True)
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error during LLM call: {e}", exc_info=True)
+            raise
 
     def stream_completion_content(
         self,
@@ -564,64 +549,57 @@ class SyncLLMClient(LLMClientBase):
             f"Requesting sync streaming completion from model '{model_to_use}'..."
         )
 
-        for attempt in range(self.max_retries + 1):
-            try:
-                stream = client.chat.completions.create(**request_params)
-                logger.debug("Sync LLM stream initiated.")
+        try:
+            stream = client.chat.completions.create(**request_params)
+            logger.debug("Sync LLM stream initiated.")
 
-                # Process the stream
-                total_chunks = 0
-                for chunk in stream:
-                    total_chunks += 1
-                    if chunk.choices:
-                        delta = chunk.choices[0].delta
-                        finish_reason = chunk.choices[0].finish_reason
-                        if delta and delta.content:
-                            yield delta.content
-                        if finish_reason:
+            # Process the stream
+            total_chunks = 0
+            for chunk in stream:
+                total_chunks += 1
+                if chunk.choices:
+                    delta = chunk.choices[0].delta
+                    finish_reason = chunk.choices[0].finish_reason
+                    if delta and delta.content:
+                        yield delta.content
+                    if finish_reason:
+                        logger.info(
+                            f"LLM stream finished for model {model_to_use}. "
+                            f"Reason: {finish_reason}. Total chunks: {total_chunks}"
+                        )
+                        if hasattr(chunk, "usage") and chunk.usage:
                             logger.info(
-                                f"LLM stream finished for model {model_to_use}. "
-                                f"Reason: {finish_reason}. Total chunks: {total_chunks}"
+                                f"LLM API Usage (final chunk): "
+                                f"Prompt={chunk.usage.prompt_tokens}, "
+                                f"Completion={chunk.usage.completion_tokens}, "
+                                f"Total={chunk.usage.total_tokens}"
                             )
-                            if hasattr(chunk, "usage") and chunk.usage:
-                                logger.info(
-                                    f"LLM API Usage (final chunk): "
-                                    f"Prompt={chunk.usage.prompt_tokens}, "
-                                    f"Completion={chunk.usage.completion_tokens}, "
-                                    f"Total={chunk.usage.total_tokens}"
-                                )
-                            break
+                        break
 
-                logger.debug(
-                    f"Sync stream completed for model {model_to_use}, chunks: {total_chunks}"
-                )
-                return  # End the generator after stream is complete
+            logger.debug(
+                f"Sync stream completed for model {model_to_use}, chunks: {total_chunks}"
+            )
+            return  # End the generator after stream is complete
 
-            except (
-                RateLimitError,
-                APITimeoutError,
-                APIConnectionError,
-            ) as transient_error:
-                logger.warning(
-                    f"Transient LLM API error initiating stream (Attempt {attempt + 1}/{self.max_retries+1}): {transient_error}"
-                )
-                if attempt >= self.max_retries:
-                    logger.error("Max retries reached for stream initiation.")
-                    raise RuntimeError(
-                        f"Failed to initiate stream after {self.max_retries} retries"
-                    )
-                wait_time = (2**attempt) + (time.random() * 0.5)
-                logger.info(f"Retrying stream initiation in {wait_time:.2f} seconds...")
-                time.sleep(wait_time)
-            except APIError as api_error:
-                logger.error(
-                    f"Non-retryable LLM API error initiating stream: {api_error}",
-                    exc_info=True,
-                )
-                raise
-            except Exception as e:
-                logger.error(f"Unexpected error initiating stream: {e}", exc_info=True)
-                raise
+        except (
+            RateLimitError,
+            APITimeoutError,
+            APIConnectionError,
+        ) as transient_error:
+            logger.warning(
+                f"Transient LLM API error initiating stream: {transient_error}",
+                exc_info=True,
+            )
+            raise
+        except APIError as api_error:
+            logger.error(
+                f"Non-retryable LLM API error initiating stream: {api_error}",
+                exc_info=True,
+            )
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error initiating stream: {e}", exc_info=True)
+            raise
 
 
 # Factory function for backward compatibility

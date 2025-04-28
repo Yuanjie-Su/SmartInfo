@@ -105,16 +105,22 @@ export interface AnalyzeContentRequest {
 // API Key Types
 export interface ApiKey {
   id: number;
-  api_name: string;
+  model: string;
+  base_url: string;
   api_key: string;
+  context: number;
+  max_output_tokens: number;
   description?: string;
   created_date?: number;
   modified_date?: number;
 }
 
 export interface ApiKeyCreate {
-  api_name: string;
+  model: string;
+  base_url: string;
   api_key: string;
+  context: number;
+  max_output_tokens: number;
   description?: string;
 }
 

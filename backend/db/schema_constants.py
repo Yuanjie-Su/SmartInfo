@@ -31,8 +31,11 @@ MESSAGE_SEQUENCE_NUMBER = "sequence_number"
 
 # API Config table column names
 API_CONFIG_ID = "id"
-API_CONFIG_NAME = "api_name"
+API_CONFIG_MODEL = "model"
+API_CONFIG_BASE_URL = "base_url"
 API_CONFIG_API_KEY = "api_key"
+API_CONFIG_CONTEXT = "context"
+API_CONFIG_MAX_OUTPUT_TOKENS = "max_output_tokens"
 API_CONFIG_DESCRIPTION = "description"
 API_CONFIG_CREATED_DATE = "created_date"
 API_CONFIG_MODIFIED_DATE = "modified_date"

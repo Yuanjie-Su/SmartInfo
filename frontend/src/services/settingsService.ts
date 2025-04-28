@@ -31,18 +31,24 @@ export const createApiKey = async (apiKey: ApiKeyCreate): Promise<ApiKey> => {
   return response.data;
 };
 
-export const getApiKey = async (apiName: string): Promise<ApiKey> => {
-  const response = await api.get(`${BASE_PATH}/api_keys/${apiName}`);
+export const getApiKey = async (apiKeyId: number): Promise<ApiKey> => {
+  const response = await api.get(`${BASE_PATH}/api_keys/${apiKeyId}`);
   return response.data;
 };
 
-export const updateApiKey = async (apiName: string, apiKey: ApiKeyCreate): Promise<ApiKey> => {
-  const response = await api.put(`${BASE_PATH}/api_keys/${apiName}`, apiKey);
+export const updateApiKey = async (apiKeyId: number, apiKey: ApiKeyCreate): Promise<ApiKey> => {
+  const response = await api.put(`${BASE_PATH}/api_keys/${apiKeyId}`, apiKey);
   return response.data;
 };
 
-export const deleteApiKey = async (apiName: string): Promise<void> => {
-  await api.delete(`${BASE_PATH}/api_keys/${apiName}`);
+export const deleteApiKey = async (apiKeyId: number): Promise<void> => {
+  await api.delete(`${BASE_PATH}/api_keys/${apiKeyId}`);
+};
+
+// API Key Test Functionality
+export const testApiKey = async (apiKeyId: number): Promise<Record<string, any>> => {
+  const response = await api.post(`${BASE_PATH}/api_keys/${apiKeyId}/test`);
+  return response.data;
 };
 
 // LLM Service Test

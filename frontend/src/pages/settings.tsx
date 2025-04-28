@@ -15,7 +15,8 @@ import {
   Switch,
   Select,
   Spin,
-  Alert
+  Alert,
+  InputNumber
 } from 'antd';
 import { 
   EditOutlined, 
@@ -40,8 +41,11 @@ const { Option } = Select;
 
 // API Key form modal
 interface ApiKeyFormValues {
-  api_name: string;
+  model: string;
+  base_url: string;
   api_key: string;
+  context: number;
+  max_output_tokens: number;
   description?: string;
 }
 
@@ -60,7 +64,7 @@ const Settings: React.FC = () => {
   // API Key modal state
   const [isApiKeyModalVisible, setIsApiKeyModalVisible] = useState(false);
   const [apiKeyForm] = Form.useForm<ApiKeyFormValues>();
-  const [editingApiKeyName, setEditingApiKeyName] = useState<string | null>(null);
+  const [editingApiKeyId, setEditingApiKeyId] = useState<number | null>(null);
   const [editingApiKey, setEditingApiKey] = useState<ApiKey | null>(null);
   
   // Category modal state
@@ -174,19 +178,30 @@ const Settings: React.FC = () => {
   const showAddApiKeyModal = () => {
     apiKeyForm.resetFields();
     setEditingApiKey(null);
-    setEditingApiKeyName(null);
+    setEditingApiKeyId(null);
     setIsApiKeyModalVisible(true);
   };
   
   const showEditApiKeyModal = (record: ApiKey) => {
-    apiKeyForm.setFieldsValue({
-      api_name: record.api_name,
-      api_key: '',
-      description: record.description
-    });
     setEditingApiKey(record);
-    setEditingApiKeyName(record.api_name);
-    setIsApiKeyModalVisible(true);
+    setEditingApiKeyId(record.id);
+    
+    // Fetch the API key details including the actual key value
+    settingsService.getApiKey(record.id)
+      .then(apiKeyData => {
+        apiKeyForm.setFieldsValue({
+          model: apiKeyData.model,
+          base_url: apiKeyData.base_url,
+          api_key: apiKeyData.api_key, // Pre-fill with actual API key
+          context: apiKeyData.context,
+          max_output_tokens: apiKeyData.max_output_tokens,
+          description: apiKeyData.description
+        });
+        setIsApiKeyModalVisible(true);
+      })
+      .catch(error => {
+        handleApiError(error, '加载API密钥详情失败');
+      });
   };
   
   const handleApiKeySave = async () => {
@@ -194,17 +209,11 @@ const Settings: React.FC = () => {
       const values = await apiKeyForm.validateFields();
       
       if (editingApiKey) {
-        // 如果API密钥字段为空且正在编辑，提示用户
-        if (!values.api_key) {
-          message.error('请输入API密钥');
-          return;
-        }
-        
-        // 更新现有
-        await settingsService.updateApiKey(editingApiKey.api_name, values);
+        // Update existing
+        await settingsService.updateApiKey(editingApiKeyId!, values);
         message.success('API密钥更新成功');
       } else {
-        // 创建新的
+        // Create new
         await settingsService.createApiKey(values);
         message.success('API密钥创建成功');
       }
@@ -216,13 +225,32 @@ const Settings: React.FC = () => {
     }
   };
   
-  const handleDeleteApiKey = async (apiName: string) => {
+  const handleDeleteApiKey = async (apiKeyId: number) => {
     try {
-      await settingsService.deleteApiKey(apiName);
+      await settingsService.deleteApiKey(apiKeyId);
       message.success('API密钥删除成功');
       loadApiKeys();
     } catch (error) {
       handleApiError(error, '删除API密钥失败');
+    }
+  };
+  
+  // Add test API key function
+  const handleTestApiKey = async (apiKeyId: number) => {
+    const testMessage = message.loading('正在测试API密钥连接...', 0);
+    
+    try {
+      const result = await settingsService.testApiKey(apiKeyId);
+      testMessage();
+      
+      if (result.status === 'success') {
+        message.success('连接测试成功！');
+      } else {
+        message.error(`测试失败: ${result.message}`);
+      }
+    } catch (error) {
+      testMessage();
+      handleApiError(error, '测试API密钥失败');
     }
   };
   
@@ -327,25 +355,35 @@ const Settings: React.FC = () => {
   // API Key columns
   const apiKeyColumns: TableProps<ApiKey>['columns'] = [
     {
-      title: 'API名称',
-      dataIndex: 'api_name',
-      key: 'api_name',
-    },
-    {
-      title: '说明',
-      dataIndex: 'description',
-      key: 'description',
+      title: '模型',
+      dataIndex: 'model',
+      key: 'model',
     },
     {
       title: 'API密钥',
       key: 'api_key',
-      render: () => '••••••••••••••••••',
+      render: () => '••••••••',
+    },
+    {
+      title: '上下文长度',
+      dataIndex: 'context',
+      key: 'context',
+    },
+    {
+      title: '最大输出Token',
+      dataIndex: 'max_output_tokens',
+      key: 'max_output_tokens',
     },
     {
       title: '创建时间',
       dataIndex: 'created_date',
       key: 'created_date',
       render: (date?: number) => date ? new Date(date * 1000).toLocaleString() : '-',
+    },
+    {
+      title: '说明',
+      dataIndex: 'description',
+      key: 'description',
     },
     {
       title: '操作',
@@ -359,9 +397,15 @@ const Settings: React.FC = () => {
           >
             编辑
           </Button>
+          <Button
+            onClick={() => handleTestApiKey(record.id)}
+            size="small"
+          >
+            测试
+          </Button>
           <Popconfirm
             title="确定要删除此API密钥吗？"
-            onConfirm={() => handleDeleteApiKey(record.api_name)}
+            onConfirm={() => handleDeleteApiKey(record.id)}
             okText="是"
             cancelText="否"
           >
@@ -679,25 +723,63 @@ const Settings: React.FC = () => {
         okText={editingApiKey ? '更新' : '创建'}
         cancelText="取消"
       >
-        <Form form={apiKeyForm} layout="vertical">
+        <Form 
+          form={apiKeyForm} 
+          layout="vertical"
+          initialValues={{ context: 16000, max_output_tokens: 4000 }}
+        >
           <Form.Item
-            name="api_name"
-            label="API名称"
-            rules={[{ required: true, message: '请输入API名称' }]}
+            name="model"
+            label="模型名称"
+            rules={[{ required: true, message: '请输入模型名称' }]}
           >
-            <Input 
-              placeholder="例如: openai, anthropic" 
-              disabled={!!editingApiKey}
-            />
+            <Input placeholder="例如: deepseek-chat" />
+          </Form.Item>
+          
+          <Form.Item
+            name="base_url"
+            label="API基础URL"
+            rules={[{ required: true, message: '请输入API基础URL' }]}
+          >
+            <Input placeholder="例如: https://api.deepseek.com" />
           </Form.Item>
           
           <Form.Item
             name="api_key"
             label="API密钥"
-            rules={[{ required: !editingApiKey, message: '请输入API密钥' }]}
-            extra={editingApiKey ? "留空则保持不变" : ""}
+            rules={[{ required: true, message: '请输入API密钥' }]}
           >
             <Input.Password placeholder="输入API密钥" />
+          </Form.Item>
+          
+          <Form.Item
+            name="context"
+            label="上下文长度"
+            rules={[
+              { required: true, message: '请输入上下文长度' },
+              { type: 'number', min: 1, message: '上下文长度必须为正整数' }
+            ]}
+          >
+            <InputNumber style={{ width: '100%' }} placeholder="例如: 16000" />
+          </Form.Item>
+          
+          <Form.Item
+            name="max_output_tokens"
+            label="最大输出Token"
+            rules={[
+              { required: true, message: '请输入最大输出Token' },
+              { type: 'number', min: 1, message: '最大输出Token必须为正整数' },
+              ({ getFieldValue }) => ({
+                validator(_, value) {
+                  if (!value || getFieldValue('context') > value) {
+                    return Promise.resolve();
+                  }
+                  return Promise.reject(new Error('上下文长度必须大于最大输出Token'));
+                },
+              }),
+            ]}
+          >
+            <InputNumber style={{ width: '100%' }} placeholder="例如: 4000" />
           </Form.Item>
           
           <Form.Item

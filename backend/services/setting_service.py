@@ -14,6 +14,7 @@ from backend.config import AppConfig
 from backend.db.repositories.api_key_repository import ApiKeyRepository
 from backend.db.repositories.system_config_repository import SystemConfigRepository
 from backend.models.schemas.api_key import ApiKey
+from backend.core.llm.client import AsyncLLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -32,41 +33,23 @@ class SettingService:
         self._api_key_repo = api_key_repo
         self._system_config_repo = system_config_repo
 
-    async def get_api_key(self, api_name: str) -> Optional[str]:
-        """Get an API key by name (prioritize env vars, then DB)"""
-        # First try from environment variables via config
-        api_key_value = None
-        if api_name.lower() == "deepseek":
-            api_key_value = self._config.get("API_KEY_DEEPSEEK")
-        elif api_name.lower() == "volcengine":
-            api_key_value = self._config.get("LLM_API_KEY")
-
-        # If not found in env vars, try from database
-        if not api_key_value:
-            api_key_tuple = await self._api_key_repo.get_by_name(api_name)
-            if api_key_tuple:
-                api_key_value = api_key_tuple[2]  # index 2 contains the API key
-
-        return api_key_value
-
-    async def get_api_key_by_name(self, api_name: str) -> Optional[ApiKey]:
-        """Get an ApiKey object by name"""
-        api_key_tuple = await self._api_key_repo.get_by_name(api_name)
+    async def get_api_key_by_id(self, api_id: int) -> Optional[ApiKey]:
+        """Get an ApiKey object by ID"""
+        api_key_tuple = await self._api_key_repo.get_by_id(api_id)
         if not api_key_tuple:
             return None
 
-        # Convert tuple to ApiKey and convert timestamps to strings
-        # Assuming timestamps are stored as integers and need conversion for the schema
-        created_date = api_key_tuple[4]
-        modified_date = api_key_tuple[5]
-
+        # Convert tuple to ApiKey
         return ApiKey(
             id=api_key_tuple[0],
-            api_name=api_key_tuple[1],
-            api_key=api_key_tuple[2],
-            description=api_key_tuple[3],
-            created_date=created_date,
-            modified_date=modified_date,
+            model=api_key_tuple[1],
+            base_url=api_key_tuple[2],
+            api_key=api_key_tuple[3],
+            context=api_key_tuple[4],
+            max_output_tokens=api_key_tuple[5],
+            description=api_key_tuple[6],
+            created_date=api_key_tuple[7],
+            modified_date=api_key_tuple[8],
         )
 
     async def get_all_api_keys(self) -> List[ApiKey]:
@@ -75,8 +58,11 @@ class SettingService:
         return [
             ApiKey(
                 id=item["id"],
-                api_name=item["api_name"],
+                model=item["model"],
+                base_url=item["base_url"],
                 api_key=item["api_key"],
+                context=item["context"],
+                max_output_tokens=item["max_output_tokens"],
                 description=item.get("description"),
                 created_date=item.get("created_date"),
                 modified_date=item.get("modified_date"),
@@ -85,56 +71,83 @@ class SettingService:
         ]
 
     async def save_api_key(
-        self, api_name: str, api_key: str, description: Optional[str] = None
+        self,
+        model: str,
+        base_url: str,
+        api_key: str,
+        context: int,
+        max_output_tokens: int,
+        description: Optional[str] = None,
     ) -> ApiKey:
-        """Save an API key (create or update)"""
-        if not api_name or not api_key:
-            raise ValueError("API name and key are required")
+        """Save a new API key"""
+        if not model or not base_url or not api_key:
+            raise ValueError("Model, base URL, and API key are required")
 
-        # Check if API key exists by name
-        existing_key = await self._api_key_repo.get_by_name(api_name)
+        if not isinstance(context, int) or not isinstance(max_output_tokens, int):
+            raise ValueError("Context and max output tokens must be integers")
 
-        if existing_key:
-            # Update existing key using the update method by ID
-            updated = await self._api_key_repo.update(
-                existing_key[0], api_key, description
-            )
-            if updated:
-                return await self.get_api_key_by_name(api_name)
-        else:
-            # Create new key using the add method
-            key_id = await self._api_key_repo.add(api_name, api_key, description)
-            if key_id:
-                return await self.get_api_key_by_name(api_name)
+        if context <= max_output_tokens:
+            raise ValueError("Context must be greater than max output tokens")
 
-        raise ValueError(f"Failed to save API key for {api_name}")
+        # Create new key
+        key_id = await self._api_key_repo.add(
+            model=model,
+            base_url=base_url,
+            api_key=api_key,
+            context=context,
+            max_output_tokens=max_output_tokens,
+            description=description,
+        )
+
+        if key_id:
+            return await self.get_api_key_by_id(key_id)
+
+        raise ValueError(f"Failed to save API key for {model}")
 
     async def update_api_key(
-        self, api_name: str, api_key: str, description: Optional[str] = None
+        self,
+        api_id: int,
+        model: str,
+        base_url: str,
+        context: int,
+        max_output_tokens: int,
+        api_key: Optional[str] = None,
+        description: Optional[str] = None,
     ) -> Optional[ApiKey]:
         """Update an existing API key"""
-        if not api_name or not api_key:
-            raise ValueError("API name and key are required")
+        if not model or not base_url:
+            raise ValueError("Model and base URL are required")
 
-        # Check if API key exists by name
-        existing_key = await self._api_key_repo.get_by_name(api_name)
+        if not isinstance(context, int) or not isinstance(max_output_tokens, int):
+            raise ValueError("Context and max output tokens must be integers")
+
+        if context <= max_output_tokens:
+            raise ValueError("Context must be greater than max output tokens")
+
+        # Check if API key exists by ID
+        existing_key = await self._api_key_repo.get_by_id(api_id)
         if not existing_key:
             return None
 
         # Use the update method by ID
-        updated = await self._api_key_repo.update(existing_key[0], api_key, description)
+        updated = await self._api_key_repo.update(
+            api_id=api_id,
+            model=model,
+            base_url=base_url,
+            api_key=api_key,
+            context=context,
+            max_output_tokens=max_output_tokens,
+            description=description,
+        )
+
         if not updated:
             return None
 
-        return await self.get_api_key_by_name(api_name)
+        return await self.get_api_key_by_id(api_id)
 
-    async def delete_api_key(self, api_name: str) -> bool:
-        """Delete an API key"""
-        existing_key = await self._api_key_repo.get_by_name(api_name)
-        if not existing_key:
-            return False
-
-        return await self._api_key_repo.delete(existing_key[0])
+    async def delete_api_key(self, api_id: int) -> bool:
+        """Delete an API key by ID"""
+        return await self._api_key_repo.delete(api_id)
 
     async def get_all_settings(self) -> Dict[str, Any]:
         """Get all application settings"""
@@ -187,3 +200,74 @@ class SettingService:
             raise RuntimeError("Failed to save default settings to database")
 
         return await self.get_all_settings()
+
+    async def test_api_key_connection(self, api_key_id: int) -> Dict[str, Any]:
+        """
+        Test connection for a specific API key by ID.
+
+        Args:
+            api_key_id: ID of the API key to test
+
+        Returns:
+            Dictionary with test status and results
+
+        Raises:
+            HTTPException: If the API key is not found
+        """
+        # Retrieve the API key by ID
+        api_key_tuple = await self._api_key_repo.get_by_id(api_key_id)
+        if not api_key_tuple:
+            # We'll let the router convert this to a 404 HTTP response
+            from fastapi import HTTPException, status
+
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"API key with ID '{api_key_id}' not found.",
+            )
+
+        # Extract relevant information from the tuple
+        model = api_key_tuple[1]  # model is at index 1
+        base_url = api_key_tuple[2]  # base_url is at index 2
+        api_key = api_key_tuple[3]  # api_key is at index 3
+        max_output_tokens = api_key_tuple[5]  # max_output_tokens is at index 5
+
+        # Create a simple test message
+        test_messages = [{"role": "user", "content": "hello"}]
+
+        # Create a temporary LLM client for testing
+        try:
+            async with AsyncLLMClient(
+                base_url=base_url,
+                api_key=api_key,
+                timeout=10,  # Use a shorter timeout for testing
+            ) as client:
+                # Call the client with minimal tokens for a faster test
+                response_content = await client.get_completion_content(
+                    messages=test_messages,
+                    model=model,
+                    max_tokens=min(
+                        10, max_output_tokens
+                    ),  # Use a small max_tokens value
+                    temperature=0.7,
+                )
+
+                # Check the response
+                if response_content:
+                    return {
+                        "status": "success",
+                        "message": "Connection successful",
+                        "response_snippet": (
+                            f"{response_content[:50]}..."
+                            if len(response_content) > 50
+                            else response_content
+                        ),
+                    }
+                else:
+                    return {
+                        "status": "error",
+                        "message": "Connection test failed: No response received",
+                    }
+
+        except Exception as e:
+            logger.error(f"API key test failed for ID {api_key_id}: {str(e)}")
+            return {"status": "error", "message": f"Connection test failed: {str(e)}"}

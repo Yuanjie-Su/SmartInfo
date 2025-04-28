@@ -55,22 +55,22 @@ async def get_all_api_keys(
 
 
 @router.get(
-    "/api_keys/{api_name}",
+    "/api_keys/{api_key_id}",
     response_model=ApiKey,
-    summary="Get API key by name",
-    description="Retrieve a specific API key by its configured name.",
+    summary="Get API key by ID",
+    description="Retrieve a specific API key by its ID.",
 )
-async def get_api_key_by_name(
-    api_name: str, setting_service: SettingService = Depends(get_setting_service)
+async def get_api_key_by_id(
+    api_key_id: int, setting_service: SettingService = Depends(get_setting_service)
 ):
     """
-    Retrieve details for a single API key identified by its name.
+    Retrieve details for a single API key identified by its ID.
     """
-    api_key = await setting_service.get_api_key_by_name(api_name)
+    api_key = await setting_service.get_api_key_by_id(api_key_id)
     if not api_key:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"API key with name '{api_name}' not found.",
+            detail=f"API key with ID '{api_key_id}' not found.",
         )
     return api_key
 
@@ -79,22 +79,23 @@ async def get_api_key_by_name(
     "/api_keys",
     response_model=ApiKey,
     status_code=status.HTTP_201_CREATED,
-    summary="Save or update an API key",
-    description="Create a new API key or update an existing one if the name matches.",
+    summary="Create a new API key",
+    description="Create a new API key with the provided model, base_url, api_key, context, and max_output_tokens.",
 )
-async def save_api_key(
+async def create_api_key(
     api_key_data: ApiKeyCreate,
     setting_service: SettingService = Depends(get_setting_service),
 ):
     """
-    Save an API key. If an entry with the same `api_name` exists, it updates
-    the `api_key` and `description`. Otherwise, it creates a new entry.
+    Create a new API key with the provided data.
     """
     try:
-        # The service's save_api_key handles both create and update logic
         saved_key = await setting_service.save_api_key(
-            api_name=api_key_data.api_name,
+            model=api_key_data.model,
+            base_url=api_key_data.base_url,
             api_key=api_key_data.api_key,
+            context=api_key_data.context,
+            max_output_tokens=api_key_data.max_output_tokens,
             description=api_key_data.description,
         )
         if not saved_key:  # Should not happen if service throws exceptions correctly
@@ -104,11 +105,11 @@ async def save_api_key(
             )
         return saved_key
     except ValueError as ve:
-        # Catches validation errors like missing name/key from the service
+        # Catches validation errors from the service
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
     except Exception as e:
         logger.exception(
-            f"Failed to save API key '{api_key_data.api_name}'", exc_info=True
+            f"Failed to save API key '{api_key_data.model}'", exc_info=True
         )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -117,41 +118,43 @@ async def save_api_key(
 
 
 @router.put(
-    "/api_keys/{api_name}",
+    "/api_keys/{api_key_id}",
     response_model=ApiKey,
-    summary="Explicitly update an API key",
-    description="Update the key value or description for an existing API key identified by name.",
+    summary="Update an API key",
+    description="Update an existing API key identified by ID.",
 )
 async def update_api_key(
-    api_name: str,
-    # Re-using ApiKeyCreate schema for update payload as it contains all necessary fields
+    api_key_id: int,
     api_key_data: ApiKeyCreate,
     setting_service: SettingService = Depends(get_setting_service),
 ):
     """
-    Update an existing API key. This endpoint requires the API key name in the path
-    and expects the new key value and optional description in the body.
-    Returns 404 if the API key name does not exist.
+    Update an existing API key. This endpoint requires the API key ID in the path
+    and expects the updated values in the body.
+    Returns 404 if the API key ID does not exist.
     """
     try:
-        # The service's update_api_key specifically handles updates for existing keys
         updated_key = await setting_service.update_api_key(
-            api_name=api_name,
+            api_id=api_key_id,
+            model=api_key_data.model,
+            base_url=api_key_data.base_url,
             api_key=api_key_data.api_key,
+            context=api_key_data.context,
+            max_output_tokens=api_key_data.max_output_tokens,
             description=api_key_data.description,
         )
         if not updated_key:
             # Service returns None if the key wasn't found for update
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"API key with name '{api_name}' not found.",
+                detail=f"API key with ID '{api_key_id}' not found.",
             )
         return updated_key
     except ValueError as ve:
-        # Catches validation errors like missing name/key
+        # Catches validation errors
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
     except Exception as e:
-        logger.exception(f"Failed to update API key '{api_name}'", exc_info=True)
+        logger.exception(f"Failed to update API key ID '{api_key_id}'", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An error occurred while updating the API key.",
@@ -159,24 +162,57 @@ async def update_api_key(
 
 
 @router.delete(
-    "/api_keys/{api_name}",
+    "/api_keys/{api_key_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete an API key",
-    description="Delete an API key from the database by its name.",
+    description="Delete an API key from the database by its ID.",
 )
 async def delete_api_key(
-    api_name: str, setting_service: SettingService = Depends(get_setting_service)
+    api_key_id: int, setting_service: SettingService = Depends(get_setting_service)
 ):
     """
-    Remove an API key configuration using its unique name.
+    Remove an API key configuration using its unique ID.
     """
-    success = await setting_service.delete_api_key(api_name)
+    success = await setting_service.delete_api_key(api_key_id)
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"API key with name '{api_name}' not found or deletion failed.",
+            detail=f"API key with ID '{api_key_id}' not found or deletion failed.",
         )
     return None  # No content on success
+
+
+@router.post(
+    "/api_keys/{api_key_id}/test",
+    response_model=Dict[str, Any],
+    summary="Test API key connection",
+    description="Test the connection to the LLM service using a specific API key.",
+)
+async def test_api_key(
+    api_key_id: int, setting_service: SettingService = Depends(get_setting_service)
+):
+    """
+    Test the connection to an LLM service using the specified API key.
+    Performs a simple request to verify API key validity and connectivity.
+
+    Returns success or error status along with any relevant details.
+    """
+    try:
+        result = await setting_service.test_api_key_connection(api_key_id)
+        if result["status"] == "error":
+            # We return a 200 status even for test failures since the API call succeeded
+            # The client should check the "status" field to determine test success
+            return result
+        return result
+    except HTTPException:
+        # Re-raise HTTP exceptions (like 404) directly
+        raise
+    except Exception as e:
+        logger.exception(f"Error testing API key ID {api_key_id}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to test API key: {str(e)}",
+        )
 
 
 # --- System Settings Endpoints ---

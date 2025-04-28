@@ -15,10 +15,11 @@ from typing import Optional
 class ApiKeyBase(BaseModel):
     """Base schema for API key data."""
 
-    api_name: str = Field(
-        ..., description="Name of the API (e.g., 'DeepSeek', 'VolcEngine')"
-    )
+    model: str = Field(..., description="Model identifier (e.g., 'deepseek-chat')")
+    base_url: str = Field(..., description="API base URL")
     api_key: str = Field(..., description="The API key itself (sensitive data)")
+    context: int = Field(..., description="Model context length (in tokens)")
+    max_output_tokens: int = Field(..., description="Maximum output tokens")
     description: Optional[str] = Field(
         None, description="Optional description for the API key"
     )
