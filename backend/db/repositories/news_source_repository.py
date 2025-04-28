@@ -142,3 +142,60 @@ class NewsSourceRepository(BaseRepository):
         except Exception as e:
             logger.error(f"Error checking if news source exists by URL: {e}")
             return False
+
+    async def exists_by_name(self, name: str) -> bool:
+        """Checks if a source exists with the given name."""
+        query_str = f"SELECT 1 FROM {NEWS_SOURCES_TABLE} WHERE name = ? LIMIT 1"
+
+        try:
+            row = await self._fetchone(query_str, (name,))
+            return row is not None
+        except Exception as e:
+            logger.error(f"Error checking if news source exists by name: {e}")
+            return False
+
+    async def get_by_id_as_dict(self, source_id: int) -> Optional[Dict[str, Any]]:
+        """Gets a source by its ID as a dictionary."""
+        query_str = f"""
+            SELECT ns.id, ns.name, ns.url, ns.category_id, nc.name as category_name
+            FROM {NEWS_SOURCES_TABLE} ns
+            JOIN {NEWS_CATEGORY_TABLE} nc ON ns.category_id = nc.id
+            WHERE ns.id = ?
+        """
+
+        try:
+            return await self._fetchone_as_dict(query_str, (source_id,))
+        except Exception as e:
+            logger.error(f"Error getting news source by ID as dict: {e}")
+            return None
+
+    async def get_all_as_dict(self) -> List[Dict[str, Any]]:
+        """Gets all sources with category names as dictionaries."""
+        query_str = f"""
+            SELECT ns.id, ns.name, ns.url, ns.category_id, nc.name as category_name
+            FROM {NEWS_SOURCES_TABLE} ns
+            JOIN {NEWS_CATEGORY_TABLE} nc ON ns.category_id = nc.id
+            ORDER BY nc.name, ns.name
+        """
+
+        try:
+            return await self._fetch_as_dict(query_str)
+        except Exception as e:
+            logger.error(f"Error getting all news sources as dict: {e}")
+            return []
+
+    async def get_by_category_as_dict(self, category_id: int) -> List[Dict[str, Any]]:
+        """Gets all sources for a specific category ID as dictionaries."""
+        query_str = f"""
+            SELECT ns.id, ns.name, ns.url, ns.category_id, nc.name as category_name
+            FROM {NEWS_SOURCES_TABLE} ns
+            JOIN {NEWS_CATEGORY_TABLE} nc ON ns.category_id = nc.id
+            WHERE ns.category_id = ?
+            ORDER BY nc.name, ns.name
+        """
+
+        try:
+            return await self._fetch_as_dict(query_str, (category_id,))
+        except Exception as e:
+            logger.error(f"Error getting news sources by category as dict: {e}")
+            return []

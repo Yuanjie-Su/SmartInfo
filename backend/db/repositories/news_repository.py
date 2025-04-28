@@ -279,17 +279,17 @@ class NewsRepository(BaseRepository):
         if not row:
             return None
         return {
-            "id": row[0],
-            "title": row[1],
-            "url": row[2],
-            "source_name": row[3],
-            "category_name": row[4],
-            "source_id": row[5],
-            "category_id": row[6],
-            "summary": row[7],
-            "analysis": row[8],
-            "date": row[9],
-            "content": row[10],
+            NEWS_ID: row[0],
+            NEWS_TITLE: row[1],
+            NEWS_URL: row[2],
+            NEWS_SOURCE_NAME: row[3],
+            NEWS_CATEGORY_NAME: row[4],
+            NEWS_SOURCE_ID: row[5],
+            NEWS_CATEGORY_ID: row[6],
+            NEWS_SUMMARY: row[7],
+            NEWS_ANALYSIS: row[8],
+            NEWS_DATE: row[9],
+            NEWS_CONTENT: row[10],
         }
 
     async def update_analysis(self, news_id: int, analysis_text: str) -> bool:
@@ -306,3 +306,90 @@ class NewsRepository(BaseRepository):
         except Exception as e:
             logger.error(f"Error updating news analysis: {e}")
             return False
+
+    async def get_by_id_as_dict(self, news_id: int) -> Optional[Dict[str, Any]]:
+        """Gets a news item by its ID as a dictionary."""
+        query_str = f"""
+            SELECT {NEWS_ID}, {NEWS_TITLE}, {NEWS_URL}, {NEWS_SOURCE_NAME},
+                   {NEWS_CATEGORY_NAME}, {NEWS_SOURCE_ID}, {NEWS_CATEGORY_ID},
+                   {NEWS_SUMMARY}, {NEWS_ANALYSIS}, {NEWS_DATE}, {NEWS_CONTENT}
+            FROM {NEWS_TABLE} WHERE {NEWS_ID} = ?
+        """
+        try:
+            return await self._fetchone_as_dict(query_str, (news_id,))
+        except Exception as e:
+            logger.error(f"Error getting news by ID as dict: {e}")
+            return None
+
+    async def get_all_as_dict(
+        self, limit: int = 100, offset: int = 0
+    ) -> List[Dict[str, Any]]:
+        """Gets all news items with pagination as dictionaries."""
+        query_str = f"""
+             SELECT {NEWS_ID}, {NEWS_TITLE}, {NEWS_URL}, {NEWS_SOURCE_NAME},
+                    {NEWS_CATEGORY_NAME}, {NEWS_SOURCE_ID}, {NEWS_CATEGORY_ID},
+                    {NEWS_SUMMARY}, {NEWS_ANALYSIS}, {NEWS_DATE}, {NEWS_CONTENT}
+             FROM {NEWS_TABLE} ORDER BY {NEWS_DATE} DESC, {NEWS_ID} DESC LIMIT ? OFFSET ?
+         """
+        try:
+            return await self._fetch_as_dict(query_str, (limit, offset))
+        except Exception as e:
+            logger.error(f"Error getting all news as dict: {e}")
+            return []
+
+    async def get_news_with_filters_as_dict(
+        self,
+        category_id: Optional[int] = None,
+        source_id: Optional[int] = None,
+        analyzed: Optional[bool] = None,
+        page: int = 1,
+        page_size: int = 20,
+        search_term: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Gets news items with various filters applied as dictionaries."""
+
+        # Start with base query
+        query_str = f"""
+            SELECT {NEWS_ID}, {NEWS_TITLE}, {NEWS_URL}, {NEWS_SOURCE_NAME},
+                   {NEWS_CATEGORY_NAME}, {NEWS_SOURCE_ID}, {NEWS_CATEGORY_ID},
+                   {NEWS_SUMMARY}, {NEWS_ANALYSIS}, {NEWS_DATE}, {NEWS_CONTENT}
+            FROM {NEWS_TABLE}
+            WHERE 1=1
+        """
+
+        # Build parameters list
+        params = []
+
+        # Add filters
+        if category_id is not None:
+            query_str += f" AND {NEWS_CATEGORY_ID} = ?"
+            params.append(category_id)
+
+        if source_id is not None:
+            query_str += f" AND {NEWS_SOURCE_ID} = ?"
+            params.append(source_id)
+
+        if analyzed is not None:
+            if analyzed:
+                query_str += (
+                    f" AND {NEWS_ANALYSIS} IS NOT NULL AND {NEWS_ANALYSIS} != ''"
+                )
+            else:
+                query_str += f" AND ({NEWS_ANALYSIS} IS NULL OR {NEWS_ANALYSIS} = '')"
+
+        if search_term:
+            # Search in title and summary fields
+            search_pattern = f"%{search_term}%"
+            query_str += f" AND ({NEWS_TITLE} LIKE ? OR {NEWS_SUMMARY} LIKE ?)"
+            params.extend([search_pattern, search_pattern])
+
+        # Add pagination
+        offset = (page - 1) * page_size
+        query_str += f" ORDER BY {NEWS_DATE} DESC, {NEWS_ID} DESC LIMIT ? OFFSET ?"
+        params.extend([page_size, offset])
+
+        try:
+            return await self._fetch_as_dict(query_str, tuple(params))
+        except Exception as e:
+            logger.error(f"Error getting filtered news as dict: {e}")
+            return []

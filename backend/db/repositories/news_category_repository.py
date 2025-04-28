@@ -6,7 +6,7 @@ News Category Repository Module for FastAPI backend
 """
 
 import logging
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict, Any
 
 from backend.db.schema_constants import NEWS_CATEGORY_TABLE, NEWS_SOURCES_TABLE
 from backend.db.repositories.base_repository import BaseRepository
@@ -63,6 +63,11 @@ class NewsCategoryRepository(BaseRepository):
             logger.error(f"Error getting category by name: {e}")
             return None
 
+    async def exists_by_name(self, name: str) -> bool:
+        """Checks if a category with the given name exists."""
+        result = await self.get_by_name(name)
+        return result is not None
+
     async def get_all(self) -> List[Tuple[int, str]]:
         """Gets all categories."""
         query_str = f"SELECT id, name FROM {NEWS_CATEGORY_TABLE} ORDER BY name"
@@ -89,36 +94,73 @@ class NewsCategoryRepository(BaseRepository):
             logger.error(f"Error getting categories with source count: {e}")
             return []
 
-    async def update(self, category_id: int, new_name: str) -> bool:
-        """Updates a category's name."""
+    async def update(self, category_id: int, name: str) -> bool:
+        """Updates a category by ID."""
         query_str = f"UPDATE {NEWS_CATEGORY_TABLE} SET name = ? WHERE id = ?"
 
         try:
-            cursor = await self._execute(
-                query_str, (new_name, category_id), commit=True
-            )
+            cursor = await self._execute(query_str, (name, category_id), commit=True)
             updated = self._get_rows_affected(cursor) > 0
             if updated:
-                logger.info(f"Updated category ID {category_id} to name '{new_name}'.")
-            else:
-                logger.warning(
-                    f"Failed to update category ID {category_id} (not found or no change)."
-                )
+                logger.info(f"Updated category ID {category_id} to '{name}'.")
             return updated
         except Exception as e:
             logger.error(f"Error updating category: {e}")
             return False
 
     async def delete(self, category_id: int) -> bool:
-        """Deletes a category (and cascades to news_sources)."""
+        """Deletes a category by ID."""
         query_str = f"DELETE FROM {NEWS_CATEGORY_TABLE} WHERE id = ?"
 
         try:
             cursor = await self._execute(query_str, (category_id,), commit=True)
             deleted = self._get_rows_affected(cursor) > 0
             if deleted:
-                logger.info(f"Deleted category ID {category_id} (cascade may apply).")
+                logger.info(f"Deleted category ID {category_id}.")
             return deleted
         except Exception as e:
             logger.error(f"Error deleting category: {e}")
             return False
+
+    async def get_all_as_dict(self) -> List[dict]:
+        """Gets all categories as dictionaries."""
+        query_str = f"SELECT id, name FROM {NEWS_CATEGORY_TABLE} ORDER BY name"
+
+        try:
+            return await self._fetch_as_dict(query_str)
+        except Exception as e:
+            logger.error(f"Error getting all categories as dict: {e}")
+            return []
+
+    async def get_with_source_count_as_dict(self) -> List[dict]:
+        """Gets all categories with count of sources for each category as dictionaries."""
+        query_str = f"""
+            SELECT c.id, c.name, COUNT(s.id) as source_count
+            FROM {NEWS_CATEGORY_TABLE} c
+            LEFT JOIN {NEWS_SOURCES_TABLE} s ON c.id = s.category_id
+            GROUP BY c.id, c.name
+            ORDER BY c.name
+        """
+
+        try:
+            return await self._fetch_as_dict(query_str)
+        except Exception as e:
+            logger.error(f"Error getting categories with source count as dict: {e}")
+            return []
+
+    async def get_by_id_as_dict(self, category_id: int) -> Optional[Dict[str, Any]]:
+        """Gets a category by its ID as a dictionary.
+
+        Args:
+            category_id: ID of the category to retrieve
+
+        Returns:
+            Dictionary with category data or None if not found
+        """
+        query_str = f"SELECT id, name FROM {NEWS_CATEGORY_TABLE} WHERE id = ?"
+
+        try:
+            return await self._fetchone_as_dict(query_str, (category_id,))
+        except Exception as e:
+            logger.error(f"Error getting category by ID as dict: {e}")
+            return None

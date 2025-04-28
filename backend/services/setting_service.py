@@ -35,22 +35,13 @@ class SettingService:
 
     async def get_api_key_by_id(self, api_id: int) -> Optional[ApiKey]:
         """Get an ApiKey object by ID"""
-        api_key_tuple = await self._api_key_repo.get_by_id(api_id)
-        if not api_key_tuple:
+        # Use the new repository method that returns a dictionary
+        api_key_dict = await self._api_key_repo.get_by_id_as_dict(api_id)
+        if not api_key_dict:
             return None
 
-        # Convert tuple to ApiKey
-        return ApiKey(
-            id=api_key_tuple[0],
-            model=api_key_tuple[1],
-            base_url=api_key_tuple[2],
-            api_key=api_key_tuple[3],
-            context=api_key_tuple[4],
-            max_output_tokens=api_key_tuple[5],
-            description=api_key_tuple[6],
-            created_date=api_key_tuple[7],
-            modified_date=api_key_tuple[8],
-        )
+        # Convert dictionary to ApiKey
+        return ApiKey(**api_key_dict)
 
     async def get_all_api_keys(self) -> List[ApiKey]:
         """Get all API keys"""
@@ -214,9 +205,9 @@ class SettingService:
         Raises:
             HTTPException: If the API key is not found
         """
-        # Retrieve the API key by ID
-        api_key_tuple = await self._api_key_repo.get_by_id(api_key_id)
-        if not api_key_tuple:
+        # Retrieve the API key by ID using the dictionary method
+        api_key_dict = await self._api_key_repo.get_by_id_as_dict(api_key_id)
+        if not api_key_dict:
             # We'll let the router convert this to a 404 HTTP response
             from fastapi import HTTPException, status
 
@@ -225,11 +216,11 @@ class SettingService:
                 detail=f"API key with ID '{api_key_id}' not found.",
             )
 
-        # Extract relevant information from the tuple
-        model = api_key_tuple[1]  # model is at index 1
-        base_url = api_key_tuple[2]  # base_url is at index 2
-        api_key = api_key_tuple[3]  # api_key is at index 3
-        max_output_tokens = api_key_tuple[5]  # max_output_tokens is at index 5
+        # Extract relevant information from the dictionary
+        model = api_key_dict["model"]
+        base_url = api_key_dict["base_url"]
+        api_key = api_key_dict["api_key"]
+        max_output_tokens = api_key_dict["max_output_tokens"]
 
         # Create a simple test message
         test_messages = [{"role": "user", "content": "hello"}]

@@ -151,10 +151,7 @@ class ChatRepository(BaseRepository):
                 FROM {CHATS_TABLE} WHERE {CHAT_ID} = ?
             """
 
-            row = await self._fetchone(query_str, (chat_id,))
-            if row:
-                return self._row_to_dict(row)
-            return None
+            return await self._fetchone_as_dict(query_str, (chat_id,))
 
         except Exception as e:
             logger.error(f"Failed to get chat {chat_id}: {str(e)}")
@@ -179,8 +176,7 @@ class ChatRepository(BaseRepository):
                 LIMIT ? OFFSET ?
             """
 
-            rows = await self._fetchall(query_str, (limit, offset))
-            return [self._row_to_dict(row) for row in rows if row]
+            return await self._fetch_as_dict(query_str, (limit, offset))
 
         except Exception as e:
             logger.error(f"Failed to get chats: {str(e)}")
@@ -214,8 +210,8 @@ class ChatRepository(BaseRepository):
             Dict[str, Any]: Dictionary with chat data
         """
         return {
-            "id": row[0],
-            "title": row[1],
-            "created_at": row[2],
-            "updated_at": row[3],
+            CHAT_ID: row[0],
+            CHAT_TITLE: row[1],
+            CHAT_CREATED_AT: row[2],
+            CHAT_UPDATED_AT: row[3],
         }

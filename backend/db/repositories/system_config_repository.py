@@ -9,7 +9,12 @@ Provides data access operations for system configuration settings
 import logging
 from typing import List, Optional, Tuple, Dict, Any
 
-from backend.db.schema_constants import SYSTEM_CONFIG_TABLE
+from backend.db.schema_constants import (
+    SYSTEM_CONFIG_TABLE,
+    SYSTEM_CONFIG_KEY,
+    SYSTEM_CONFIG_VALUE,
+    SYSTEM_CONFIG_DESCRIPTION,
+)
 from backend.db.repositories.base_repository import BaseRepository
 
 logger = logging.getLogger(__name__)
@@ -39,8 +44,8 @@ class SystemConfigRepository(BaseRepository):
             # Update existing record
             query_str = f"""
                 UPDATE {SYSTEM_CONFIG_TABLE} 
-                SET config_value = ?, description = ?
-                WHERE config_key = ?
+                SET {SYSTEM_CONFIG_VALUE} = ?, {SYSTEM_CONFIG_DESCRIPTION} = ?
+                WHERE {SYSTEM_CONFIG_KEY} = ?
             """
             try:
                 cursor = await self._execute(
@@ -58,7 +63,7 @@ class SystemConfigRepository(BaseRepository):
         else:
             # Insert new record
             query_str = f"""
-                INSERT INTO {SYSTEM_CONFIG_TABLE} (config_key, config_value, description)
+                INSERT INTO {SYSTEM_CONFIG_TABLE} ({SYSTEM_CONFIG_KEY}, {SYSTEM_CONFIG_VALUE}, {SYSTEM_CONFIG_DESCRIPTION})
                 VALUES (?, ?, ?)
             """
             try:
@@ -86,8 +91,8 @@ class SystemConfigRepository(BaseRepository):
             Tuple of (config_key, config_value, description) or None if not found
         """
         query_str = f"""
-            SELECT config_key, config_value, description
-            FROM {SYSTEM_CONFIG_TABLE} WHERE config_key = ?
+            SELECT {SYSTEM_CONFIG_KEY}, {SYSTEM_CONFIG_VALUE}, {SYSTEM_CONFIG_DESCRIPTION}
+            FROM {SYSTEM_CONFIG_TABLE} WHERE {SYSTEM_CONFIG_KEY} = ?
         """
         try:
             return await self._fetchone(query_str, (config_key,))
@@ -102,7 +107,7 @@ class SystemConfigRepository(BaseRepository):
         Returns:
             Dictionary mapping config_keys to config_values
         """
-        query_str = f"SELECT config_key, config_value FROM {SYSTEM_CONFIG_TABLE}"
+        query_str = f"SELECT {SYSTEM_CONFIG_KEY}, {SYSTEM_CONFIG_VALUE} FROM {SYSTEM_CONFIG_TABLE}"
         try:
             rows = await self._fetchall(query_str)
             return {row[0]: row[1] for row in rows}
@@ -118,8 +123,8 @@ class SystemConfigRepository(BaseRepository):
             List of dictionaries with config_key, config_value, and description
         """
         query_str = f"""
-            SELECT config_key, config_value, description
-            FROM {SYSTEM_CONFIG_TABLE} ORDER BY config_key
+            SELECT {SYSTEM_CONFIG_KEY}, {SYSTEM_CONFIG_VALUE}, {SYSTEM_CONFIG_DESCRIPTION}
+            FROM {SYSTEM_CONFIG_TABLE} ORDER BY {SYSTEM_CONFIG_KEY}
         """
         try:
             return await self._fetch_as_dict(query_str)
@@ -137,7 +142,7 @@ class SystemConfigRepository(BaseRepository):
         Returns:
             True if deleted, False otherwise
         """
-        query_str = f"DELETE FROM {SYSTEM_CONFIG_TABLE} WHERE config_key = ?"
+        query_str = f"DELETE FROM {SYSTEM_CONFIG_TABLE} WHERE {SYSTEM_CONFIG_KEY} = ?"
         try:
             cursor = await self._execute(query_str, (config_key,), commit=True)
             deleted = self._get_rows_affected(cursor) > 0

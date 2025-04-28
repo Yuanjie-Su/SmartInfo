@@ -128,11 +128,14 @@ async def create_news_item(
         if not created_item_dict:
             # Check if failure was due to duplicate URL
             if "url" in news_item_dict and await news_service._news_repo.exists_by_url(
-                str(news_item_dict["url"])  # Ensure URL is string for check
+                str(
+                    news_item_dict.get("url", "")
+                ).strip()  # Ensure URL is string for check
             ):
+                url_str = str(news_item_dict.get("url", "")).strip()
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail=f"News item with URL '{news_item_dict['url']}' already exists.",
+                    detail=f"News item with URL '{url_str}' already exists.",
                 )
             else:
                 # Generic creation failure
@@ -336,7 +339,7 @@ async def get_sources_by_category(
             )
 
         # Get sources for the category
-        sources = await news_service.get_sources_by_category(category_id)
+        sources = await news_service.get_sources_by_category_id(category_id)
         return sources
     except HTTPException:
         raise
@@ -385,36 +388,31 @@ async def create_news_source(
     Required fields:
     - name: Unique name for the source
     - url: Base URL of the source
-    - rss_feed_url: URL of the RSS feed, or None if source doesn't provide RSS
-
-    At least one of rss_feed_url or (selector_headline, selector_content) must be provided.
+    - category_id: ID of the category the source belongs to
     """
     try:
         # Convert to dictionary for service layer
         source_data_dict = source_data.model_dump(exclude_unset=True)
 
         # Basic validation
-        url = source_data_dict.get("url", "").strip()
+        url = str(source_data_dict.get("url", "")).strip()
         name = source_data_dict.get("name", "").strip()
-        rss_feed_url = source_data_dict.get("rss_feed_url", "").strip()
-        selector_headline = source_data_dict.get("selector_headline", "").strip()
-        selector_content = source_data_dict.get("selector_content", "").strip()
+        category_id = source_data_dict.get("category_id")
 
-        if not name or not url:
+        if not all([name, url, category_id]):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Name and URL are required.",
-            )
-
-        # Check that we have either RSS feed or selectors
-        if not rss_feed_url and (not selector_headline or not selector_content):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Either RSS feed URL or HTML selectors (headline and content) are required.",
+                detail="Name, URL and category ID are required.",
             )
 
         # Attempt to create the source
-        created_source = await news_service.create_source(source_data_dict)
+        created_source = await news_service.create_source(
+            {
+                "name": name,
+                "url": url,
+                "category_id": category_id,
+            }
+        )
         if not created_source:
             # Check if it's because the name already exists
             if await news_service._source_repo.exists_by_name(name):
@@ -498,7 +496,7 @@ async def update_news_source(
                 )
 
         if "url" in source_data_dict:
-            url = source_data_dict.get("url", "").strip()
+            url = str(source_data_dict.get("url", "")).strip()
             if not url:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -611,6 +609,7 @@ async def get_all_news_categories(
     """
     try:
         categories = await news_service.get_all_categories()
+        logger.info(f"Retrieved {len(categories)} news categories: {categories}")
         return categories
     except Exception as e:
         logger.exception("Failed to retrieve news categories", exc_info=True)
@@ -848,7 +847,7 @@ async def trigger_fetch_single_url(
     should_analyze=True to immediately run analysis on the fetched content.
     """
     try:
-        url = request.url
+        url = str(request.url).strip()
         source_id = request.source_id  # Can be None
         should_analyze = request.should_analyze or False
 
@@ -887,7 +886,9 @@ async def trigger_fetch_single_url(
     except HTTPException:
         raise  # Re-raise HTTP exceptions
     except Exception as e:
-        logger.exception(f"Failed to fetch single URL: {request.url}", exc_info=True)
+        logger.exception(
+            f"Failed to fetch single URL: {str(request.url).strip()}", exc_info=True
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"An error occurred while fetching the URL: {str(e)}",

@@ -496,14 +496,14 @@ Markdown:
     # -------------------------------------------------------------------------
     # --- News Item Methods ---
     async def get_news_by_id(self, news_id: int) -> Optional[Dict[str, Any]]:
-        """Get a news item by ID."""
-        return await self._news_repo.get_by_id(news_id)
+        """Get a news item by ID"""
+        return await self._news_repo.get_by_id_as_dict(news_id)
 
     async def get_all_news(
         self, limit: int = 100, offset: int = 0
     ) -> List[Dict[str, Any]]:
-        """Get all news items with pagination."""
-        return await self._news_repo.get_all(limit, offset)
+        """Get all news items with pagination"""
+        return await self._news_repo.get_all_as_dict(limit, offset)
 
     async def get_news_with_filters(
         self,
@@ -514,8 +514,8 @@ Markdown:
         page_size: int = 20,
         search_term: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """Get news items with various filters applied."""
-        return await self._news_repo.get_news_with_filters(
+        """Get news items with filters"""
+        return await self._news_repo.get_news_with_filters_as_dict(
             category_id=category_id,
             source_id=source_id,
             analyzed=has_analysis,
@@ -547,21 +547,63 @@ Markdown:
         return await self._news_repo.clear_all()
 
     # --- Category Methods ---
-    async def get_all_categories(self) -> List[Tuple[int, str]]:
-        """Get all news categories."""
-        return await self._category_repo.get_all()
+    async def get_all_categories(self) -> List[Dict[str, Any]]:
+        """Get all categories"""
+        return await self._category_repo._fetch_as_dict(
+            """
+            SELECT id, name FROM news_category
+            """
+        )
 
-    async def get_all_categories_with_counts(self) -> List[Tuple[int, str, int]]:
-        """Get all news categories with source counts."""
-        return await self._category_repo.get_with_source_count()
+    async def get_all_categories_with_counts(self) -> List[Dict[str, Any]]:
+        """Get all categories with news item counts"""
+        return await self._category_repo.get_with_source_count_as_dict()
+
+    async def get_category_by_id(self, category_id: int) -> Optional[Dict[str, Any]]:
+        """Get a category by ID"""
+        return await self._category_repo.get_by_id_as_dict(category_id)
 
     async def add_category(self, name: str) -> Optional[int]:
         """Add a new category."""
         return await self._category_repo.add(name)
 
+    async def create_category(
+        self, category_data: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """Create a new category using data from a dictionary (typically from a Pydantic model)"""
+        name = category_data.get("name", "").strip()
+        if not name:
+            return None
+
+        category_id = await self._category_repo.add(name)
+        if not category_id:
+            return None
+
+        # Return a dictionary with the created category data
+        return {"id": category_id, "name": name}
+
     async def update_category(self, category_id: int, new_name: str) -> bool:
         """Update a category name."""
         return await self._category_repo.update(category_id, new_name)
+
+    async def update_category_from_dict(
+        self, category_id: int, category_data: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """Update a category using data from a dictionary (typically from a Pydantic model)"""
+        new_name = category_data.get("name", "").strip()
+        if not new_name:
+            return None
+
+        success = await self._category_repo.update(category_id, new_name)
+        if not success:
+            return None
+
+        # Return the updated category data
+        category = await self._category_repo.get_by_id(category_id)
+        if not category:
+            return None
+
+        return {"id": category[0], "name": category[1]}
 
     async def delete_category(self, category_id: int) -> bool:
         """Delete a category."""
@@ -570,59 +612,18 @@ Markdown:
 
     # --- Source Methods ---
     async def get_all_sources(self) -> List[Dict[str, Any]]:
-        """Get all news sources with category names.
-        Returns a list of dictionaries, each containing source info + category name."""
-        sources = await self._source_repo.get_all()
-        result = []
-        for source in sources:
-            result.append(
-                {
-                    "id": source[0],
-                    "name": source[1],
-                    "url": source[2],
-                    "category_id": source[3],
-                    "category_name": source[4],
-                }
-            )
-        return result
+        """Get all news sources with category information"""
+        return await self._source_repo.get_all_as_dict()
 
     async def get_sources_by_category_id(
         self, category_id: int
     ) -> List[Dict[str, Any]]:
-        """Get all sources in a specific category.
-        Returns a list of dictionaries, each containing source info + category name."""
-        sources = await self._source_repo.get_by_category(category_id)
-        result = []
-        for source in sources:
-            result.append(
-                {
-                    "id": source[0],
-                    "name": source[1],
-                    "url": source[2],
-                    "category_id": source[3],
-                    "category_name": source[4],
-                }
-            )
-        return result
+        """Get all news sources for a specific category"""
+        return await self._source_repo.get_by_category_as_dict(category_id)
 
     async def get_source_by_id(self, source_id: int) -> Optional[Dict[str, Any]]:
-        """Get a news source by ID.
-        Returns a dictionary with source info + category name."""
-        source = await self._source_repo.get_by_id(source_id)
-        if not source:
-            return None
-
-        # Get category name for this source's category_id
-        category = await self._category_repo.get_by_id(source[3])
-        category_name = category[1] if category else "Unknown"
-
-        return {
-            "id": source[0],
-            "name": source[1],
-            "url": source[2],
-            "category_id": source[3],
-            "category_name": category_name,
-        }
+        """Get a news source by ID with category information"""
+        return await self._source_repo.get_by_id_as_dict(source_id)
 
     async def add_source(
         self, name: str, url: str, category_name: str
@@ -704,3 +705,37 @@ Markdown:
         """Analyze specific news items (optionally force re-analysis)."""
         # 同上，保持原样即可
         return f"Started analysis task for {len(news_ids)} news items."
+
+    async def create_source(
+        self, source_data: Dict[str, Any]
+    ) -> Optional[Dict[str, Any]]:
+        """Create a news source from dictionary data"""
+        # Extract required fields
+        name = source_data.get("name", "").strip()
+        url = source_data.get("url", "").strip()
+        category_id = source_data.get("category_id")
+
+        # Validate required fields
+        if not name or not url or not category_id:
+            logger.warning("Missing required fields for source creation")
+            return None
+
+        # Check if source with name or URL already exists
+        if await self._source_repo.exists_by_name(name):
+            logger.warning(f"Source with name '{name}' already exists")
+            return None
+
+        if await self._source_repo.exists_by_url(url):
+            logger.warning(f"Source with URL '{url}' already exists")
+            return None
+
+        # Add the source to the database
+        source_id = await self._source_repo.add(
+            name=name, url=url, category_id=category_id
+        )
+        if not source_id:
+            logger.error("Failed to add source to database")
+            return None
+
+        # Return the newly created source
+        return await self.get_source_by_id(source_id)

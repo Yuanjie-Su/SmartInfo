@@ -19,6 +19,7 @@ from typing import Optional
 # Import using backend package path
 from backend.config import config
 from backend.db.schema_constants import (
+    # Table names
     NEWS_CATEGORY_TABLE,
     NEWS_SOURCES_TABLE,
     NEWS_TABLE,
@@ -26,6 +27,46 @@ from backend.db.schema_constants import (
     SYSTEM_CONFIG_TABLE,
     CHATS_TABLE,
     MESSAGES_TABLE,
+    # News category columns
+    # News source columns
+    # News columns
+    NEWS_ID,
+    NEWS_TITLE,
+    NEWS_URL,
+    NEWS_SOURCE_NAME,
+    NEWS_CATEGORY_NAME,
+    NEWS_SOURCE_ID,
+    NEWS_CATEGORY_ID,
+    NEWS_SUMMARY,
+    NEWS_ANALYSIS,
+    NEWS_DATE,
+    NEWS_CONTENT,
+    # API config columns
+    API_CONFIG_ID,
+    API_CONFIG_MODEL,
+    API_CONFIG_BASE_URL,
+    API_CONFIG_API_KEY,
+    API_CONFIG_CONTEXT,
+    API_CONFIG_MAX_OUTPUT_TOKENS,
+    API_CONFIG_DESCRIPTION,
+    API_CONFIG_CREATED_DATE,
+    API_CONFIG_MODIFIED_DATE,
+    # System config columns
+    SYSTEM_CONFIG_KEY,
+    SYSTEM_CONFIG_VALUE,
+    SYSTEM_CONFIG_DESCRIPTION,
+    # Chat columns
+    CHAT_ID,
+    CHAT_TITLE,
+    CHAT_CREATED_AT,
+    CHAT_UPDATED_AT,
+    # Message columns
+    MESSAGE_ID,
+    MESSAGE_CHAT_ID,
+    MESSAGE_SENDER,
+    MESSAGE_CONTENT,
+    MESSAGE_TIMESTAMP,
+    MESSAGE_SEQUENCE_NUMBER,
 )
 
 logger = logging.getLogger(__name__)
@@ -169,32 +210,32 @@ class DatabaseConnectionManager:
         await self._execute_schema_query(
             f"""
             CREATE TABLE IF NOT EXISTS {NEWS_TABLE} (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                title TEXT NOT NULL,
-                url TEXT NOT NULL UNIQUE,
-                source_name TEXT NOT NULL,
-                category_name TEXT NOT NULL,
-                source_id INTEGER,
-                category_id INTEGER,
-                summary TEXT,
-                analysis TEXT,
-                date TEXT,
-                content TEXT,
-                FOREIGN KEY (source_id) REFERENCES {NEWS_SOURCES_TABLE}(id) ON DELETE SET NULL,
-                FOREIGN KEY (category_id) REFERENCES {NEWS_CATEGORY_TABLE}(id) ON DELETE SET NULL
+                {NEWS_ID} INTEGER PRIMARY KEY AUTOINCREMENT,
+                {NEWS_TITLE} TEXT NOT NULL,
+                {NEWS_URL} TEXT NOT NULL UNIQUE,
+                {NEWS_SOURCE_NAME} TEXT NOT NULL,
+                {NEWS_CATEGORY_NAME} TEXT NOT NULL,
+                {NEWS_SOURCE_ID} INTEGER,
+                {NEWS_CATEGORY_ID} INTEGER,
+                {NEWS_SUMMARY} TEXT,
+                {NEWS_ANALYSIS} TEXT,
+                {NEWS_DATE} TEXT,
+                {NEWS_CONTENT} TEXT,
+                FOREIGN KEY ({NEWS_SOURCE_ID}) REFERENCES {NEWS_SOURCES_TABLE}(id) ON DELETE SET NULL,
+                FOREIGN KEY ({NEWS_CATEGORY_ID}) REFERENCES {NEWS_CATEGORY_TABLE}(id) ON DELETE SET NULL
             )
         """
         )
 
         await self._execute_schema_query(
             f"""
-            CREATE INDEX IF NOT EXISTS idx_news_url ON {NEWS_TABLE} (url)
+            CREATE INDEX IF NOT EXISTS idx_news_url ON {NEWS_TABLE} ({NEWS_URL})
         """
         )
 
         await self._execute_schema_query(
             f"""
-            CREATE INDEX IF NOT EXISTS idx_news_date ON {NEWS_TABLE} (date)
+            CREATE INDEX IF NOT EXISTS idx_news_date ON {NEWS_TABLE} ({NEWS_DATE})
         """
         )
 
@@ -202,15 +243,15 @@ class DatabaseConnectionManager:
         await self._execute_schema_query(
             f"""
             CREATE TABLE IF NOT EXISTS {API_CONFIG_TABLE} (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                model TEXT NOT NULL,
-                base_url TEXT NOT NULL,
-                api_key TEXT NOT NULL,
-                context INTEGER NOT NULL,
-                max_output_tokens INTEGER NOT NULL,
-                description TEXT,
-                created_date INTEGER NOT NULL,
-                modified_date INTEGER NOT NULL
+                {API_CONFIG_ID} INTEGER PRIMARY KEY AUTOINCREMENT,
+                {API_CONFIG_MODEL} TEXT NOT NULL,
+                {API_CONFIG_BASE_URL} TEXT NOT NULL,
+                {API_CONFIG_API_KEY} TEXT NOT NULL,
+                {API_CONFIG_CONTEXT} INTEGER NOT NULL,
+                {API_CONFIG_MAX_OUTPUT_TOKENS} INTEGER NOT NULL,
+                {API_CONFIG_DESCRIPTION} TEXT,
+                {API_CONFIG_CREATED_DATE} INTEGER NOT NULL,
+                {API_CONFIG_MODIFIED_DATE} INTEGER NOT NULL
             )
         """
         )
@@ -219,9 +260,9 @@ class DatabaseConnectionManager:
         await self._execute_schema_query(
             f"""
             CREATE TABLE IF NOT EXISTS {SYSTEM_CONFIG_TABLE} (
-                config_key TEXT PRIMARY KEY NOT NULL,
-                config_value TEXT NOT NULL,
-                description TEXT
+                {SYSTEM_CONFIG_KEY} TEXT PRIMARY KEY NOT NULL,
+                {SYSTEM_CONFIG_VALUE} TEXT NOT NULL,
+                {SYSTEM_CONFIG_DESCRIPTION} TEXT
             )
         """
         )
@@ -230,23 +271,23 @@ class DatabaseConnectionManager:
         await self._execute_schema_query(
             f"""
             CREATE TABLE IF NOT EXISTS {CHATS_TABLE} (
-                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-                title TEXT NOT NULL,
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER
+                {CHAT_ID} INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                {CHAT_TITLE} TEXT NOT NULL,
+                {CHAT_CREATED_AT} INTEGER NOT NULL,
+                {CHAT_UPDATED_AT} INTEGER
             )
         """
         )
 
         await self._execute_schema_query(
             f"""
-            CREATE INDEX IF NOT EXISTS idx_chats_created_at ON {CHATS_TABLE} (created_at)
+            CREATE INDEX IF NOT EXISTS idx_chats_created_at ON {CHATS_TABLE} ({CHAT_CREATED_AT})
         """
         )
 
         await self._execute_schema_query(
             f"""
-            CREATE INDEX IF NOT EXISTS idx_chats_updated_at ON {CHATS_TABLE} (updated_at)
+            CREATE INDEX IF NOT EXISTS idx_chats_updated_at ON {CHATS_TABLE} ({CHAT_UPDATED_AT})
         """
         )
 
@@ -254,32 +295,32 @@ class DatabaseConnectionManager:
         await self._execute_schema_query(
             f"""
             CREATE TABLE IF NOT EXISTS {MESSAGES_TABLE} (
-                id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-                chat_id INTEGER NOT NULL,
-                sender TEXT NOT NULL,
-                content TEXT NOT NULL,
-                timestamp INTEGER NOT NULL,
-                sequence_number INTEGER NOT NULL,
-                FOREIGN KEY (chat_id) REFERENCES {CHATS_TABLE}(id) ON DELETE CASCADE
+                {MESSAGE_ID} INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                {MESSAGE_CHAT_ID} INTEGER NOT NULL,
+                {MESSAGE_SENDER} TEXT NOT NULL,
+                {MESSAGE_CONTENT} TEXT NOT NULL,
+                {MESSAGE_TIMESTAMP} INTEGER NOT NULL,
+                {MESSAGE_SEQUENCE_NUMBER} INTEGER NOT NULL,
+                FOREIGN KEY ({MESSAGE_CHAT_ID}) REFERENCES {CHATS_TABLE}(id) ON DELETE CASCADE
             )
         """
         )
 
         await self._execute_schema_query(
             f"""
-            CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON {MESSAGES_TABLE} (chat_id)
+            CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON {MESSAGES_TABLE} ({MESSAGE_CHAT_ID})
         """
         )
 
         await self._execute_schema_query(
             f"""
-            CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON {MESSAGES_TABLE} (timestamp)
+            CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON {MESSAGES_TABLE} ({MESSAGE_TIMESTAMP})
         """
         )
 
         await self._execute_schema_query(
             f"""
-            CREATE INDEX IF NOT EXISTS idx_messages_chat_id_seq ON {MESSAGES_TABLE} (chat_id, sequence_number)
+            CREATE INDEX IF NOT EXISTS idx_messages_chat_id_seq ON {MESSAGES_TABLE} ({MESSAGE_CHAT_ID}, {MESSAGE_SEQUENCE_NUMBER})
         """
         )
 

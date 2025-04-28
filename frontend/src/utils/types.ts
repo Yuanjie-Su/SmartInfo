@@ -78,6 +78,15 @@ export interface NewsFilterParams {
   search_term?: string;
 }
 
+// Task Types for News Fetching
+export interface FetchTaskItem {
+  sourceId: number;       // Source ID
+  sourceName: string;     // Source Name
+  status: 'pending' | 'fetching' | 'complete' | 'error'; // Possible statuses
+  progress?: number;     //  Progress percentage (0-100)
+  message?: string;      //  For displaying error messages
+}
+
 export interface UpdateAnalysisRequest {
   analysis: string;
 }

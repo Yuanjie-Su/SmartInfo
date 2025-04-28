@@ -208,10 +208,7 @@ class MessageRepository(BaseRepository):
                 FROM {MESSAGES_TABLE} WHERE {MESSAGE_ID} = ?
             """
 
-            row = await self._fetchone(query_str, (message_id,))
-            if row:
-                return self._row_to_dict(row)
-            return None
+            return await self._fetchone_as_dict(query_str, (message_id,))
 
         except Exception as e:
             logger.error(f"Failed to get message {message_id}: {str(e)}")
@@ -236,8 +233,7 @@ class MessageRepository(BaseRepository):
                 ORDER BY {MESSAGE_SEQUENCE_NUMBER} ASC
             """
 
-            rows = await self._fetchall(query_str, (chat_id,))
-            return [self._row_to_dict(row) for row in rows]
+            return await self._fetch_as_dict(query_str, (chat_id,))
 
         except Exception as e:
             logger.error(f"Failed to get messages for chat {chat_id}: {str(e)}")
@@ -306,10 +302,10 @@ class MessageRepository(BaseRepository):
             Dict[str, Any]: A dictionary with message fields
         """
         return {
-            "id": row[0],
-            "chat_id": row[1],
-            "sender": row[2],
-            "content": row[3],
-            "timestamp": row[4],
-            "sequence_number": row[5],
+            MESSAGE_ID: row[0],
+            MESSAGE_CHAT_ID: row[1],
+            MESSAGE_SENDER: row[2],
+            MESSAGE_CONTENT: row[3],
+            MESSAGE_TIMESTAMP: row[4],
+            MESSAGE_SEQUENCE_NUMBER: row[5],
         }

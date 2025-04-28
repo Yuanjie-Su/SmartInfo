@@ -16,7 +16,8 @@ import {
   Select,
   Spin,
   Alert,
-  InputNumber
+  InputNumber,
+  Tag
 } from 'antd';
 import { 
   EditOutlined, 
@@ -67,15 +68,12 @@ const Settings: React.FC = () => {
   const [editingApiKeyId, setEditingApiKeyId] = useState<number | null>(null);
   const [editingApiKey, setEditingApiKey] = useState<ApiKey | null>(null);
   
-  // Category modal state
-  const [isCategoryModalVisible, setIsCategoryModalVisible] = useState(false);
-  const [categoryForm] = Form.useForm<{ name: string }>();
-  const [editingCategoryId, setEditingCategoryId] = useState<number | null>(null);
-  
   // Source modal state
   const [isSourceModalVisible, setIsSourceModalVisible] = useState(false);
   const [sourceForm] = Form.useForm<{ name: string; url: string; category_id: number }>();
   const [editingSourceId, setEditingSourceId] = useState<number | null>(null);
+  const [newCategoryName, setNewCategoryName] = useState<string>('');
+  const [isAddCategoryModalVisible, setIsAddCategoryModalVisible] = useState(false);
   
   // Settings form
   const [settingsForm] = Form.useForm();
@@ -254,54 +252,6 @@ const Settings: React.FC = () => {
     }
   };
   
-  // Category management
-  const showAddCategoryModal = () => {
-    categoryForm.resetFields();
-    setEditingCategoryId(null);
-    setIsCategoryModalVisible(true);
-  };
-  
-  const showEditCategoryModal = (record: NewsCategory) => {
-    categoryForm.setFieldsValue({
-      name: record.name
-    });
-    setEditingCategoryId(record.id);
-    setIsCategoryModalVisible(true);
-  };
-  
-  const handleCategorySave = async () => {
-    try {
-      const values = await categoryForm.validateFields();
-      
-      if (editingCategoryId) {
-        // Update existing
-        await newsService.updateCategory(editingCategoryId, values);
-        message.success('Category updated successfully');
-      } else {
-        // Create new
-        await newsService.createCategory(values);
-        message.success('Category created successfully');
-      }
-      
-      setIsCategoryModalVisible(false);
-      loadCategories();
-    } catch (error) {
-      console.error('Failed to save category:', error);
-      message.error('Failed to save category');
-    }
-  };
-  
-  const handleDeleteCategory = async (id: number) => {
-    try {
-      await newsService.deleteCategory(id);
-      message.success('Category deleted successfully');
-      loadCategories();
-    } catch (error) {
-      console.error('Failed to delete category:', error);
-      message.error('Failed to delete category');
-    }
-  };
-  
   // Source management
   const showAddSourceModal = () => {
     sourceForm.resetFields();
@@ -350,6 +300,50 @@ const Settings: React.FC = () => {
       console.error('Failed to delete source:', error);
       message.error('Failed to delete source');
     }
+  };
+  
+  // Category management
+  const handleAddCategoryClick = () => {
+    setNewCategoryName('');
+    setIsAddCategoryModalVisible(true);
+  };
+  
+  const handleCreateCategory = async () => {
+    if (!newCategoryName.trim()) {
+      message.error('类别名称不能为空');
+      return;
+    }
+    
+    try {
+      const newCategory = await newsService.createCategory({ name: newCategoryName });
+      message.success('类别创建成功');
+      await loadCategories();
+      setIsAddCategoryModalVisible(false);
+      
+      // Optionally select the new category in the form
+      sourceForm.setFieldsValue({ category_id: newCategory.id });
+    } catch (error) {
+      handleApiError(error, '创建类别失败');
+    }
+  };
+  
+  const handleDeleteCategoryTag = (categoryId: number) => {
+    Modal.confirm({
+      title: '确认删除',
+      content: '确定要删除此类别吗？删除后无法恢复。',
+      okText: '删除',
+      cancelText: '取消',
+      okType: 'danger',
+      onOk: async () => {
+        try {
+          await newsService.deleteCategory(categoryId);
+          message.success('类别删除成功');
+          await loadCategories();
+        } catch (error) {
+          handleApiError(error, '删除类别失败');
+        }
+      }
+    });
   };
   
   // API Key columns
@@ -411,43 +405,6 @@ const Settings: React.FC = () => {
           >
             <Button 
               danger
-              icon={<DeleteOutlined />}
-              size="small"
-            >
-              删除
-            </Button>
-          </Popconfirm>
-        </Space>
-      ),
-    },
-  ];
-  
-  const categoryColumns: TableProps<NewsCategory>['columns'] = [
-    {
-      title: '类别名称',
-      dataIndex: 'name',
-      key: 'name',
-    },
-    {
-      title: '操作',
-      key: 'actions',
-      render: (_: any, record: NewsCategory) => (
-        <Space>
-          <Button 
-            icon={<EditOutlined />} 
-            onClick={() => showEditCategoryModal(record)}
-            size="small"
-          >
-            编辑
-          </Button>
-          <Popconfirm
-            title="确定要删除此类别吗？"
-            onConfirm={() => handleDeleteCategory(record.id)}
-            okText="是"
-            cancelText="否"
-          >
-            <Button 
-              danger 
               icon={<DeleteOutlined />}
               size="small"
             >
@@ -581,63 +538,6 @@ const Settings: React.FC = () => {
                 pagination={false}
               />
             </Spin>
-          </TabPane>
-          
-          <TabPane 
-            tab={<><ApiOutlined /> 新闻类别</>} 
-            key="categories"
-          >
-            <div style={{ marginBottom: 16 }}>
-              <Button 
-                type="primary" 
-                icon={<PlusOutlined />} 
-                onClick={showAddCategoryModal}
-              >
-                添加类别
-              </Button>
-            </div>
-            
-            <Table 
-              dataSource={categories} 
-              columns={[
-                {
-                  title: '类别名称',
-                  dataIndex: 'name',
-                  key: 'name',
-                },
-                {
-                  title: '操作',
-                  key: 'actions',
-                  render: (_: any, record: NewsCategory) => (
-                    <Space>
-                      <Button 
-                        icon={<EditOutlined />} 
-                        onClick={() => showEditCategoryModal(record)}
-                        size="small"
-                      >
-                        编辑
-                      </Button>
-                      <Popconfirm
-                        title="确定要删除此类别吗？"
-                        onConfirm={() => handleDeleteCategory(record.id)}
-                        okText="是"
-                        cancelText="否"
-                      >
-                        <Button 
-                          danger 
-                          icon={<DeleteOutlined />}
-                          size="small"
-                        >
-                          删除
-                        </Button>
-                      </Popconfirm>
-                    </Space>
-                  ),
-                },
-              ]} 
-              rowKey="id"
-              loading={loading}
-            />
           </TabPane>
           
           <TabPane 
@@ -791,26 +691,6 @@ const Settings: React.FC = () => {
         </Form>
       </Modal>
       
-      {/* Category Modal */}
-      <Modal
-        title={editingCategoryId ? '编辑类别' : '添加类别'}
-        open={isCategoryModalVisible}
-        onOk={handleCategorySave}
-        onCancel={() => setIsCategoryModalVisible(false)}
-        okText={editingCategoryId ? '更新' : '创建'}
-        cancelText="取消"
-      >
-        <Form form={categoryForm} layout="vertical">
-          <Form.Item
-            name="name"
-            label="类别名称"
-            rules={[{ required: true, message: '请输入类别名称' }]}
-          >
-            <Input />
-          </Form.Item>
-        </Form>
-      </Modal>
-      
       {/* Source Modal */}
       <Modal
         title={editingSourceId ? '编辑来源' : '添加来源'}
@@ -819,6 +699,7 @@ const Settings: React.FC = () => {
         onCancel={() => setIsSourceModalVisible(false)}
         okText={editingSourceId ? '更新' : '创建'}
         cancelText="取消"
+        width={600}
       >
         <Form form={sourceForm} layout="vertical">
           <Form.Item
@@ -842,7 +723,19 @@ const Settings: React.FC = () => {
           
           <Form.Item
             name="category_id"
-            label="类别"
+            label={
+              <Space>
+                <span>类别</span>
+                <Button 
+                  type="link" 
+                  icon={<PlusOutlined />} 
+                  onClick={handleAddCategoryClick}
+                  size="small"
+                >
+                  添加类别
+                </Button>
+              </Space>
+            }
             rules={[{ required: true, message: '请选择类别' }]}
           >
             <Select>
@@ -850,6 +743,48 @@ const Settings: React.FC = () => {
                 <Option key={category.id} value={category.id}>{category.name}</Option>
               ))}
             </Select>
+          </Form.Item>
+          
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ marginBottom: 8 }}>已有类别:</div>
+            <div>
+              {categories.map(category => (
+                <Tag 
+                  key={category.id} 
+                  closable 
+                  onClose={(e) => {
+                    e.preventDefault();
+                    handleDeleteCategoryTag(category.id);
+                  }}
+                  style={{ marginBottom: 8 }}
+                >
+                  {category.name}
+                </Tag>
+              ))}
+            </div>
+          </div>
+        </Form>
+      </Modal>
+      
+      {/* Add Category Modal */}
+      <Modal
+        title="添加新类别"
+        open={isAddCategoryModalVisible}
+        onOk={handleCreateCategory}
+        onCancel={() => setIsAddCategoryModalVisible(false)}
+        okText="创建"
+        cancelText="取消"
+      >
+        <Form layout="vertical">
+          <Form.Item
+            label="类别名称"
+            rules={[{ required: true, message: '请输入类别名称' }]}
+          >
+            <Input 
+              value={newCategoryName} 
+              onChange={(e) => setNewCategoryName(e.target.value)} 
+              placeholder="输入新类别名称"
+            />
           </Form.Item>
         </Form>
       </Modal>

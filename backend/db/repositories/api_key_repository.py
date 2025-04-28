@@ -89,7 +89,7 @@ class ApiKeyRepository(BaseRepository):
     ) -> bool:
         """Updates an API key by ID."""
         # Get current values
-        existing = await self.get_by_id(api_id)
+        existing = await self.get_by_id_as_dict(api_id)
         if not existing:
             logger.warning(f"Failed to update API key ID {api_id} (not found).")
             return False
@@ -110,10 +110,14 @@ class ApiKeyRepository(BaseRepository):
                 (
                     model,
                     base_url,
-                    api_key if api_key is not None else existing[3],
-                    context if context is not None else existing[4],
-                    max_output_tokens if max_output_tokens is not None else existing[5],
-                    description if description is not None else existing[6],
+                    api_key if api_key is not None else existing["api_key"],
+                    context if context is not None else existing["context"],
+                    (
+                        max_output_tokens
+                        if max_output_tokens is not None
+                        else existing["max_output_tokens"]
+                    ),
+                    description if description is not None else existing["description"],
                     current_time,
                     api_id,
                 ),
@@ -152,6 +156,21 @@ class ApiKeyRepository(BaseRepository):
 
         try:
             return await self._fetchone(query_str, (api_id,))
+        except Exception as e:
+            logger.error(f"Error getting API key by ID: {e}")
+            return None
+
+    async def get_by_id_as_dict(self, api_id: int) -> Optional[Dict[str, Any]]:
+        """Gets an API key by ID as a dictionary."""
+        query_str = f"""
+            SELECT {API_CONFIG_ID}, {API_CONFIG_MODEL}, {API_CONFIG_BASE_URL}, 
+            {API_CONFIG_API_KEY}, {API_CONFIG_CONTEXT}, {API_CONFIG_MAX_OUTPUT_TOKENS}, 
+            {API_CONFIG_DESCRIPTION}, {API_CONFIG_CREATED_DATE}, {API_CONFIG_MODIFIED_DATE} 
+            FROM {API_CONFIG_TABLE} WHERE {API_CONFIG_ID} = ?
+        """
+
+        try:
+            return await self._fetchone_as_dict(query_str, (api_id,))
         except Exception as e:
             logger.error(f"Error getting API key by ID: {e}")
             return None
