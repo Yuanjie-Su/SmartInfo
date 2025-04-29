@@ -18,22 +18,15 @@ logger = logging.getLogger(__name__)
 class BaseRepository:
     """Base repository for database operations using aiosqlite."""
 
-    def __init__(
-        self, connection: Optional[aiosqlite.Connection] = None
-    ):  # Accept optional connection
-        """Initialize the repository with a database connection."""
-        self._connection = connection  # Use provided connection if available
+    # def __init__(
+    #     self, connection: Optional[aiosqlite.Connection] = None
+    # ):  # Accept optional connection
+    #     """Initialize the repository with a database connection."""
+    #     self._connection = connection  # Use provided connection if available
 
     async def _get_connection(self) -> aiosqlite.Connection:
         """Get a database connection."""
-        if self._connection is not None:  # Use the instance's connection if set
-            return self._connection
-        # Otherwise, use the global dependency-injected connection getter
-        conn = await get_db_connection()
-        if not conn:
-            logger.error("Database connection manager has not been initialized.")
-            raise RuntimeError("Database connection manager has not been initialized.")
-        return conn
+        return await get_db_connection()
 
     async def _execute(
         self, query: str, params: Tuple = (), commit: bool = False

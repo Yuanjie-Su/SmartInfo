@@ -84,53 +84,39 @@ async def get_db_connection_dependency() -> aiosqlite.Connection:
 # --- Repository Dependencies ---
 
 
-async def get_api_key_repository(
-    db: aiosqlite.Connection = Depends(get_db_connection_dependency),
-) -> ApiKeyRepository:
+async def get_api_key_repository() -> ApiKeyRepository:
     """Provides an instance of ApiKeyRepository."""
-    return ApiKeyRepository(db)
+    return ApiKeyRepository()
 
 
-async def get_chat_repository(
-    db: aiosqlite.Connection = Depends(get_db_connection_dependency),
-) -> ChatRepository:
+async def get_chat_repository() -> ChatRepository:
     """Provides an instance of ChatRepository."""
-    return ChatRepository(db)
+    return ChatRepository()
 
 
-async def get_message_repository(
-    db: aiosqlite.Connection = Depends(get_db_connection_dependency),
-) -> MessageRepository:
+async def get_message_repository() -> MessageRepository:
     """Provides an instance of MessageRepository."""
-    return MessageRepository(db)
+    return MessageRepository()
 
 
-async def get_news_repository(
-    db: aiosqlite.Connection = Depends(get_db_connection_dependency),
-) -> NewsRepository:
+async def get_news_repository() -> NewsRepository:
     """Provides an instance of NewsRepository."""
-    return NewsRepository(db)
+    return NewsRepository()
 
 
-async def get_news_category_repository(
-    db: aiosqlite.Connection = Depends(get_db_connection_dependency),
-) -> NewsCategoryRepository:
+async def get_news_category_repository() -> NewsCategoryRepository:
     """Provides an instance of NewsCategoryRepository."""
-    return NewsCategoryRepository(db)
+    return NewsCategoryRepository()
 
 
-async def get_news_source_repository(
-    db: aiosqlite.Connection = Depends(get_db_connection_dependency),
-) -> NewsSourceRepository:
+async def get_news_source_repository() -> NewsSourceRepository:
     """Provides an instance of NewsSourceRepository."""
-    return NewsSourceRepository(db)
+    return NewsSourceRepository()
 
 
-async def get_system_config_repository(
-    db: aiosqlite.Connection = Depends(get_db_connection_dependency),
-) -> SystemConfigRepository:
+async def get_system_config_repository() -> SystemConfigRepository:
     """Provides an instance of SystemConfigRepository."""
-    return SystemConfigRepository(db)
+    return SystemConfigRepository()
 
 
 # --- Service Dependencies ---

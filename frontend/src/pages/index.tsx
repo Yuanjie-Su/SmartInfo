@@ -20,7 +20,8 @@ import {
   Checkbox,
   Drawer,
   Progress,
-  message
+  message,
+  Tooltip
 } from 'antd';
 import { 
   SearchOutlined,
@@ -381,21 +382,9 @@ const NewsPage: React.FC = () => {
 
   return (
     <div>
-      {/* Action buttons (replacing the old title) */}
-      <div style={{ marginBottom: 16 }}>
-        <Space>
-          <Button type="primary" icon={<DownloadOutlined />} onClick={showFetchModal}>
-            获取资讯
-          </Button>
-          <Button icon={<BarsOutlined />} onClick={() => setIsTaskDrawerVisible(true)}>
-            查看进度 {tasksToMonitor.length > 0 ? `(${tasksToMonitor.filter(t => t.status !== 'complete' && t.status !== 'error').length})` : ''}
-          </Button>
-        </Space>
-      </div>
-      
-      {/* 过滤控件 */}
-      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-        <Col xs={24} sm={12} md={8} lg={6}>
+      {/* Consolidated top controls in a single row */}
+      <Row gutter={[16, 16]} style={{ marginBottom: 24 }} align="middle">
+        <Col xs={24} sm={12} md={5} lg={5}>
           <Select
             placeholder="选择分类"
             style={{ width: '100%' }}
@@ -408,7 +397,7 @@ const NewsPage: React.FC = () => {
             ))}
           </Select>
         </Col>
-        <Col xs={24} sm={12} md={8} lg={6}>
+        <Col xs={24} sm={12} md={5} lg={5}>
           <Select
             placeholder="选择来源"
             style={{ width: '100%' }}
@@ -421,13 +410,23 @@ const NewsPage: React.FC = () => {
             ))}
           </Select>
         </Col>
-        <Col xs={24} sm={24} md={8} lg={12}>
+        <Col xs={24} sm={24} md={8} lg={8}>
           <Input
             placeholder="搜索新闻"
             prefix={<SearchOutlined />}
             onChange={(e) => debouncedSearch(e.target.value)}
             allowClear
           />
+        </Col>
+        <Col xs={12} sm={12} md={3} lg={3}>
+          <Button type="primary" icon={<DownloadOutlined />} onClick={showFetchModal} style={{ width: '100%' }}>
+            获取资讯
+          </Button>
+        </Col>
+        <Col xs={12} sm={12} md={3} lg={3}>
+          <Button icon={<BarsOutlined />} onClick={() => setIsTaskDrawerVisible(true)} style={{ width: '100%' }}>
+            查看进度 {tasksToMonitor.length > 0 ? `(${tasksToMonitor.filter(t => t.status !== 'complete' && t.status !== 'error').length})` : ''}
+          </Button>
         </Col>
       </Row>
       
@@ -464,56 +463,68 @@ const NewsPage: React.FC = () => {
             dataSource={news}
             renderItem={(item) => (
               <List.Item>
-                <Card 
-                  hoverable
-                  cover={item.summary && (
-                    <div style={{ height: 120, overflow: 'hidden', background: '#f5f5f5', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      <Text ellipsis style={{ padding: 16 }}>{item.summary}</Text>
-                    </div>
-                  )}
+                <Tooltip 
+                  title={item.summary} 
+                  color="#ffffff" 
+                  overlayInnerStyle={{ color: '#333333' }}
                 >
-                  <Card.Meta
-                    title={
-                      <Link href={`/news/${item.id}`}>
-                        <Text strong ellipsis style={{ height: 48 }}>
-                          {item.title}
-                        </Text>
-                      </Link>
-                    }
-                    description={
-                      <Space direction="vertical" size={0} style={{ width: '100%' }}>
-                        <Space>
-                          <GlobalOutlined />
-                          <Text type="secondary">{item.source_name}</Text>
+                  <Card hoverable style={{ borderRadius: '4px', boxShadow: 'none', border: '1px solid #f0f0f0' }}>
+                    <Card.Meta
+                      title={
+                        <Link href={`/news/${item.id}`}>
+                          <Text strong ellipsis style={{ fontSize: '16px', display: 'block', lineHeight: '1.4', maxHeight: '2.8em', overflow: 'hidden' }}>
+                            {item.title}
+                          </Text>
+                        </Link>
+                      }
+                      description={
+                        <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                          {/* Date, Source, Category on one line */}
+                          <Space size={16} wrap>
+                            <Space size={4}>
+                              <CalendarOutlined style={{ color: '#8c8c8c' }} />
+                              <Text type="secondary" style={{ fontSize: '12px' }}>{formatDate(item.date)}</Text>
+                            </Space>
+                            <Space size={4}>
+                              <GlobalOutlined style={{ color: '#8c8c8c' }} />
+                              <Text type="secondary" style={{ fontSize: '12px' }}>{item.source_name}</Text>
+                            </Space>
+                            <Space size={4}>
+                              <TagOutlined style={{ color: '#8c8c8c' }} />
+                              <Text type="secondary" style={{ fontSize: '12px' }}>{item.category_name}</Text>
+                            </Space>
+                          </Space>
+                          
+                          {/* Summary with ellipsis */}
+                          {item.summary && (
+                            <Paragraph ellipsis={{ rows: 3 }} style={{ marginBottom: '8px', color: '#595959' }}>
+                              {item.summary}
+                            </Paragraph>
+                          )}
+                          
+                          {/* Analysis button at bottom right */}
+                          <div style={{ textAlign: 'right' }}>
+                            <Button 
+                              type="text" 
+                              icon={<ExperimentOutlined />}
+                              disabled={!item.analysis}
+                              size="small"
+                              style={{ padding: '0px 8px' }}
+                            >
+                              {item.analysis ? '查看分析' : '暂无分析'}
+                            </Button>
+                          </div>
                         </Space>
-                        <Space>
-                          <TagOutlined />
-                          <Text type="secondary">{item.category_name}</Text>
-                        </Space>
-                        <Space>
-                          <CalendarOutlined />
-                          <Text type="secondary">{formatDate(item.date)}</Text>
-                        </Space>
-                        <Divider style={{ margin: '8px 0' }} />
-                        <div style={{ textAlign: 'right' }}>
-                          <Button 
-                            type="link" 
-                            icon={<ExperimentOutlined />}
-                            disabled={!item.analysis}
-                          >
-                            {item.analysis ? '查看分析' : '暂无分析'}
-                          </Button>
-                        </div>
-                      </Space>
-                    }
-                  />
-                </Card>
+                      }
+                    />
+                  </Card>
+                </Tooltip>
               </List.Item>
             )}
           />
           
-          {/* 分页 */}
-          <div style={{ textAlign: 'center', marginTop: 24 }}>
+          {/* 分页 - centered with more info */}
+          <div style={{ textAlign: 'center', marginTop: 24, display: 'flex', justifyContent: 'center' }}>
             <Pagination
               current={filters.page}
               pageSize={filters.page_size}
@@ -624,8 +635,8 @@ const NewsPage: React.FC = () => {
             </List.Item>
           )}
         />
-        <Divider/>
-        <Button onClick={() => setTasksToMonitor([])} disabled={!tasksToMonitor.some(t => t.status === 'complete' || t.status === 'error')}>
+        <Divider style={{ margin: '16px 0', borderColor: '#f5f5f5' }}/>
+        <Button onClick={() => setTasksToMonitor([])} disabled={!tasksToMonitor.some(t => t.status === 'complete' || t.status === 'error')} type="text">
             清除已完成/错误的任务
         </Button>
       </Drawer>

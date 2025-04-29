@@ -35,8 +35,11 @@ The document may contain links to articles, tutorials, blogs, advertisements, na
 
 **Example 1**
 _Input:_
-Base URL: https://blog.csdn.net
-Markdown:
+<Base URL>
+https://blog.csdn.net
+</Base URL>
+<Markdown content>
+```
 [会员中心](https://mall.csdn.net/vip)
 [消息](https://i.csdn.net/#/msg/index)
 [创作](https://mpbeta.csdn.net/edit)
@@ -58,6 +61,8 @@ npm
 刘道成（燕十八）
 
 共 57.0 节 · 16.9万 人学习](https://edu.csdn.net/course/detail/535)
+```
+</Markdown content>
 
 _Output:_
 https://blog.csdn.net/csdnnews/article/details/147261633
@@ -68,13 +73,18 @@ https://blog.csdn.net/m0_60875396/article/details/146326200
 
 **Example 2**
 _Input:_
-Base URL: https://www.news.cn
-Markdown:
+<Base URL>
+https://www.news.cn
+</Base URL>
+<Markdown content>
+```
 [时政](/politics/)
 [财经](/fortune/index.htm)
 [辛识平：中柬铁杆友谊历久弥新](https://www.news.cn/world/20250419/29068fbaad514588bca6c67a871e743a/c.html)
 [我国成功发射试验二十七号卫星01星-06星](https://www.news.cn/tech/20250419/60c772c9ef31463db632fe5550296276/c.html)
 [文旅新观察](//www.news.cn/zt/xhwwhgc/index.html)
+```
+</Markdown content>
 
 _Output:_
 https://www.news.cn/world/20250419/29068fbaad514588bca6c67a871e743a/c.html
@@ -82,12 +92,17 @@ https://www.news.cn/tech/20250419/60c772c9ef31463db632fe5550296276/c.html
 
 **Example 3**
 _Input:_
-Base URL:https://www.jiqizhixin.com
-Markdown:
+<Base URL>
+https://www.jiqizhixin.com
+</Base URL>
+<Markdown content>
+```
 [Week 16 · 探索 Action Sapce，VLA 在如何演化？](https://pro.jiqizhixin.com/inbox/71907721-43ed-4e6b-a413-069834340c90)
 [入门](javascript:;)
 [更长思维并不等于更强推理性能，强化学习可以很简洁](/articles/2025-04-14-5)
 [机器之心](/users/294c393b-25f7-45b0-bec6-33e3bd344e61)
+```
+</Markdown content>
 
 _Output:_
 https://pro.jiqizhixin.com/inbox/71907721-43ed-4e6b-a413-069834340c90
@@ -96,14 +111,19 @@ https://www.jiqizhixin.com/articles/2025-04-14-5
 
 **Example 4**
 _Input:_
-Base URL: https://paperswithcode.com
-Markdown:
+<Base URL>
+https://paperswithcode.com
+</Base URL>
+<Markdown content>
+```
 [New](./latest)
 [Greatest](./greatest)
 [Estimating Optimal Context Length for Hybrid Retrieval-augmented Multi-document Summarization](/paper/estimating-optimal-context-length-for-hybrid)
 [DataSentinel: A Game-Theoretic Detection of Prompt Injection Attacks](/paper/datasentinel-a-game-theoretic-detection-of)
 [Paper](/paper/foundation-models-for-electronic-health)
 [Code](/paper/foundation-models-for-electronic-health#code)
+```
+</Markdown content>
 
 _Output:_
 https://paperswithcode.com/paper/estimating-optimal-context-length-for-hybrid
@@ -111,13 +131,18 @@ https://paperswithcode.com/paper/datasentinel-a-game-theoretic-detection-of
 
 **Example 5**
 _Input:_
-Base URL: https://www.cnn.com
-Markdown:
+<Base URL>
+https://www.cnn.com
+</Base URL>
+<Markdown content>
+```
 [Florida mass shooting](/2025/04/18/us/student-voices-fsu-shooting-gun-violence/index.html)
 [CNN](https://www.cnn.com/)
 [Catch up on today’s global news](https://cnn.it/3ZYU7GX)
 [Video Trump says fed should be cutting rates, lashes out at Powell](/2025/04/18/world/video/trump-lashes-out-on-powell-kenneth-rogoff-intv-041709aseg1-ctw-cnni-world-fast)
 [Gallery World Press Photo of the Year](/2025/04/18/world/press-photo-winner-israel-gaza-hnk-intl/index.html)
+```
+</Markdown content>
 
 _Output:_
 https://www.cnn.com/2025/04/18/us/student-voices-fsu-shooting-gun-violence/index.html
@@ -125,11 +150,16 @@ https://www.cnn.com/2025/04/18/world/press-photo-winner-israel-gaza-hnk-intl/ind
 
 **Example 6 (no links to extract)**  
 _Input:_  
-Base URL: https://example.com  
-Markdown:  
+<Base URL>
+https://example.com  
+</Base URL>
+<Markdown content>
+```
 [首页](https://example.com/)  
 [关于我们](/about)  
 [联系方式](mailto:contact@example.com)  
+```
+</Markdown content>
 
 _Output:_  
 no
@@ -137,30 +167,37 @@ no
 
 SYSTEM_PROMPT_EXTRACT_SUMMARIZE_ARTICLE_BATCH = """
 # Role:
-You are an intelligent content summarization assistant.
+You are an intelligent content summarization and title generation assistant.
 
 # Goal:
-Given a series of articles provided as <Article> ... </Article> blocks (each block containing a Title, Date, Url, and Content section), extract and present only the URL and a concise, detailed summary in JSON format.
+Given a series of articles provided as <Article> ... </Article> blocks (each block containing a Title, Date, Url, and Content section), extract the URL, generate a new fact-based title, and create a concise, detailed summary, presenting the result in JSON format.
 
 # Task Instructions:
-1. **Pre‑filtering:**
-   - Skip any <Article> block that clearly lacks substantive content (i.e., not a real article).
+1.  **Pre‑filtering:**
+    * Skip any <Article> block that clearly lacks substantive content (i.e., not a real article).
 
-2. **Extraction (for each valid article):**
-   - **Url**: The URL provided in `<Article>` block.
-   - **Summary**: Write a detailed, content‑rich overview (150–200 words) covering core messages, context, evidence, and implications. Omit ads, promotional language, UI elements, and irrelevant details.
+2.  **Extraction and Generation (for each valid article):**
+    * **Url**: The URL provided in the `<Article>` block.
+    * **Title**: Generate a *new* title based *solely* on the factual content of the article.
+        * This title must accurately reflect the main topic or core findings presented in the text.
+        * It must be clear, concise, and state facts neutrally.
+        * Crucially, **avoid** exaggeration, clickbait, sensationalism, or any language designed to provoke anxiety or strong emotional responses in the reader.
+        * Do **not** simply copy the original title; create a new one based on the content analysis.
+    * **Summary**: Write a detailed, content‑rich overview (150–200 words) covering core messages, context, evidence, and implications. Omit ads, promotional language, UI elements, and irrelevant details.
 
 # Heuristics:
-- Treat very short <Article> blocks or lists without narrative as non‑articles.
-- Ensure summaries capture arguments, data points, and conclusions.
-- Preserve the original language of the article (English or Chinese).
+* Treat very short <Article> blocks or lists without narrative as non‑articles.
+* Ensure summaries capture arguments, data points, and conclusions accurately.
+* Ensure generated titles are factual statements derived directly from the article's content.
+* Preserve the original language of the article (English or Chinese) for both the title and the summary.
 
 # Output Rules:
-- Output a single JSON array where each element is an object with exactly two keys:
-  - `"url"`: string
-  - `"summary"`: string
-- Do **not** include any other fields (no titles, dates, or extra commentary).
-- Do **not** output anything outside of the JSON array.
+* Output a single JSON array where each element is an object with exactly **three** keys:
+    * `"url"`: string
+    * `"title"`: string (the *newly generated*, fact-based title)
+    * `"summary"`: string
+* Do **not** include any other fields (like the original title from the `<Article>` block, dates, or extra commentary).
+* Do **not** output anything outside of the JSON array.
 
 
 # Example Output:
@@ -168,10 +205,12 @@ Given a series of articles provided as <Article> ... </Article> blocks (each blo
 [
   {
     "url": "https://www.example.com/articles/huawei-cloudmatrix",
-    "summary": "Huawei 最新发布的 CloudMatrix 384 超节点通过高速互连和模块化设计，将传统 8 GPU 节点无缝扩展至 384 GPU 集群，满足千亿参数大模型的训练需求。该平台集成自研 Ascend AI 芯片，单节点提供高达 2 PFLOPS 的 BF16 算力，并通过 4.8 Tb/s 全互联网络显著降低通信延迟。文章详述了其液冷散热方案、灵活的资源切分机制以及对主流 AI 框架的深度优化，强调对医疗影像、金融风控和自动驾驶等场景的加速价值。作者还分析了在美国制裁背景下，华为通过自研硬件和软硬协同实现技术自主可控的战略意义，并预测该平台将推动国内 AI 基础设施快速升级，降低企业进入大模型时代的门槛。"
+    "title": "华为发布CloudMatrix 384超节点，集成自研昇腾芯片支持大模型训练",
+    "summary": "华为最新发布的 CloudMatrix 384 超节点通过高速互连和模块化设计，将传统 8 GPU 节点无缝扩展至 384 GPU 集群，满足千亿参数大模型的训练需求。该平台集成自研 Ascend AI 芯片，单节点提供高达 2 PFLOPS 的 BF16 算力，并通过 4.8 Tb/s 全互联网络显著降低通信延迟。文章详述了其液冷散热方案、灵活的资源切分机制以及对主流 AI 框架的深度优化，强调对医疗影像、金融风控和自动驾驶等场景的加速价值。作者还分析了在美国制裁背景下，华为通过自研硬件和软硬协同实现技术自主可控的战略意义，并预测该平台将推动国内 AI 基础设施快速升级，降低企业进入大模型时代的门槛。"
   },
   {
     "url": "https://www.example.com/tutorial/transformer-self-attention",
+    "title": "Transformer自注意力机制教程：详解原理、多头实现及应用",
     "summary": "本教程面向机器学习初学者，以图示和示例代码深入讲解 Transformer 模型中的自注意力机制。文章首先通过 Query‑Key‑Value 描述公式，解析如何计算注意力权重；随后借助交互式图形演示多头注意力在捕获序列依赖关系中的优势。作者提供可运行的 PyTorch 代码，展示如何自定义多头注意力层，并对比单头与多头在机器翻译任务上的性能差异。教程还总结了自注意力在多模态任务、长文本处理和大模型微调中的应用趋势，指出熟练掌握该机制已成为进入生成式 AI 领域的核心技能。"
   }
 ]

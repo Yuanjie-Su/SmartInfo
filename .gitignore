@@ -66,3 +66,6 @@ pytest.ini
 # Test data
 tests/
 stastic.py
+test.py
+test_data/
+test_db.py

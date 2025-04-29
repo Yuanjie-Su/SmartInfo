@@ -149,7 +149,12 @@ def clean_markdown_links(
     filtered_links = []
     for text, url in extracted_links:
         full_url = urljoin(base_url, url)
-        if full_url not in exclude_urls:
+        if exclude_urls is None:
+            filtered_links.append(f"[{text}]({full_url})")
+            continue
+
+        # Check if the full URL is in the exclude_urls list
+        if not exclude_urls or full_url not in exclude_urls:
             filtered_links.append(f"[{text}]({full_url})")
         else:
             break
@@ -178,6 +183,17 @@ def strip_markdown_divider(raw_text: str) -> str:
         return ""
 
     return re.sub(r"^\s*([-*_]\s*){3,}\s*$", "", raw_text, flags=re.MULTILINE)
+
+
+def strip_javascript_links(raw_text: str) -> str:
+    """
+    Remove JavaScript links from Markdown text.
+    """
+    if not raw_text:
+        return ""
+
+    # [学术君](javascript:;)
+    return re.sub(r"\[[^\]]*\]\(javascript:;\)", "", raw_text)
 
 
 def strip_markdown_links(raw_text: str) -> str:

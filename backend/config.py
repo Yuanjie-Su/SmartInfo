@@ -10,7 +10,6 @@ Application Configuration Module
 
 import logging
 import os
-import json
 from typing import Any, Optional, Dict, Type, TYPE_CHECKING
 
 # Configure module-level logger
@@ -123,13 +122,13 @@ class AppConfig:
             logger.info(f"Loaded {len(self._db_config)} settings from database.")
 
             # Ensure default persistent settings exist in DB
-            self._ensure_default_persistent_settings()
+            await self._ensure_default_persistent_settings()
 
         except Exception as e:
             logger.exception("Error loading configuration from database", exc_info=True)
             self._db_config = {}  # Reset on error
 
-    def _ensure_default_persistent_settings(self):
+    async def _ensure_default_persistent_settings(self):
         """Ensure default persistent settings exist in the database."""
         if not self._system_config_repo:
             return  # Cannot proceed without repo
@@ -145,7 +144,9 @@ class AppConfig:
                             f"Default setting '{key}' not found in DB. Adding with value: {default_value}"
                         )
                         # Use the repository's 'set' method to add/update individually
-                        success = self._system_config_repo.set(key, str(default_value))
+                        success = await self._system_config_repo.set(
+                            key, str(default_value)
+                        )
                         if success:
                             # Update in-memory cache as well
                             self._db_config[key] = default_value

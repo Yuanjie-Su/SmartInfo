@@ -31,10 +31,6 @@ logger = logging.getLogger(__name__)
 class ApiKeyRepository(BaseRepository):
     """Repository for API key management operations."""
 
-    def __init__(self, connection: Optional[sqlite3.Connection] = None):
-        """Initialize with optional database connection for testing."""
-        super().__init__(connection=connection)
-
     async def add(
         self,
         model: str,

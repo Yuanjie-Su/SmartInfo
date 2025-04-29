@@ -9,7 +9,7 @@ aiohttp
 psutil
 trafilatura
 fastapi
-uvicorn
+uvicorn[standard]
 pydantic
 requests
 python-multipart
@@ -24,3 +24,5 @@ pytest-cov
 tiktoken
 tenacity
 aiosqlite
+selenium
+webdriver-manager

@@ -7,7 +7,11 @@ from backend.utils.html_utils import (
     clean_and_format_html,
     extract_metadata_from_article_html,
 )
-from backend.utils.markdown_utils import clean_markdown_links
+from backend.utils.markdown_utils import (
+    clean_markdown_links,
+    strip_javascript_links,
+    strip_image_links,
+)
 from backend.utils.parse import parse_json_from_text
 from backend.utils.prompt import (
     SYSTEM_PROMPT_EXTRACT_ARTICLE_LINKS,
@@ -15,7 +19,7 @@ from backend.utils.prompt import (
 )
 from backend.utils.text_utils import get_chunks
 from backend.utils.token_utils import get_token_size
-from ..crawler import PlaywrightCrawler, AiohttpCrawler
+from ..crawler import AiohttpCrawler, SeleniumCrawler
 from ..llm.pool import LLMClientPool
 from urllib.parse import urlparse
 
@@ -25,7 +29,6 @@ logger = logging.getLogger(__name__)
 async def fetch_news(
     url: str,
     llm_pool: LLMClientPool,
-    crawler: PlaywrightCrawler,
     exclude_links: Optional[List[str]] = None,
     progress_callback: Optional[Callable[[str, float, str, int], None]] = None,
 ) -> List[Dict[str, str]]:
@@ -55,7 +58,19 @@ async def fetch_news(
 
     # 1) Crawl html content (contains news content and links to other pages) from url
     # and format it to cleaned markdown
-    html_content = crawler.fetch_single(url)
+    crawler_result = None
+    async with SeleniumCrawler(
+        chromedriver_path="C:\\software\\chromedriver-win32\\chromedriver.exe"
+    ) as crawler:
+        crawler_result = await crawler.fetch_single(url)
+
+    if not crawler_result or crawler_result.get("error"):
+        raise ValueError(f"Failed to crawl {url}: {crawler_result.get('error')}")
+
+    html_content = crawler_result.get("content", "")
+    if not html_content:
+        raise ValueError(f"Failed to crawl {url}")
+
     cleaned_markdown = _clean_and_prepare_markdown(
         url=url, html_content=html_content, exclude_links=exclude_links
     )
@@ -108,7 +123,7 @@ async def fetch_news(
 
         # Link extraction and crawling
         sub_original_content_metadata_dict = await _extract_and_crawl_links(
-            url, chunk_content, llm_pool, progress_callback
+            url, chunk_content, llm_pool
         )
 
         if not sub_original_content_metadata_dict:
@@ -137,8 +152,6 @@ async def fetch_news(
     )
 
     if not summary_result:
-        if progress_callback:
-            await progress_callback("error", 0, "内容总结失败")
         raise ValueError("Failed to summarize the original content")
 
     # 报告完成
@@ -171,16 +184,22 @@ def _clean_and_prepare_markdown(
     """
     try:
         # Convert HTML to markdown
-        markdown = clean_and_format_html(
+        cleaned_markdown = clean_and_format_html(
             html_content=html_content,
             base_url=url,
             output_format="markdown",
+            exclude_selectors=[],
+            exclude_tags=[],
         )
 
-        # Remove or adjust any residual markdown links
-        cleaned_markdown = clean_markdown_links(
-            markdown, exclude_urls=exclude_links, base_url=url
-        )
+        cleaned_markdown = strip_image_links(cleaned_markdown)
+
+        cleaned_markdown = strip_javascript_links(cleaned_markdown)
+
+        # # Remove or adjust any residual markdown links
+        # cleaned_markdown = clean_markdown_links(
+        #     markdown, exclude_urls=exclude_links, base_url=url
+        # )
 
         return cleaned_markdown
     except Exception as e:
@@ -190,12 +209,15 @@ def _clean_and_prepare_markdown(
         return None
 
 
-def build_link_extraction_prompt(self, url: str, markdown_content: str) -> str:
+def build_link_extraction_prompt(url: str, markdown_content: str) -> str:
     """Create the prompt for link extraction LLM call."""
     prompt = f"""
-Base URL: {url}
-Markdown:
+<Base URL>
+{url}
+</Base URL>
+<Markdown content>
 {markdown_content}
+</Markdown content>
 """
     return prompt
 
@@ -275,31 +297,34 @@ async def _extract_and_crawl_links(
             return sub_original_content_metadata_dict
 
         # 3) 并发爬取每个提取的链接
-        sub_crawler = AiohttpCrawler(max_concurrent_requests=5, request_timeout=15)
+        async with AiohttpCrawler() as sub_crawler:
+            processed_count = 0
+            total_links = len(extracted_links)
 
-        processed_count = 0
-        total_links = len(extracted_links)
+            async for crawl_result in sub_crawler.process_urls(
+                extracted_links, max_retries=1
+            ):
+                processed_count += 1
 
-        async for crawl_result in sub_crawler.process_urls(extracted_links):
-            processed_count += 1
+                # 跳过任何失败的请求
+                if crawl_result.get("error") or not crawl_result.get("content"):
+                    continue
 
-            # 跳过任何失败的请求
-            if crawl_result.get("error") or not crawl_result.get("content"):
-                continue
+                sub_url = crawl_result.get(
+                    "final_url", crawl_result.get("original_url")
+                )
+                if not sub_url:
+                    continue
 
-            sub_url = crawl_result.get("final_url", crawl_result.get("original_url"))
-            if not sub_url:
-                continue
+                # 从HTML中提取结构化数据（标题、日期、内容）
+                structure_data = extract_metadata_from_article_html(
+                    html_content=crawl_result["content"],
+                    base_url=sub_url,
+                )
+                if not structure_data:
+                    continue
 
-            # 从HTML中提取结构化数据（标题、日期、内容）
-            structure_data = extract_metadata_from_article_html(
-                html_content=crawl_result["content"],
-                base_url=sub_url,
-            )
-            if not structure_data:
-                continue
-
-            sub_original_content_metadata_dict[sub_url] = structure_data
+                sub_original_content_metadata_dict[sub_url] = structure_data
 
     except Exception as e:
         logger.error(
@@ -336,8 +361,6 @@ async def summarize_content(
 
     analysis_prompt = build_content_analysis_prompt(original_content_metadata_dict)
     prompt_tokens = get_token_size(analysis_prompt)
-
-    total_articles = len(original_content_metadata_dict)
 
     try:
         # If prompt size too large, split into smaller batches
@@ -421,10 +444,18 @@ async def summarize_content(
         # Catch any analysis errors
         logger.error(f"LLM analysis failed for {url}: {analyze_err}", exc_info=True)
 
-    # 添加原始内容到结果中
+    # 添加原始内容到结果中，并移除没有URL的条目
+    filtered_result = []
     for result_item in analysis_result:
-        result_item["content"] = original_content_metadata_dict.get(
-            result_item.get("url", ""), {}
-        ).get("content", "")
+        url_key = result_item.get("url", "")
+        if url_key:
+            result_item["date"] = original_content_metadata_dict.get(url_key, {}).get(
+                "date", ""
+            )
+            result_item["content"] = original_content_metadata_dict.get(
+                url_key, {}
+            ).get("content", "")
 
-    return analysis_result
+            filtered_result.append(result_item)
+
+    return filtered_result

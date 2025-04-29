@@ -386,53 +386,48 @@ class NewsService:
             f"Scheduling background tasks for {len(source_ids)} sources in task group {task_group_id}"
         )
 
-        async with PlaywrightCrawler(
-            max_concurrent_pages=min(DEFAULT_MAX_CONCURRENT_REQUESTS, len(source_ids)),
-            max_retries=2,
-        ) as crawler:
-            # Schedule a task for each source
-            for source_id in source_ids:
-                try:
-                    # Get source details
-                    source = await self._source_repo.get_by_id(source_id)
-                    if not source:
-                        # 使用进度回调发送错误信息
-                        progress_callback = await self._create_progress_callback(
-                            source_id,
-                            f"Unknown Source (ID: {source_id})",
-                            task_group_id,
-                        )
-                        await progress_callback("error", 0, f"源ID {source_id} 未找到")
-                        continue
-
-                    # Extract required details
-                    url = source[2]  # URL is at index 2
-                    source_name = source[1]  # Name is at index 1
-
-                    # Add the background task
-                    background_tasks.add_task(
-                        self._process_source_url_task,
-                        source_id,
-                        url,
-                        source_name,
-                        task_group_id,
-                        crawler,
-                    )
-
-                    logger.info(
-                        f"Scheduled task for source: {source_name} (ID: {source_id})"
-                    )
-
-                except Exception as e:
-                    logger.error(
-                        f"Failed to schedule task for source ID {source_id}: {e}",
-                        exc_info=True,
-                    )
+        # Schedule a task for each source
+        for source_id in source_ids:
+            try:
+                # Get source details
+                source = await self._source_repo.get_by_id(source_id)
+                if not source:
                     # 使用进度回调发送错误信息
                     progress_callback = await self._create_progress_callback(
-                        source_id, f"Unknown Source (ID: {source_id})", task_group_id
+                        source_id,
+                        f"Unknown Source (ID: {source_id})",
+                        task_group_id,
                     )
-                    await progress_callback("error", 0, f"调度任务失败: {str(e)}")
+                    await progress_callback("error", 0, f"源ID {source_id} 未找到")
+                    continue
+
+                # Extract required details
+                url = source[2]  # URL is at index 2
+                source_name = source[1]  # Name is at index 1
+
+                # Add the background task
+                background_tasks.add_task(
+                    self._process_source_url_task,
+                    source_id,
+                    url,
+                    source_name,
+                    task_group_id,
+                )
+
+                logger.info(
+                    f"Scheduled task for source: {source_name} (ID: {source_id})"
+                )
+
+            except Exception as e:
+                logger.error(
+                    f"Failed to schedule task for source ID {source_id}: {e}",
+                    exc_info=True,
+                )
+                # 使用进度回调发送错误信息
+                progress_callback = await self._create_progress_callback(
+                    source_id, f"Unknown Source (ID: {source_id})", task_group_id
+                )
+                await progress_callback("error", 0, f"调度任务失败: {str(e)}")
 
     async def _process_source_url_task(
         self,
@@ -440,7 +435,6 @@ class NewsService:
         url: str,
         source_name: str,
         task_group_id: str,
-        crawler: PlaywrightCrawler,
     ):
         """
         Process a single source URL as a background task.
@@ -504,7 +498,6 @@ class NewsService:
             fetch_result = await fetch_news(
                 url=url,
                 llm_pool=self._llm_pool,
-                crawler=crawler,
                 exclude_links=exclude_links,
                 progress_callback=progress_callback,
             )
@@ -521,6 +514,7 @@ class NewsService:
                 result_item["source_id"] = source_id
                 result_item["category_id"] = category_id
 
+            print(fetch_result)
             # Update progress
             await progress_callback(
                 "saving",
