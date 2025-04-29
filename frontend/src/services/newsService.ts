@@ -119,6 +119,13 @@ export const fetchNewsFromUrl = async (request: FetchUrlRequest): Promise<Record
   return response.data;
 };
 
+export const fetchNewsFromSourcesBatch = async (sourceIds: number[]): Promise<Record<string, string>> => {
+  const response = await api.post(`${BASE_PATH}/tasks/fetch/batch`, {
+    source_ids: sourceIds
+  });
+  return response.data;
+};
+
 export const analyzeAllNews = async (request: AnalyzeRequest): Promise<Record<string, string>> => {
   const response = await api.post(`${BASE_PATH}/tasks/analyze/all`, request);
   return response.data;

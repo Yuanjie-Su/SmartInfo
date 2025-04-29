@@ -32,6 +32,9 @@ from backend.services import (
 # Import LLM Pool from its new location in core
 from backend.core.llm import LLMClientPool
 
+# Import WebSocket manager
+from backend.core.ws_manager import ws_manager
+
 logger = logging.getLogger(__name__)
 
 # Global instance for the LLM Pool (managed by lifespan in main.py)
@@ -50,6 +53,16 @@ def set_global_llm_pool(pool: LLMClientPool):
         )
     _global_llm_pool = pool
     logger.info("Global LLM pool has been set.")
+
+
+def get_ws_manager():
+    """
+    Dependency that provides the global WebSocket manager instance.
+
+    Returns:
+        The singleton ws_manager instance
+    """
+    return ws_manager
 
 
 async def get_db_connection_dependency() -> aiosqlite.Connection:
@@ -155,6 +168,7 @@ async def get_news_service(
     source_repo: NewsSourceRepository = Depends(get_news_source_repository),
     category_repo: NewsCategoryRepository = Depends(get_news_category_repository),
     llm_pool: LLMClientPool = Depends(get_llm_pool_dependency),
+    ws_manager=Depends(get_ws_manager),
 ) -> NewsService:
     """Provides an instance of NewsService with its dependencies."""
     service = NewsService(

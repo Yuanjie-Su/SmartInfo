@@ -9,6 +9,8 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Body, Query, status
 from fastapi.responses import StreamingResponse
 from typing import List, Dict, Any, Optional
+import uuid
+from fastapi import BackgroundTasks
 
 # Import dependencies from the centralized dependencies module
 from backend.api.dependencies import get_news_service
@@ -30,6 +32,7 @@ from backend.models.schemas.news import (
     AnalyzeContentRequest,
     AnalysisResult,  # Usually analysis result is streamed, this might not be used directly
     UpdateAnalysisRequest,
+    FetchSourceBatchRequest,
 )
 
 # Import the service class type hint
@@ -892,6 +895,58 @@ async def trigger_fetch_single_url(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"An error occurred while fetching the URL: {str(e)}",
+        )
+
+
+@router.post(
+    "/tasks/fetch/batch",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Start fetching news from multiple sources in parallel",
+    response_model=Dict[str, str],
+)
+async def trigger_fetch_batch_sources(
+    request: FetchSourceBatchRequest,
+    background_tasks: BackgroundTasks,
+    news_service: NewsService = Depends(get_news_service),
+):
+    """
+    Start background tasks to fetch news from multiple sources in parallel.
+    Each source is processed as a separate task, and progress can be monitored
+    via WebSocket connection.
+
+    Returns a task_group_id that can be used to connect to the WebSocket endpoint
+    to monitor progress.
+    """
+    try:
+        if not request.source_ids:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No source IDs provided.",
+            )
+
+        # Generate a unique task group ID
+        task_group_id = str(uuid.uuid4())
+
+        # Schedule background tasks with this task group ID
+        await news_service.fetch_sources_in_background(
+            request.source_ids, task_group_id, background_tasks
+        )
+
+        logger.info(
+            f"Scheduled background tasks for {len(request.source_ids)} sources with task_group_id: {task_group_id}"
+        )
+
+        # Return the task group ID for WebSocket monitoring
+        return {
+            "task_group_id": task_group_id,
+            "message": f"Fetch tasks scheduled for {len(request.source_ids)} sources.",
+        }
+
+    except Exception as e:
+        logger.exception("Error scheduling batch source fetch", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to schedule batch fetch: {str(e)}",
         )
 
 

@@ -16,6 +16,8 @@ from .client import AsyncLLMClient
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_MODEL = "deepseek-v3-250324"
+
 
 class LLMClientPool:
     """
@@ -29,8 +31,10 @@ class LLMClientPool:
         self,
         pool_size: int,
         base_url: str,
-        api_key: Optional[str],
-        model: Optional[str] = None,
+        api_key: str,
+        context_window: int = 40960,
+        max_tokens: int = 2048,
+        model: Optional[str] = DEFAULT_MODEL,
         timeout: int = 60,
         max_retries_client: int = 3,  # Retries configured within each client
     ):
@@ -52,6 +56,8 @@ class LLMClientPool:
         self._base_url = base_url
         self._api_key = api_key
         self._model = model
+        self._context_window = context_window
+        self._max_tokens = max_tokens
         self._timeout = timeout
         self._max_retries_client = max_retries_client
 

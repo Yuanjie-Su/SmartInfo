@@ -315,7 +315,6 @@ class PlaywrightCrawler:
         self.browser_args = browser_args or {}
         self.user_agent = user_agent
         self.user_agent_rotation = user_agent_rotation
-        self.semaphore = asyncio.Semaphore(max_concurrent_pages)
         self.pw_instance: Optional[Playwright] = None
         self.browser: Optional[Browser] = None
         self._start_lock = asyncio.Lock()
@@ -549,16 +548,12 @@ class PlaywrightCrawler:
             # Update the last access time
             self.domain_timestamps[domain] = time.time()
 
-    async def _fetch_single(
+    async def fetch_single(
         self,
         url: str,
-        scroll_page: bool = True,
-        max_retries: Optional[int] = None,
+        scroll_page: bool = False,
     ) -> Dict[str, str]:
         """Fetch the raw HTML content of a single URL with optimized resource handling."""
-        if max_retries is None:
-            max_retries = self.max_retries
-
         # Enforce rate limiting
         await self._enforce_domain_rate_limit(url)
 
@@ -583,110 +578,110 @@ class PlaywrightCrawler:
         final_url = url
         fetch_start_time = time.time()
 
-        # Use semaphore for concurrency control
-        async with self.semaphore:
-            logger.info(f"Starting fetch for {url}")
-            context_item = None
-            page = None
+        logger.info(f"Starting fetch for {url}")
+        context_item = None
+        page = None
 
-            for attempt in range(max_retries):
-                try:
-                    # Get a context from the pool
-                    if not context_item:
-                        context_item = await self._get_context_from_pool()
+        for attempt in range(self.max_retries):
+            try:
+                # Get a context from the pool
+                if not context_item:
+                    context_item = await self._get_context_from_pool()
 
-                    # Create a new page in the context
-                    page = await context_item["context"].new_page()
-                    page.set_default_timeout(self.page_timeout)
+                # Create a new page in the context
+                page = await context_item["context"].new_page()
+                page.set_default_timeout(self.page_timeout)
 
-                    # Set performance optimizations for the page
-                    await page.route(
-                        "**/*.{png,jpg,jpeg,gif,svg,woff,woff2,ttf,eot}",
-                        lambda route: route.abort(),
-                    )
-
-                    # Configure efficient page loading
-                    await page.goto(
-                        url, wait_until="domcontentloaded", timeout=self.page_timeout
-                    )
-                    final_url = page.url
-
-                    if scroll_page:
-                        await self._scroll_page(page)
-
-                    try:
-                        # Shorter network idle timeout
-                        await page.wait_for_load_state("networkidle", timeout=5000)
-                    except PlaywrightTimeoutError:
-                        logger.warning(
-                            f"Network idle wait timed out for {final_url}. Continuing."
-                        )
-                    except PlaywrightError as e:
-                        logger.warning(
-                            f"Network idle wait failed for {final_url}: {e}. Continuing."
-                        )
-
-                    # Get HTML content efficiently
-                    html_content = await page.content()
-
-                    fetch_duration = time.time() - fetch_start_time
-                    logger.info(
-                        f"[Worker] Successfully fetched: {final_url} in {fetch_duration:.2f} seconds"
-                    )
-                    error_message = ""
-                    break  # Success
-
-                except PlaywrightTimeoutError as e:
-                    error_message = f"Timeout error for {url}: {str(e).splitlines()[0]}"
-                    logger.error(f"{error_message} (Attempt {attempt+1}/{max_retries})")
-                except PlaywrightError as e:
-                    error_message = (
-                        f"Playwright error for {url}: {str(e).splitlines()[0]}"
-                    )
-                    logger.error(f"{error_message} (Attempt {attempt+1}/{max_retries})")
-
-                    # Check for browser disconnection and try to recover
-                    if "Target closed" in str(e) or "Browser closed" in str(e):
-                        logger.warning(
-                            "Browser connection lost, attempting to recover..."
-                        )
-                        self._browser_initialized = False
-                        try:
-                            await self._ensure_browser_started()
-                            context_item = None  # Force getting a new context
-                        except Exception as init_err:
-                            logger.error(f"Failed to recover browser: {init_err}")
-
-                except Exception as e:
-                    error_message = f"Unexpected error for {url}: {e}"
-                    logger.error(f"{error_message} (Attempt {attempt+1}/{max_retries})")
-                finally:
-                    # Clean up page resources
-                    if page:
-                        try:
-                            if not page.is_closed():
-                                await page.close()
-                        except Exception as e:
-                            logger.warning(f"Error closing page for {url}: {e}")
-                        page = None
-
-                # Handle retries with exponential backoff
-                if attempt < max_retries - 1:
-                    backoff = calculate_backoff(attempt)
-                    logger.info(
-                        f"Retrying {url} in {backoff:.2f} seconds (attempt {attempt+1}/{max_retries})"
-                    )
-                    await asyncio.sleep(backoff)
-
-            # Return context to pool
-            if context_item:
-                await self._return_context_to_pool(context_item)
-
-            if error_message:
-                fetch_duration = time.time() - fetch_start_time
-                logger.error(
-                    f"Failed to process {url} after {max_retries} attempts, took {fetch_duration:.2f} seconds."
+                # Set performance optimizations for the page
+                await page.route(
+                    "**/*.{png,jpg,jpeg,gif,svg,woff,woff2,ttf,eot}",
+                    lambda route: route.abort(),
                 )
+
+                # Configure efficient page loading
+                await page.goto(
+                    url, wait_until="domcontentloaded", timeout=self.page_timeout
+                )
+                final_url = page.url
+
+                if scroll_page:
+                    await self._scroll_page(page)
+
+                try:
+                    # Shorter network idle timeout
+                    await page.wait_for_load_state("networkidle", timeout=5000)
+                except PlaywrightTimeoutError:
+                    logger.warning(
+                        f"Network idle wait timed out for {final_url}. Continuing."
+                    )
+                except PlaywrightError as e:
+                    logger.warning(
+                        f"Network idle wait failed for {final_url}: {e}. Continuing."
+                    )
+
+                # Get HTML content efficiently
+                html_content = await page.content()
+
+                fetch_duration = time.time() - fetch_start_time
+                logger.info(
+                    f"[Worker] Successfully fetched: {final_url} in {fetch_duration:.2f} seconds"
+                )
+                error_message = ""
+                break  # Success
+
+            except PlaywrightTimeoutError as e:
+                error_message = f"Timeout error for {url}: {str(e).splitlines()[0]}"
+                logger.error(
+                    f"{error_message} (Attempt {attempt+1}/{self.max_retries})"
+                )
+            except PlaywrightError as e:
+                error_message = f"Playwright error for {url}: {str(e).splitlines()[0]}"
+                logger.error(
+                    f"{error_message} (Attempt {attempt+1}/{self.max_retries})"
+                )
+
+                # Check for browser disconnection and try to recover
+                if "Target closed" in str(e) or "Browser closed" in str(e):
+                    logger.warning("Browser connection lost, attempting to recover...")
+                    self._browser_initialized = False
+                    try:
+                        await self._ensure_browser_started()
+                        context_item = None  # Force getting a new context
+                    except Exception as init_err:
+                        logger.error(f"Failed to recover browser: {init_err}")
+
+            except Exception as e:
+                error_message = f"Unexpected error for {url}: {e}"
+                logger.error(
+                    f"{error_message} (Attempt {attempt+1}/{self.max_retries})"
+                )
+            finally:
+                # Clean up page resources
+                if page:
+                    try:
+                        if not page.is_closed():
+                            await page.close()
+                    except Exception as e:
+                        logger.warning(f"Error closing page for {url}: {e}")
+                    page = None
+
+            # Handle retries with exponential backoff
+            if attempt < self.max_retries - 1:
+                backoff = calculate_backoff(attempt)
+                logger.info(
+                    f"Retrying {url} in {backoff:.2f} seconds (attempt {attempt+1}/{self.max_retries})"
+                )
+                await asyncio.sleep(backoff)
+
+        # Return context to pool
+        if context_item:
+            await self._return_context_to_pool(context_item)
+
+        if error_message:
+            fetch_duration = time.time() - fetch_start_time
+            logger.error(
+                f"Failed to process {url} after {self.max_retries} attempts, took {fetch_duration:.2f} seconds."
+            )
 
         result = {
             "original_url": url,
@@ -749,14 +744,14 @@ class PlaywrightCrawler:
 
         # Determine batch size if not provided
         if batch_size is None:
-            batch_size = min(len(urls), self.semaphore._value * 2)
+            batch_size = min(len(urls), self.context_pool_size * 2)
 
         # Process URLs in batches
         for i in range(0, len(urls), batch_size):
             batch = urls[i : i + batch_size]
             tasks = [
                 asyncio.create_task(
-                    self._fetch_single(url, scroll_pages), name=f"fetch_{url[:50]}"
+                    self.fetch_single(url, scroll_pages), name=f"fetch_{url[:50]}"
                 )
                 for url in batch
             ]

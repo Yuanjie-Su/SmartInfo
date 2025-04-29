@@ -8,15 +8,16 @@ Sets up the FastAPI application, manages application lifespan (DB connection, LL
 and includes the main API router.
 """
 
-import logging
 import sys
 import os
 from contextlib import asynccontextmanager
 from typing import Optional
 from dotenv import load_dotenv
+import logging
 
-# 加载环境变量配置
-load_dotenv()  # 加载 .env 文件中的环境变量
+# Load environment variable configuration
+load_dotenv()
+
 
 from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware

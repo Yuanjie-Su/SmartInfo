@@ -82,12 +82,19 @@ export interface NewsFilterParams {
 export interface FetchTaskItem {
   sourceId: number;       // Source ID
   sourceName: string;     // Source Name
-  status: 'pending' | 'fetching' | 'complete' | 'error'; // Possible statuses
+  status: 'pending' | 'fetching' | 'processing' | 'crawling' | 'analyzing' | 'saving' | 'complete' | 'error' | 'initializing';
   progress?: number;     //  Progress percentage (0-100)
   message?: string;      //  For displaying error messages
+  items_saved?: number;  // Add this based on backend message format
+}
+
+export interface FetchTaskResponse {
+  task_group_id: string;
+  message: string;
 }
 
 export interface UpdateAnalysisRequest {
+  task_group_id: string;
   analysis: string;
 }
 

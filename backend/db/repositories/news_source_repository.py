@@ -155,7 +155,21 @@ class NewsSourceRepository(BaseRepository):
             return False
 
     async def get_by_id_as_dict(self, source_id: int) -> Optional[Dict[str, Any]]:
-        """Gets a source by its ID as a dictionary."""
+        """
+        Gets a source by its ID as a dictionary.
+
+        Args:
+            source_id: The ID of the source.
+
+        Returns:
+            A dictionary containing the source information.
+            The dictionary contains the following keys:
+                - id: The ID of the source.
+                - name: The name of the source.
+                - url: The URL of the source.
+                - category_id: The ID of the category of the source.
+                - category_name: The name of the category of the source.
+        """
         query_str = f"""
             SELECT ns.id, ns.name, ns.url, ns.category_id, nc.name as category_name
             FROM {NEWS_SOURCES_TABLE} ns
@@ -170,7 +184,18 @@ class NewsSourceRepository(BaseRepository):
             return None
 
     async def get_all_as_dict(self) -> List[Dict[str, Any]]:
-        """Gets all sources with category names as dictionaries."""
+        """
+        Gets all sources with category names as dictionaries.
+
+        Returns:
+            A list of dictionaries containing the source information.
+            Each dictionary contains the following keys:
+                - id: The ID of the source.
+                - name: The name of the source.
+                - url: The URL of the source.
+                - category_id: The ID of the category of the source.
+                - category_name: The name of the category of the source.
+        """
         query_str = f"""
             SELECT ns.id, ns.name, ns.url, ns.category_id, nc.name as category_name
             FROM {NEWS_SOURCES_TABLE} ns

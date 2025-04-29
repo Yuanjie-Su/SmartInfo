@@ -164,10 +164,23 @@ class FetchSourceRequest(BaseModel):
     source_id: int = Field(..., description="ID of the news source to fetch")
 
 
+class FetchSourceBatchRequest(BaseModel):
+    """Schema for requesting batch fetching from multiple sources."""
+
+    source_ids: List[int] = Field(..., description="List of news source IDs to fetch")
+
+
 class FetchUrlRequest(BaseModel):
     """Schema for requesting crawling and processing of a single URL."""
 
     url: AnyHttpUrl = Field(..., description="URL to crawl and process")
+
+
+class TaskResponse(BaseModel):
+    """Schema for responses to task initiation requests."""
+
+    task_group_id: str = Field(..., description="Unique identifier for the task group")
+    message: str = Field(..., description="Informational message about the task")
 
 
 class AnalyzeRequest(BaseModel):

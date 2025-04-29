@@ -122,7 +122,11 @@ LINK_FILTER_REGEX = re.compile(
 )
 
 
-def clean_markdown_links(raw_text: str, exclude_urls: List[str] = None, base_url: str = None) -> Optional[str]:
+def clean_markdown_links(
+    raw_text: str,
+    exclude_urls: Optional[List[str]] = None,
+    base_url: Optional[str] = None,
+) -> Optional[str]:
     """
     Clean links in Markdown text, keeping only link expressions.
     """

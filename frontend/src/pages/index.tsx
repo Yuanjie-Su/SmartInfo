@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   Typography, 
   Select, 
@@ -69,6 +69,10 @@ const NewsPage: React.FC = () => {
   const [isTaskDrawerVisible, setIsTaskDrawerVisible] = useState<boolean>(false);
   const [tasksToMonitor, setTasksToMonitor] = useState<FetchTaskItem[]>([]);
 
+  // WebSocket state
+  const [taskGroupId, setTaskGroupId] = useState<string | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+
   // 加载新闻数据
   const loadNews = useCallback(async (params: NewsFilterParams) => {
     try {
@@ -127,6 +131,109 @@ const NewsPage: React.FC = () => {
       handleApiError(error, '无法更新分类的来源列表');
     }
   };
+
+  // Function to establish WebSocket connection
+  const connectWebSocket = useCallback((groupId: string) => {
+    // Close existing connection if any
+    if (wsRef.current) {
+      console.log('Closing previous WebSocket connection.');
+      wsRef.current.close();
+    }
+
+    // Construct WebSocket URL
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    // Use API_URL base but replace http/https with ws/wss and remove potential trailing slash
+    const apiUrlBase = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/^http/, 'ws').replace(/\/$/, '');
+    const wsUrl = `${apiUrlBase}/api/tasks/ws/tasks/${groupId}`;
+    console.log('Connecting to WebSocket:', wsUrl);
+
+    try {
+        const ws = new WebSocket(wsUrl);
+        wsRef.current = ws; // Store the instance
+
+        ws.onopen = () => {
+          console.log(`WebSocket connected for task group: ${groupId}`);
+          message.success(`Connected to real-time progress updates (Group: ${groupId.substring(0, 6)}...)`);
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const taskUpdate = JSON.parse(event.data);
+            console.log('Received task update:', taskUpdate);
+
+            // Update the specific task in the monitoring list
+            setTasksToMonitor(prevTasks => {
+              // Find the index of the task to update
+              const taskIndex = prevTasks.findIndex(t => t.sourceId === taskUpdate.source_id);
+
+              // If task not found, maybe log a warning or ignore
+              if (taskIndex === -1) {
+                console.warn(`Received update for unknown source ID: ${taskUpdate.source_id}`);
+                return prevTasks; // Return previous state if task not found
+              }
+
+              // Create a new array with the updated task
+              const updatedTasks = [...prevTasks];
+              const taskToUpdate = { ...updatedTasks[taskIndex] }; // Copy the task object
+
+              // Update fields based on the received message
+              taskToUpdate.status = taskUpdate.status || taskUpdate.step || taskToUpdate.status; // Use status or step
+              taskToUpdate.progress = taskUpdate.progress !== undefined ? taskUpdate.progress : taskToUpdate.progress;
+              taskToUpdate.message = taskUpdate.message || taskToUpdate.message;
+              if (taskUpdate.items_saved !== undefined) {
+                  taskToUpdate.items_saved = taskUpdate.items_saved;
+              }
+
+              // Replace the old task with the updated one
+              updatedTasks[taskIndex] = taskToUpdate;
+
+              return updatedTasks;
+            });
+
+          } catch (e) {
+            console.error('Failed to parse WebSocket message:', e);
+          }
+        };
+
+        ws.onerror = (error) => {
+          console.error('WebSocket error:', error);
+          message.error('WebSocket connection error.');
+          // Optionally attempt to reconnect or clear the connection ref
+          wsRef.current = null;
+          setTaskGroupId(null); // Reset task group ID so user can try again
+        };
+
+        ws.onclose = (event) => {
+          console.log(`WebSocket closed for task group: ${groupId}. Code: ${event.code}, Reason: ${event.reason}`);
+          // Clear the ref when closed, unless it was intentionally closed to open a new one
+          if (wsRef.current === ws) {
+             wsRef.current = null;
+             // Optionally reset taskGroupId if connection is lost unexpectedly
+             // setTaskGroupId(null);
+          }
+        };
+    } catch (err) {
+        console.error("Failed to create WebSocket:", err);
+        message.error("Failed to initialize WebSocket connection.");
+    }
+
+  }, []); // No dependencies needed
+
+  // Effect to connect WebSocket when taskGroupId changes
+  useEffect(() => {
+    if (taskGroupId) {
+      connectWebSocket(taskGroupId);
+    }
+
+    // Cleanup function to close WebSocket when component unmounts or taskGroupId changes
+    return () => {
+      if (wsRef.current) {
+        console.log('Closing WebSocket connection on cleanup.');
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+    };
+  }, [taskGroupId, connectWebSocket]);
 
   // 加载初始数据
   useEffect(() => {
@@ -208,7 +315,7 @@ const NewsPage: React.FC = () => {
   };
 
   // Handle fetch confirmation (OK button in modal)
-  const handleFetchConfirm = () => {
+  const handleFetchConfirm = async () => {
     if (selectedSourceIds.length === 0) {
       message.warning('Please select at least one news source.');
       return;
@@ -225,33 +332,47 @@ const NewsPage: React.FC = () => {
       progress: 0,
     }));
 
-    // Update the task list state (replace existing tasks for now)
-    setTasksToMonitor(newTasks);
-
-    // Close the settings modal
+    // Update UI state first for responsiveness
+    setTasksToMonitor(prevTasks => [...prevTasks, ...newTasks]); // Append new tasks
     setIsFetchModalVisible(false);
+    setIsTaskDrawerVisible(true); // Open the drawer immediately
 
-    // Inform the user
-    message.success(`Added ${newTasks.length} fetch tasks. Click 'View Progress' to see them.`);
-
-    // Reset selections in the settings modal for next time
-    setSelectedSourceIds([]);
-    setSelectedFetchCategory(undefined);
-    setFilteredFetchSources(sources);
-    setSelectAllSources(false);
-    setIsIndeterminate(false);
-
-    // -------------------------------------------------------------
-    // TODO: Backend task triggering logic will be added here later.
-    // Example: newTasks.forEach(task => triggerBackendFetch(task.sourceId));
-    // -------------------------------------------------------------
+    try {
+      // Call the backend API to start batch fetch
+      message.loading('Initiating fetch tasks...', 1);
+      const response = await newsService.fetchNewsFromSourcesBatch(selectedSourceIds);
+      
+      // Store the task_group_id for WebSocket connection
+      const taskGroupId = response.task_group_id;
+      setTaskGroupId(taskGroupId); // This will trigger the useEffect to connect
+      
+      message.success(`Fetch tasks initiated successfully (Group ID: ${taskGroupId?.substring(0, 6)}...).`, 3);
+    } catch (error) {
+      // Handle API errors
+      handleApiError(error, 'Failed to start news fetch tasks');
+      // Remove the pending tasks from the monitor list if API call failed
+      setTasksToMonitor(prevTasks => prevTasks.filter(task => !selectedSourceIds.includes(task.sourceId)));
+    } finally {
+      // Reset selections in the settings modal for next time
+      setSelectedSourceIds([]);
+      setSelectedFetchCategory(undefined);
+      setFilteredFetchSources(sources);
+      setSelectAllSources(false);
+      setIsIndeterminate(false);
+    }
   };
 
   // Helper function for status colors in task drawer
   const getStatusColor = (status: FetchTaskItem['status']) => {
     switch (status) {
       case 'pending': return 'default'; // Grey
-      case 'fetching': return 'processing'; // Blue
+      case 'fetching': 
+      case 'processing':
+      case 'crawling':
+      case 'analyzing':
+      case 'saving':
+      case 'initializing':
+        return 'processing'; // Blue
       case 'complete': return 'success'; // Green
       case 'error': return 'error'; // Red
       default: return 'default';
@@ -264,10 +385,10 @@ const NewsPage: React.FC = () => {
       <div style={{ marginBottom: 16 }}>
         <Space>
           <Button type="primary" icon={<DownloadOutlined />} onClick={showFetchModal}>
-            Fetch News
+            获取资讯
           </Button>
           <Button icon={<BarsOutlined />} onClick={() => setIsTaskDrawerVisible(true)}>
-            View Progress {tasksToMonitor.length > 0 ? `(${tasksToMonitor.length})` : ''}
+            查看进度 {tasksToMonitor.length > 0 ? `(${tasksToMonitor.filter(t => t.status !== 'complete' && t.status !== 'error').length})` : ''}
           </Button>
         </Space>
       </div>
@@ -408,26 +529,26 @@ const NewsPage: React.FC = () => {
 
       {/* Fetch Settings Modal */}
       <Modal
-        title="Fetch News Settings"
+        title="获取新闻设置"
         open={isFetchModalVisible}
         onOk={handleFetchConfirm}
         onCancel={() => setIsFetchModalVisible(false)}
-        okText="Add to Task List"
-        cancelText="Cancel"
+        okText="添加到任务列表"
+        cancelText="取消"
         width={600}
       >
         <Spin spinning={loading && categories.length === 0}>
           <Form layout="vertical">
             {/* Category Filter */}
-            <Form.Item label="Step 1: Filter News Category (Optional)">
+            <Form.Item label="步骤 1: 筛选新闻分类 (可选)">
               <Select
-                placeholder="Select category to filter sources below"
+                placeholder="选择分类以筛选下方的来源"
                 allowClear
                 value={selectedFetchCategory}
                 onChange={handleFetchCategoryChange}
                 style={{ width: '100%' }}
               >
-                <Option value={undefined}>-- All Categories --</Option>
+                <Option value={undefined}>-- 所有分类 --</Option>
                 {categories.map(cat => (
                   <Option key={cat.id} value={cat.id}>{cat.name}</Option>
                 ))}
@@ -435,7 +556,7 @@ const NewsPage: React.FC = () => {
             </Form.Item>
 
             {/* Source Multi-Select */}
-            <Form.Item label="Step 2: Select News Sources to Fetch">
+            <Form.Item label="步骤 2: 选择要获取的新闻来源">
               <Checkbox
                 indeterminate={isIndeterminate}
                 onChange={handleSelectAllChange}
@@ -443,7 +564,7 @@ const NewsPage: React.FC = () => {
                 disabled={filteredFetchSources.length === 0}
                 style={{ marginBottom: 8, display: 'block', borderBottom: '1px solid #f0f0f0', paddingBottom: '8px' }}
               >
-                Select/Deselect All ({filteredFetchSources.length} sources in current list)
+                全选/取消全选 ({filteredFetchSources.length} 个来源在当前列表)
               </Checkbox>
               <div style={{ maxHeight: '300px', overflowY: 'auto', border: '1px solid #f0f0f0', padding: '8px' }}>
                 {filteredFetchSources.length > 0 ? (
@@ -454,7 +575,7 @@ const NewsPage: React.FC = () => {
                     onChange={handleSourceSelectionChange}
                   />
                 ) : (
-                  <Text type="secondary">Please select a category, no sources found in this category, or sources haven't loaded.</Text>
+                  <Text type="secondary">请选择一个分类，该分类下没有找到来源，或来源尚未加载。</Text>
                 )}
               </div>
             </Form.Item>
@@ -464,7 +585,7 @@ const NewsPage: React.FC = () => {
 
       {/* Task Progress Drawer */}
       <Drawer
-        title="Task Progress"
+        title="任务进度"
         placement="right"
         width={500}
         onClose={() => setIsTaskDrawerVisible(false)}
@@ -475,25 +596,38 @@ const NewsPage: React.FC = () => {
         <List
           itemLayout="horizontal"
           dataSource={tasksToMonitor}
-          locale={{ emptyText: 'No fetch tasks currently running or queued.' }}
+          locale={{ emptyText: '当前没有正在运行或排队的获取任务。' }}
           renderItem={(item: FetchTaskItem) => (
             <List.Item key={item.sourceId}>
               <List.Item.Meta
                 title={item.sourceName}
-                description={<Tag color={getStatusColor(item.status)}>{item.status.toUpperCase()}</Tag>}
+                description={
+                  <Space direction="vertical" size={2}>
+                    <Tag color={getStatusColor(item.status)}>{item.status?.toUpperCase()}</Tag>
+                    {item.message && <Text type="secondary" style={{ fontSize: 12 }}>{item.message}</Text>}
+                  </Space>
+                }
               />
               <div style={{ width: 150, textAlign: 'right' }}>
                 <Progress
                   percent={item.progress || 0}
-                  status={item.status === 'error' ? 'exception' : item.status === 'complete' ? 'success' : undefined}
+                  status={item.status === 'error' ? 'exception' : item.status === 'complete' ? 'success' : 'active'}
                   size="small"
+                  showInfo={item.status !== 'pending'}
                 />
-                {item.status === 'error' && <Text type="danger" style={{ fontSize: '12px', display: 'block' }}>{item.message || 'Failed'}</Text>}
+                {item.items_saved !== undefined && item.status === 'complete' && (
+                     <Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
+                         已保存: {item.items_saved}
+                     </Text>
+                )}
               </div>
             </List.Item>
           )}
         />
-        {/* TODO: Implement real-time progress updates via WebSocket or polling here later */}
+        <Divider/>
+        <Button onClick={() => setTasksToMonitor([])} disabled={!tasksToMonitor.some(t => t.status === 'complete' || t.status === 'error')}>
+            清除已完成/错误的任务
+        </Button>
       </Drawer>
     </div>
   );

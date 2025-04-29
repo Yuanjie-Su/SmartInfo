@@ -11,6 +11,7 @@ from fastapi import APIRouter
 from backend.api.routers.chat import router as chat_router
 from backend.api.routers.news import router as news_router
 from backend.api.routers.settings import router as settings_router
+from backend.api.routers.tasks import router as tasks_router
 
 # Create the main API router instance
 api_router = APIRouter()
@@ -19,5 +20,6 @@ api_router = APIRouter()
 api_router.include_router(chat_router, prefix="/chat", tags=["Chat"])
 api_router.include_router(news_router, prefix="/news", tags=["News"])
 api_router.include_router(settings_router, prefix="/settings", tags=["Settings"])
+api_router.include_router(tasks_router, prefix="/tasks", tags=["Tasks"])
 
 __all__ = ["api_router"]
