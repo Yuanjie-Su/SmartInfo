@@ -1,14 +1,14 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { 
-  Typography, 
-  Select, 
-  Input, 
-  Spin, 
-  Empty, 
-  List, 
-  Card, 
-  Row, 
-  Col, 
+import {
+  Typography,
+  Select,
+  Input,
+  Spin,
+  Empty,
+  List,
+  Card,
+  Row,
+  Col,
   Pagination,
   Space,
   Button,
@@ -23,7 +23,7 @@ import {
   message,
   Tooltip
 } from 'antd';
-import { 
+import {
   SearchOutlined,
   CalendarOutlined,
   TagOutlined,
@@ -38,6 +38,7 @@ import { handleApiError } from '@/utils/apiErrorHandler';
 import Link from 'next/link';
 import debounce from 'lodash/debounce';
 import type { CheckboxChangeEvent } from 'antd/es/checkbox';
+import AnalysisModal from '@/components/analysis/AnalysisModal';
 
 const { Title, Text, Paragraph } = Typography;
 const { Option } = Select;
@@ -70,11 +71,15 @@ const NewsPage: React.FC = () => {
   const [isTaskDrawerVisible, setIsTaskDrawerVisible] = useState<boolean>(false);
   const [tasksToMonitor, setTasksToMonitor] = useState<FetchTaskItem[]>([]);
 
+  // Analysis modal state
+  const [analysisModalVisible, setAnalysisModalVisible] = useState<boolean>(false);
+  const [selectedNewsItemId, setSelectedNewsItemId] = useState<number | null>(null);
+
   // WebSocket state
   const [taskGroupId, setTaskGroupId] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
-  // 加载新闻数据
+  // Load news data
   const loadNews = useCallback(async (params: NewsFilterParams) => {
     try {
       setLoading(true);
@@ -83,14 +88,14 @@ const NewsPage: React.FC = () => {
       setNews(newsData);
       setTotal(100);
     } catch (error) {
-      handleApiError(error, '加载新闻失败');
-      setError('无法加载新闻内容，请稍后再试');
+      handleApiError(error, 'Failed to load news');
+      setError('Cannot load news content, please try again later');
     } finally {
       setLoading(false);
     }
   }, []);
 
-  // 防抖搜索处理函数
+  // Debounced search handler
   const debouncedSearch = useCallback(
     debounce((value: string) => {
       setFilters(prev => ({...prev, search_term: value, page: 1}));
@@ -98,11 +103,11 @@ const NewsPage: React.FC = () => {
     []
   );
 
-  // 处理过滤器变化
+  // Handle filter changes
   const handleFilterChange = (key: keyof NewsFilterParams, value: any) => {
     setFilters(prev => {
-      const updated = {...prev, [key]: value}; 
-      // 当切换过滤条件时，重置页码
+      const updated = {...prev, [key]: value};
+      // Reset page number when filter conditions change
       if (key !== 'page') {
         updated.page = 1;
       }
@@ -110,26 +115,26 @@ const NewsPage: React.FC = () => {
     });
   };
 
-  // 处理分类变化
+  // Handle category changes
   const handleCategoryChange = async (value: number | undefined) => {
     try {
-      // 更新过滤器
+      // Update filters
       handleFilterChange('category_id', value);
-      
-      // 如果选择了分类，获取该分类的来源
+
+      // If a category is selected, get sources for that category
       if (value !== undefined) {
         const sourcesData = await newsService.getSourcesByCategory(value);
         setSources(sourcesData);
       } else {
-        // 如果选择"全部"，获取所有来源
+        // If "All" is selected, get all sources
         const sourcesData = await newsService.getSources();
         setSources(sourcesData);
       }
-      
-      // 重置来源过滤器
+
+      // Reset source filter
       handleFilterChange('source_id', undefined);
     } catch (error) {
-      handleApiError(error, '无法更新分类的来源列表');
+      handleApiError(error, 'Cannot update source list for category');
     }
   };
 
@@ -236,7 +241,7 @@ const NewsPage: React.FC = () => {
     };
   }, [taskGroupId, connectWebSocket]);
 
-  // 加载初始数据
+  // Load initial data
   useEffect(() => {
     const loadInitialData = async () => {
       try {
@@ -245,31 +250,31 @@ const NewsPage: React.FC = () => {
           newsService.getCategories(),
           newsService.getSources()
         ]);
-        
+
         setCategories(categoriesData);
         setSources(sourcesData);
         setFilteredFetchSources(sourcesData); // Initialize filtered sources for fetch modal
       } catch (error) {
-        handleApiError(error, '加载初始数据失败');
-        setError('无法加载分类和来源数据，请刷新页面重试');
+        handleApiError(error, 'Failed to load initial data');
+        setError('Cannot load categories and sources, please refresh the page and try again');
       } finally {
         setLoading(false);
       }
     };
-    
+
     loadInitialData();
   }, []);
 
-  // 监听过滤器变化加载新闻
+  // Load news when filters change
   useEffect(() => {
     loadNews(filters);
   }, [filters, loadNews]);
 
-  // 格式化日期显示
+  // Format date display
   const formatDate = (dateString?: string) => {
-    if (!dateString) return '未知日期';
+    if (!dateString) return 'Unknown date';
     const date = new Date(dateString);
-    return date.toLocaleDateString('zh-CN');
+    return date.toLocaleDateString('en-US');
   };
 
   // Show fetch modal
@@ -342,11 +347,11 @@ const NewsPage: React.FC = () => {
       // Call the backend API to start batch fetch
       message.loading('Initiating fetch tasks...', 1);
       const response = await newsService.fetchNewsFromSourcesBatch(selectedSourceIds);
-      
+
       // Store the task_group_id for WebSocket connection
       const taskGroupId = response.task_group_id;
       setTaskGroupId(taskGroupId); // This will trigger the useEffect to connect
-      
+
       message.success(`Fetch tasks initiated successfully (Group ID: ${taskGroupId?.substring(0, 6)}...).`, 3);
     } catch (error) {
       // Handle API errors
@@ -367,7 +372,7 @@ const NewsPage: React.FC = () => {
   const getStatusColor = (status: FetchTaskItem['status']) => {
     switch (status) {
       case 'pending': return 'default'; // Grey
-      case 'fetching': 
+      case 'fetching':
       case 'processing':
       case 'crawling':
       case 'analyzing':
@@ -380,13 +385,25 @@ const NewsPage: React.FC = () => {
     }
   };
 
+  // Open analysis modal with the selected news item
+  const openAnalysisModal = (newsItemId: number) => {
+    setSelectedNewsItemId(newsItemId);
+    setAnalysisModalVisible(true);
+  };
+
+  // Close analysis modal
+  const closeAnalysisModal = () => {
+    setAnalysisModalVisible(false);
+    setSelectedNewsItemId(null);
+  };
+
   return (
     <div>
       {/* Consolidated top controls in a single row */}
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }} align="middle">
         <Col xs={24} sm={12} md={5} lg={5}>
           <Select
-            placeholder="选择分类"
+            placeholder="Select category"
             style={{ width: '100%' }}
             allowClear
             onChange={(value) => handleCategoryChange(value)}
@@ -399,7 +416,7 @@ const NewsPage: React.FC = () => {
         </Col>
         <Col xs={24} sm={12} md={5} lg={5}>
           <Select
-            placeholder="选择来源"
+            placeholder="Select source"
             style={{ width: '100%' }}
             allowClear
             onChange={(value) => handleFilterChange('source_id', value)}
@@ -412,7 +429,7 @@ const NewsPage: React.FC = () => {
         </Col>
         <Col xs={24} sm={24} md={8} lg={8}>
           <Input
-            placeholder="搜索新闻"
+            placeholder="Search news"
             prefix={<SearchOutlined />}
             onChange={(e) => debouncedSearch(e.target.value)}
             allowClear
@@ -420,36 +437,36 @@ const NewsPage: React.FC = () => {
         </Col>
         <Col xs={12} sm={12} md={3} lg={3}>
           <Button type="primary" icon={<DownloadOutlined />} onClick={showFetchModal} style={{ width: '100%' }}>
-            获取资讯
+            Get News
           </Button>
         </Col>
         <Col xs={12} sm={12} md={3} lg={3}>
           <Button icon={<BarsOutlined />} onClick={() => setIsTaskDrawerVisible(true)} style={{ width: '100%' }}>
-            查看进度 {tasksToMonitor.length > 0 ? `(${tasksToMonitor.filter(t => t.status !== 'complete' && t.status !== 'error').length})` : ''}
+            View Progress {tasksToMonitor.length > 0 ? `(${tasksToMonitor.filter(t => t.status !== 'complete' && t.status !== 'error').length})` : ''}
           </Button>
         </Col>
       </Row>
-      
-      {/* 错误提示 */}
+
+      {/* Error message */}
       {error && (
-        <Alert 
-          message={error} 
-          type="error" 
-          showIcon 
-          style={{ marginBottom: 16 }} 
+        <Alert
+          message={error}
+          type="error"
+          showIcon
+          style={{ marginBottom: 16 }}
         />
       )}
-      
-      {/* 加载状态 */}
+
+      {/* Loading state */}
       {loading ? (
         <div style={{ textAlign: 'center', padding: '50px 0' }}>
-          <Spin size="large" tip="加载中..." />
+          <Spin size="large" tip="Loading..." />
         </div>
       ) : news.length === 0 ? (
-        <Empty description="没有找到新闻" />
+        <Empty description="No news found" />
       ) : (
         <>
-          {/* 新闻列表 */}
+          {/* News list */}
           <List
             grid={{
               gutter: 16,
@@ -463,9 +480,9 @@ const NewsPage: React.FC = () => {
             dataSource={news}
             renderItem={(item) => (
               <List.Item>
-                <Tooltip 
-                  title={item.summary} 
-                  color="#ffffff" 
+                <Tooltip
+                  title={item.summary}
+                  color="#ffffff"
                   overlayInnerStyle={{ color: '#333333' }}
                 >
                   <Card hoverable style={{ borderRadius: '4px', boxShadow: 'none', border: '1px solid #f0f0f0' }}>
@@ -494,24 +511,22 @@ const NewsPage: React.FC = () => {
                               <Text type="secondary" style={{ fontSize: '12px' }}>{item.category_name}</Text>
                             </Space>
                           </Space>
-                          
+
                           {/* Summary with ellipsis */}
                           {item.summary && (
                             <Paragraph ellipsis={{ rows: 3 }} style={{ marginBottom: '8px', color: '#595959' }}>
                               {item.summary}
                             </Paragraph>
                           )}
-                          
+
                           {/* Analysis button at bottom right */}
                           <div style={{ textAlign: 'right' }}>
-                            <Button 
-                              type="text" 
+                            <Button
+                              type="link"
                               icon={<ExperimentOutlined />}
-                              disabled={!item.analysis}
-                              size="small"
-                              style={{ padding: '0px 8px' }}
+                              onClick={() => openAnalysisModal(item.id)}
                             >
-                              {item.analysis ? '查看分析' : '暂无分析'}
+                              Analyze
                             </Button>
                           </div>
                         </Space>
@@ -522,8 +537,8 @@ const NewsPage: React.FC = () => {
               </List.Item>
             )}
           />
-          
-          {/* 分页 - centered with more info */}
+
+          {/* Pagination - centered with more info */}
           <div style={{ textAlign: 'center', marginTop: 24, display: 'flex', justifyContent: 'center' }}>
             <Pagination
               current={filters.page}
@@ -532,7 +547,7 @@ const NewsPage: React.FC = () => {
               onChange={(page) => handleFilterChange('page', page)}
               showSizeChanger
               onShowSizeChange={(_, size) => handleFilterChange('page_size', size)}
-              showTotal={(total) => `共 ${total} 条`}
+              showTotal={(total) => `Total ${total} items`}
             />
           </div>
         </>
@@ -540,26 +555,26 @@ const NewsPage: React.FC = () => {
 
       {/* Fetch Settings Modal */}
       <Modal
-        title="获取新闻设置"
+        title="News Fetch Settings"
         open={isFetchModalVisible}
         onOk={handleFetchConfirm}
         onCancel={() => setIsFetchModalVisible(false)}
-        okText="添加到任务列表"
-        cancelText="取消"
+        okText="Add to Task List"
+        cancelText="Cancel"
         width={600}
       >
         <Spin spinning={loading && categories.length === 0}>
           <Form layout="vertical">
             {/* Category Filter */}
-            <Form.Item label="步骤 1: 筛选新闻分类 (可选)">
+            <Form.Item label="Step 1: Filter News Categories (Optional)">
               <Select
-                placeholder="选择分类以筛选下方的来源"
+                placeholder="Select category to filter sources below"
                 allowClear
                 value={selectedFetchCategory}
                 onChange={handleFetchCategoryChange}
                 style={{ width: '100%' }}
               >
-                <Option value={undefined}>-- 所有分类 --</Option>
+                <Option value={undefined}>-- All Categories --</Option>
                 {categories.map(cat => (
                   <Option key={cat.id} value={cat.id}>{cat.name}</Option>
                 ))}
@@ -567,7 +582,7 @@ const NewsPage: React.FC = () => {
             </Form.Item>
 
             {/* Source Multi-Select */}
-            <Form.Item label="步骤 2: 选择要获取的新闻来源">
+            <Form.Item label="Step 2: Select News Sources to Fetch">
               <Checkbox
                 indeterminate={isIndeterminate}
                 onChange={handleSelectAllChange}
@@ -575,7 +590,7 @@ const NewsPage: React.FC = () => {
                 disabled={filteredFetchSources.length === 0}
                 style={{ marginBottom: 8, display: 'block', borderBottom: '1px solid #f0f0f0', paddingBottom: '8px' }}
               >
-                全选/取消全选 ({filteredFetchSources.length} 个来源在当前列表)
+                Select All/Deselect All ({filteredFetchSources.length} sources in current list)
               </Checkbox>
               <div style={{ maxHeight: '300px', overflowY: 'auto', border: '1px solid #f0f0f0', padding: '8px' }}>
                 {filteredFetchSources.length > 0 ? (
@@ -586,7 +601,7 @@ const NewsPage: React.FC = () => {
                     onChange={handleSourceSelectionChange}
                   />
                 ) : (
-                  <Text type="secondary">请选择一个分类，该分类下没有找到来源，或来源尚未加载。</Text>
+                  <Text type="secondary">Please select a category. No sources found for this category, or sources are not yet loaded.</Text>
                 )}
               </div>
             </Form.Item>
@@ -596,7 +611,7 @@ const NewsPage: React.FC = () => {
 
       {/* Task Progress Drawer */}
       <Drawer
-        title="任务进度"
+        title="Task Progress"
         placement="right"
         width={500}
         onClose={() => setIsTaskDrawerVisible(false)}
@@ -607,7 +622,7 @@ const NewsPage: React.FC = () => {
         <List
           itemLayout="horizontal"
           dataSource={tasksToMonitor}
-          locale={{ emptyText: '当前没有正在运行或排队的获取任务。' }}
+          locale={{ emptyText: 'No fetch tasks currently running or queued.' }}
           renderItem={(item: FetchTaskItem) => (
             <List.Item key={item.sourceId}>
               <List.Item.Meta
@@ -628,7 +643,7 @@ const NewsPage: React.FC = () => {
                 />
                 {item.items_saved !== undefined && item.status === 'complete' && (
                      <Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
-                         已保存: {item.items_saved}
+                         Saved: {item.items_saved}
                      </Text>
                 )}
               </div>
@@ -640,8 +655,17 @@ const NewsPage: React.FC = () => {
             清除已完成/错误的任务
         </Button>
       </Drawer>
+
+      {/* Analysis Modal */}
+      {selectedNewsItemId !== null && (
+        <AnalysisModal
+          isOpen={analysisModalVisible}
+          onClose={closeAnalysisModal}
+          newsItemId={selectedNewsItemId}
+        />
+      )}
     </div>
   );
 };
 
-export default NewsPage; 
+export default NewsPage;

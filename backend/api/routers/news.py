@@ -3,12 +3,33 @@
 """
 API router for news functionalities (Version 1).
 Handles CRUD for news items, sources, categories, and initiates fetching/analysis tasks.
+
+Endpoints:
+- GET /items: List news items with optional filtering
+- GET /items/{news_id}: Get a specific news item
+- POST /items: Create a new news item
+- PUT /items/{news_id}: Update a news item
+- PUT /items/{news_id}/analysis: Update analysis for a news item
+- DELETE /items/{news_id}: Delete a news item
+- DELETE /items/clear: Clear all news items
+- POST /items/{news_id}/analyze/stream: Stream analysis for a news item
+- GET /sources: List all news sources
+- GET /sources/category/{category_id}: List news sources by category
+- GET /sources/{source_id}: Get a specific news source
+- POST /sources: Create a news source
+- PUT /sources/{source_id}: Update a news source
+- DELETE /sources/{source_id}: Delete a news source
+- GET /categories: List all news categories
+- POST /categories: Create a news category
+- PUT /categories/{category_id}: Update a news category
+- DELETE /categories/{category_id}: Delete a news category
+- POST /tasks/fetch/*: Various task endpoints for fetching and analysis
 """
 
 import logging
 from fastapi import APIRouter, Depends, HTTPException, Body, Query, status
 from fastapi.responses import StreamingResponse
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, AsyncGenerator
 import uuid
 from fastapi import BackgroundTasks
 
@@ -771,69 +792,6 @@ async def delete_news_category(
 
 
 @router.post(
-    "/tasks/fetch/all",
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Start fetching news from all sources",
-    response_model=Dict[str, str],
-)
-async def trigger_fetch_all_sources(
-    news_service: NewsService = Depends(get_news_service),
-):
-    """
-    Start a background task to fetch news from all configured sources.
-    This is a non-blocking call that immediately returns, while processing continues in the background.
-    """
-    try:
-        # Start the fetching process in the background
-        await news_service.fetch_all_sources_background()
-        return {"message": "News fetching from all sources started successfully."}
-    except Exception as e:
-        logger.exception("Failed to start news fetching", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to start news fetching process.",
-        )
-
-
-@router.post(
-    "/tasks/fetch/source",
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Start fetching news from a specific source",
-    response_model=Dict[str, str],
-)
-async def trigger_fetch_single_source(
-    request: FetchSourceRequest, news_service: NewsService = Depends(get_news_service)
-):
-    """
-    Start a background task to fetch news from a specific source.
-    This is a non-blocking call that immediately returns, while processing continues in the background.
-    """
-    try:
-        # Validate the source exists
-        source_id = request.source_id
-        source = await news_service.get_source_by_id(source_id)
-        if not source:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"News source with ID {source_id} not found.",
-            )
-
-        # Start the fetching process in the background
-        await news_service.fetch_source_background(source_id)
-        return {
-            "message": f"News fetching from source '{source['name']}' started successfully."
-        }
-    except HTTPException:
-        raise  # Re-raise HTTP exceptions
-    except Exception as e:
-        logger.exception(f"Failed to start news fetching from source", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to start news fetching process.",
-        )
-
-
-@router.post(
     "/tasks/fetch/url",
     status_code=status.HTTP_200_OK,  # 200 OK as it processes directly (for now)
     summary="Fetch and process a single URL immediately",
@@ -1086,3 +1044,36 @@ async def analyze_arbitrary_content(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"An error occurred during content analysis: {str(e)}",
         )
+
+
+@router.post(
+    "/items/{news_id}/analyze/stream",
+    summary="Stream analysis for a specific news item",
+    description="Streams analysis for a news item. If analysis already exists, returns it directly. If not, generates a new analysis and streams it in real-time.",
+    response_class=StreamingResponse,
+)
+async def stream_news_item_analysis(
+    news_id: int,
+    force: bool = Query(False, description="Force re-analysis even if analysis exists"),
+    news_service: NewsService = Depends(get_news_service),
+):
+    """
+    Streams analysis for a specific news item.
+    If analysis already exists, returns it directly.
+    If not, triggers LLM analysis and streams the results as they are generated.
+
+    After streaming completes, the analysis is saved to the database.
+    """
+    # Check if the news item exists
+    news_item = await news_service.get_news_by_id(news_id)
+    if not news_item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"News item with ID {news_id} not found.",
+        )
+
+    # Setup the streaming response with the analysis generator
+    return StreamingResponse(
+        news_service.stream_analysis_for_news_item(news_id, force),
+        media_type="text/plain",
+    )

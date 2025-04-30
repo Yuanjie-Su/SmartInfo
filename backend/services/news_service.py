@@ -132,13 +132,6 @@ class NewsService:
             search_term=search_term,
         )
 
-    async def create_news(self, news_item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Create a new news item."""
-        news_id = await self._news_repo.add(news_item)
-        if news_id:
-            return await self._news_repo.get_by_id(news_id)
-        return None
-
     async def update_news(
         self, news_id: int, news_item: Dict[str, Any]
     ) -> Optional[Dict[str, Any]]:
@@ -276,43 +269,6 @@ class NewsService:
     async def update_news_analysis(self, news_id: int, analysis_text: str) -> bool:
         """Update the analysis field of a news item."""
         return await self._news_repo.update_analysis(news_id, analysis_text)
-
-    # 以下是与数据库交互的异步任务方法，已经是异步的，但现在需要在内部使用await调用
-
-    async def fetch_all_sources(self) -> str:
-        """Start task to fetch articles from all sources."""
-        all_sources = await self._source_repo.get_all()
-        sources_count = len(all_sources)
-
-        source_ids = [source[0] for source in all_sources]
-        status_msg = f"Started fetch task for {sources_count} sources."
-        logger.info(status_msg)
-
-        # 其余原有逻辑保持不变
-        return status_msg
-
-    async def fetch_source(self, source_id: int) -> str:
-        """Start task to fetch articles from a specific source."""
-        source = await self._source_repo.get_by_id(source_id)
-        if not source:
-            error_msg = f"Source with ID {source_id} not found."
-            logger.error(error_msg)
-            return error_msg
-
-        # 其余原有逻辑保持不变
-        return f"Started fetch task for source: {source[1]} (ID: {source_id})."
-
-    async def analyze_all_news(self, force: bool = False) -> str:
-        """Analyze all news items (optionally force re-analysis)."""
-        # 这个方法内部使用services而不是直接访问repositories，保持原样即可
-        return "Started analysis task for all news items."
-
-    async def analyze_news_by_ids(
-        self, news_ids: List[int], force: bool = False
-    ) -> str:
-        """Analyze specific news items (optionally force re-analysis)."""
-        # 同上，保持原样即可
-        return f"Started analysis task for {len(news_ids)} news items."
 
     async def create_source(
         self, source_data: Dict[str, Any]
@@ -588,3 +544,81 @@ class NewsService:
             )
 
         return progress_callback
+
+    async def stream_analysis_for_news_item(
+        self, news_id: int, force: bool = False
+    ) -> AsyncGenerator[str, None]:
+        """
+        Analyzes a specific news item and streams the results.
+
+        Args:
+            news_id: The ID of the news item to analyze
+            force: If True, reanalyze even if analysis already exists
+
+        Yields:
+            Each chunk of the analysis text as it's generated
+
+        After streaming is complete, saves the full analysis to the database
+        """
+        if not self._llm_pool:
+            yield "Error: LLM client pool not initialized"
+            return
+
+        logger.info(f"Stream analyzing news item with ID: {news_id}")
+
+        try:
+            # Check if analysis already exists
+            if not force:
+                analysis = await self._news_repo.get_analysis_by_id(news_id)
+                if analysis:
+                    logger.info(f"Using existing analysis for news item {news_id}")
+                    yield analysis
+                    return
+
+            # Get the content for analysis
+            news_content = await self._news_repo.get_content_by_id(news_id)
+            if not news_content:
+                logger.error(f"No content found for news item {news_id}")
+                yield "Error: No content available for analysis."
+                return
+
+            # Prepare prompt for the LLM
+            user_prompt = f"""
+                Please analyze the following news content:\n\"\"\"\n{news_content}\n\"\"\"
+                **Write in the same language as the original content** (e.g., if the original content is in Chinese, the analysis should also be in Chinese). 
+                """
+
+            # Store the complete analysis text
+            full_analysis = ""
+
+            # Get the stream generator from the LLM pool
+            stream = await self._llm_pool.stream_completion_content(
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT_ANALYZE_CONTENT},
+                    {"role": "user", "content": user_prompt},
+                ],
+                max_tokens=4096,
+                temperature=0.7,
+            )
+
+            # Stream the analysis through the LLM
+            async for chunk in stream:
+                # Add to the full analysis
+                full_analysis += chunk
+                # Stream the chunk to the client
+                yield chunk
+
+            # Save the complete analysis to the database
+            if full_analysis:
+                try:
+                    await self._news_repo.update_analysis(news_id, full_analysis)
+                    logger.info(f"Saved analysis for news item {news_id}")
+                except Exception as e:
+                    logger.error(
+                        f"Failed to save analysis for news item {news_id}: {e}"
+                    )
+                    # No need to yield anything here, the stream has already completed
+
+        except Exception as e:
+            logger.error(f"Error in stream_analysis_for_news_item: {e}")
+            yield f"Error during analysis: {str(e)}"

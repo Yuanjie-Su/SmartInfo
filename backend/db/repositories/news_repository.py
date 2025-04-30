@@ -151,6 +151,18 @@ class NewsRepository(BaseRepository):
             logger.error(f"Error getting news by ID: {e}")
             return None
 
+    async def get_content_by_id(self, news_id: int) -> Optional[str]:
+        """Gets the content of a news item by its ID."""
+        query_str = f"""
+            SELECT {NEWS_CONTENT} FROM {NEWS_TABLE} WHERE {NEWS_ID} = ?
+        """
+        try:
+            row = await self._fetchone(query_str, (news_id,))
+            return row[0] if row else None
+        except Exception as e:
+            logger.error(f"Error getting news content by ID: {e}")
+            return None
+
     async def get_all(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
         """Gets all news items with pagination."""
         query_str = f"""
@@ -346,13 +358,17 @@ class NewsRepository(BaseRepository):
         page_size: int = 20,
         search_term: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """Gets news items with various filters applied as dictionaries."""
+        """Gets news items with various filters applied and returns as dicts.
+
+        Excludes content field from the results to optimize data transfer.
+        The 'analyzed' parameter checks for the presence of content in the analysis field.
+        """
 
         # Start with base query
         query_str = f"""
             SELECT {NEWS_ID}, {NEWS_TITLE}, {NEWS_URL}, {NEWS_SOURCE_NAME},
                    {NEWS_CATEGORY_NAME}, {NEWS_SOURCE_ID}, {NEWS_CATEGORY_ID},
-                   {NEWS_SUMMARY}, {NEWS_ANALYSIS}, {NEWS_DATE}, {NEWS_CONTENT}
+                   {NEWS_SUMMARY}, {NEWS_ANALYSIS}, {NEWS_DATE}
             FROM {NEWS_TABLE}
             WHERE 1=1
         """
@@ -378,18 +394,49 @@ class NewsRepository(BaseRepository):
                 query_str += f" AND ({NEWS_ANALYSIS} IS NULL OR {NEWS_ANALYSIS} = '')"
 
         if search_term:
-            # Search in title and summary fields
-            search_pattern = f"%{search_term}%"
-            query_str += f" AND ({NEWS_TITLE} LIKE ? OR {NEWS_SUMMARY} LIKE ?)"
-            params.extend([search_pattern, search_pattern])
+            # Add search condition for title and content
+            query_str += f" AND ({NEWS_TITLE} LIKE ? OR {NEWS_CONTENT} LIKE ?)"
+            search_param = f"%{search_term}%"
+            params.append(search_param)
+            params.append(search_param)
 
-        # Add pagination
-        offset = (page - 1) * page_size
+        # Add pagination and ordering
         query_str += f" ORDER BY {NEWS_DATE} DESC, {NEWS_ID} DESC LIMIT ? OFFSET ?"
-        params.extend([page_size, offset])
+        offset = (page - 1) * page_size
+        params.append(page_size)
+        params.append(offset)
 
         try:
-            return await self._fetch_as_dict(query_str, tuple(params))
+            rows = await self._fetchall(query_str, tuple(params))
+            # Convert rows to dictionaries with column names
+            results = []
+            for row in rows:
+                news_dict = {
+                    "id": row[0],
+                    "title": row[1],
+                    "url": row[2],
+                    "source_name": row[3],
+                    "category_name": row[4],
+                    "source_id": row[5],
+                    "category_id": row[6],
+                    "summary": row[7],
+                    "analysis": row[8],
+                    "date": row[9],
+                }
+                results.append(news_dict)
+            return results
         except Exception as e:
-            logger.error(f"Error getting filtered news as dict: {e}")
+            logger.error(f"Error getting news with filters as dict: {e}")
             return []
+
+    async def get_analysis_by_id(self, news_id: int) -> Optional[str]:
+        """Gets the analysis of a news item by its ID."""
+        query_str = f"""
+            SELECT {NEWS_ANALYSIS} FROM {NEWS_TABLE} WHERE {NEWS_ID} = ?
+        """
+        try:
+            row = await self._fetchone(query_str, (news_id,))
+            return row[0] if row else None
+        except Exception as e:
+            logger.error(f"Error getting news analysis by ID: {e}")
+            return None

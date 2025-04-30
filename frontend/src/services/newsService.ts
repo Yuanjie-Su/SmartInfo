@@ -150,4 +150,19 @@ export const analyzeContent = async (request: AnalyzeContentRequest): Promise<Re
   }
   
   return response;
+};
+
+export const streamAnalysis = async (newsItemId: number, force: boolean = false): Promise<Response> => {
+  const response = await fetch(`${api.defaults.baseURL}${BASE_PATH}/items/${newsItemId}/analyze/stream?force=${force}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+  });
+  
+  if (!response.ok) {
+    throw new Error(`Failed to stream analysis: ${response.statusText}`);
+  }
+  
+  return response;
 }; 

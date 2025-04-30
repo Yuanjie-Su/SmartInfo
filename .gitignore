@@ -69,3 +69,4 @@ stastic.py
 test.py
 test_data/
 test_db.py
+__tests__/
