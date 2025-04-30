@@ -188,8 +188,6 @@ def _clean_and_prepare_markdown(
             html_content=html_content,
             base_url=url,
             output_format="markdown",
-            exclude_selectors=[],
-            exclude_tags=[],
         )
 
         cleaned_markdown = strip_image_links(cleaned_markdown)

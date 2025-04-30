@@ -653,7 +653,7 @@ class PlaywrightCrawler:
 
                 try:
                     # Shorter network idle timeout
-                    await page.wait_for_load_state("networkidle", timeout=5000)
+                    await page.wait_for_load_state("networkidle", timeout=30000)
                 except PlaywrightTimeoutError:
                     logger.warning(
                         f"Network idle wait timed out for {final_url}. Continuing."
@@ -869,32 +869,32 @@ class SeleniumCrawler:
         self.user_agent = user_agent
         self.user_agent_rotation = user_agent_rotation
         self.chromedriver_path = chromedriver_path
-        
+
         # Browser pool management
         self.driver_pool = []
         self.driver_pool_size = max_concurrent_browsers
         self.driver_pool_lock = asyncio.Lock()
-        
+
         # Track processed domains to implement per-domain rate limiting
         self.domain_timestamps = {}
         self.domain_locks: Dict[str, asyncio.Lock] = {}
-        
+
         # Initialize user agent list for rotation
         self.user_agents = self._initialize_user_agents(user_agent)
-        
+
         # Driver initialization lock
         self._start_lock = asyncio.Lock()
-    
+
     async def __aenter__(self):
         """Async enter method for context manager support."""
         await self._ensure_driver_pool_started()
         return self
-    
+
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async exit method for context manager support."""
         await self.shutdown()
         return False  # Don't suppress exceptions
-    
+
     def _initialize_user_agents(self, default_user_agent: Optional[str]) -> List[str]:
         """Initialize a list of user agents for rotation"""
         # Common user agents representing different browsers and devices
@@ -910,33 +910,33 @@ class SeleniumCrawler:
             # Edge on Windows
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.93 Safari/537.36 Edg/90.0.818.51",
         ]
-        
+
         # If a default user agent is provided, add it to the beginning of the list
         if default_user_agent:
             return [default_user_agent] + common_user_agents
-            
+
         # Use a custom user agent as the default if none is provided
         default = "SmartInfo/1.0 (Selenium)"
         return [default] + common_user_agents
-    
+
     def _get_random_user_agent(self) -> str:
         """Get a random user agent from the list"""
         if not self.user_agent_rotation or len(self.user_agents) <= 1:
             return self.user_agents[0]
-            
+
         return random.choice(self.user_agents)
-    
+
     def _create_chrome_options(self, user_agent: str = None) -> Options:
         """Create Chrome options with performance optimizations"""
         options = Options()
-        
+
         if self.headless:
             options.add_argument("--headless=new")  # 新版Chrome中的无头模式
-            
+
         # Add user agent if provided
         if user_agent:
             options.add_argument(f"user-agent={user_agent}")
-            
+
         # Performance optimizations
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--disable-gpu")
@@ -944,7 +944,7 @@ class SeleniumCrawler:
         options.add_argument("--disable-extensions")
         options.add_argument("--disable-notifications")
         options.add_argument("--disable-infobars")
-        
+
         # Disable images for faster loading
         options.add_experimental_option(
             "prefs",
@@ -954,52 +954,62 @@ class SeleniumCrawler:
                 "profile.default_content_setting_values.cookies": 2,
             },
         )
-        
+
         # Add custom arguments if provided
         if self.browser_args:
             for arg in self.browser_args.get("args", []):
                 options.add_argument(arg)
-        
+
         return options
-        
+
     async def _create_driver(self) -> webdriver.Chrome:
         """Create a new Chrome WebDriver instance asynchronously"""
         user_agent = self._get_random_user_agent()
         options = self._create_chrome_options(user_agent)
-        
+
         # Use functools.partial to wrap the synchronous WebDriver initialization
         create_driver_func = functools.partial(
             webdriver.Chrome,
             options=options,
-            service=Service(ChromeDriverManager().install() if not self.chromedriver_path else self.chromedriver_path)
+            service=Service(
+                ChromeDriverManager().install()
+                if not self.chromedriver_path
+                else self.chromedriver_path
+            ),
         )
-        
+
         # Execute the synchronous operation in a thread pool
         driver = await asyncio.to_thread(create_driver_func)
-        
+
         # Set timeout
         driver.set_page_load_timeout(self.page_timeout)
         driver.implicitly_wait(self.page_timeout)
-        
+
         return driver
-        
+
     async def _ensure_driver_pool_started(self):
         """Ensure driver pool is initialized with at least one driver"""
         async with self._start_lock:
             if not self.driver_pool:
-                logger.info(f"Initializing Selenium driver pool with {self.driver_pool_size} drivers")
-                for _ in range(min(2, self.driver_pool_size)):  # Start with at least 2 drivers
+                logger.info(
+                    f"Initializing Selenium driver pool with {self.driver_pool_size} drivers"
+                )
+                for _ in range(
+                    min(2, self.driver_pool_size)
+                ):  # Start with at least 2 drivers
                     try:
                         driver = await self._create_driver()
-                        self.driver_pool.append({
-                            "driver": driver,
-                            "in_use": False,
-                            "user_agent": self._get_random_user_agent(),
-                        })
+                        self.driver_pool.append(
+                            {
+                                "driver": driver,
+                                "in_use": False,
+                                "user_agent": self._get_random_user_agent(),
+                            }
+                        )
                     except Exception as e:
                         logger.error(f"Error creating WebDriver: {e}")
                         raise RuntimeError(f"Failed to initialize WebDriver: {e}")
-    
+
     async def _get_driver_from_pool(self):
         """Get an available driver from the pool or create a new one if needed"""
         async with self.driver_pool_lock:
@@ -1008,7 +1018,7 @@ class SeleniumCrawler:
                 if not item["in_use"]:
                     item["in_use"] = True
                     return item
-                    
+
             # If all drivers are in use and we haven't reached the pool size limit, create a new one
             if len(self.driver_pool) < self.driver_pool_size:
                 try:
@@ -1023,7 +1033,7 @@ class SeleniumCrawler:
                 except Exception as e:
                     logger.error(f"Error creating new driver: {e}")
                     raise RuntimeError(f"Failed to create new WebDriver: {e}")
-            
+
             # If we've reached the pool size limit, wait for a driver to become available
             logger.info("All drivers in use, waiting for one to become available")
             # Find the first driver and use it (even though it's in use)
@@ -1031,7 +1041,7 @@ class SeleniumCrawler:
             for item in self.driver_pool:
                 item["in_use"] = True
                 return item
-    
+
     async def _return_driver_to_pool(self, driver_item):
         """Return a driver to the pool"""
         async with self.driver_pool_lock:
@@ -1039,30 +1049,32 @@ class SeleniumCrawler:
                 if item["driver"] == driver_item["driver"]:
                     item["in_use"] = False
                     break
-    
+
     async def _enforce_domain_rate_limit(self, url: str) -> None:
         """Enforce rate limiting per domain to avoid overloading servers"""
         domain = urlparse(url).netloc
-        
+
         # Get or create a lock for this domain
         lock = self.domain_locks.get(domain)
         if lock is None:
             lock = asyncio.Lock()
             self.domain_locks[domain] = lock
-            
+
         async with lock:
             last_access = self.domain_timestamps.get(domain, 0)
             now = time.time()
-            
+
             # If we've accessed this domain recently, wait a bit
             if now - last_access < 1.0:  # 1 second between requests to same domain
                 delay = 1.0 - (now - last_access)
                 await asyncio.sleep(delay)
-                
+
             # Update the last access time
             self.domain_timestamps[domain] = time.time()
-    
-    async def _scroll_page(self, driver, scroll_delay: float = 0.3, max_scrolls: int = 5):
+
+    async def _scroll_page(
+        self, driver, scroll_delay: float = 0.3, max_scrolls: int = 5
+    ):
         """Scroll the page to load dynamic content"""
         try:
             # Execute JavaScript scroll operation in the browser
@@ -1073,34 +1085,34 @@ class SeleniumCrawler:
             }
             return scrollDown();
             """
-            
+
             scroll_func = functools.partial(driver.execute_script, scroll_script)
-            
+
             last_height = await asyncio.to_thread(scroll_func)
             scroll_count = 0
             same_height_count = 0
             MAX_SAME_HEIGHT = 2
-            
+
             while scroll_count < max_scrolls:
                 # Execute scroll and get new height
                 new_height = await asyncio.to_thread(scroll_func)
-                
+
                 # Adaptive pause
                 await asyncio.sleep(scroll_delay)
-                
+
                 if new_height == last_height:
                     same_height_count += 1
                     if same_height_count >= MAX_SAME_HEIGHT:
                         break
                 else:
                     same_height_count = 0
-                    
+
                 last_height = new_height
                 scroll_count += 1
-                
+
         except Exception as e:
             logger.warning(f"Scrolling failed: {e}")
-    
+
     async def fetch_single(
         self,
         url: str,
@@ -1109,59 +1121,61 @@ class SeleniumCrawler:
         """Fetch the raw HTML content of a single URL with Selenium WebDriver"""
         # Enforce rate limiting
         await self._enforce_domain_rate_limit(url)
-        
+
         # Initialize result fields
         html_content = ""
         error_message = ""
         final_url = url
         fetch_start_time = time.time()
-        
+
         # Ensure driver pool is started
         await self._ensure_driver_pool_started()
-        
+
         driver_item = None
-        
+
         for attempt in range(self.max_retries):
             try:
                 # Get a driver from the pool
                 if not driver_item:
                     driver_item = await self._get_driver_from_pool()
-                
+
                 driver = driver_item["driver"]
-                
+
                 # Use asyncio.to_thread to execute synchronous Selenium operations
                 get_url_func = functools.partial(driver.get, url)
                 await asyncio.to_thread(get_url_func)
-                
+
                 # Get the final URL (after any redirects)
                 get_current_url_func = functools.partial(lambda: driver.current_url)
                 final_url = await asyncio.to_thread(get_current_url_func)
-                
+
                 # Optionally scroll the page
                 if scroll_page:
                     await self._scroll_page(driver)
-                
+                    await asyncio.sleep(1)
+
                 # Wait for page to load completely
                 try:
                     wait_func = functools.partial(
                         WebDriverWait(driver, self.page_timeout).until,
-                        EC.presence_of_element_located((By.TAG_NAME, "body"))
+                        lambda d: d.execute_script("return document.readyState")
+                        == "complete",
                     )
                     await asyncio.to_thread(wait_func)
                 except TimeoutException:
                     logger.warning(f"Timeout waiting for page to load: {url}")
-                
+
                 # Get the page source
                 get_source_func = functools.partial(lambda: driver.page_source)
                 html_content = await asyncio.to_thread(get_source_func)
-                
+
                 fetch_duration = time.time() - fetch_start_time
                 logger.info(
                     f"[Worker] Successfully fetched: {final_url} in {fetch_duration:.2f} seconds"
                 )
                 error_message = ""
                 break  # Success
-                
+
             except TimeoutException as e:
                 error_message = f"Timeout error for {url}: {e}"
                 logger.error(
@@ -1172,28 +1186,34 @@ class SeleniumCrawler:
                 logger.error(
                     f"{error_message} (Attempt {attempt+1}/{self.max_retries})"
                 )
-                
+
                 # Check for browser crash and try to recover
                 if "chrome not reachable" in str(e).lower():
-                    logger.warning("WebDriver connection lost, attempting to recover...")
+                    logger.warning(
+                        "WebDriver connection lost, attempting to recover..."
+                    )
                     # Close and remove the faulty driver
                     if driver_item:
                         try:
                             await asyncio.to_thread(driver_item["driver"].quit)
                         except:
                             pass  # Ignore quit errors on already crashed driver
-                        
+
                         async with self.driver_pool_lock:
-                            self.driver_pool = [item for item in self.driver_pool if item["driver"] != driver_item["driver"]]
-                        
+                            self.driver_pool = [
+                                item
+                                for item in self.driver_pool
+                                if item["driver"] != driver_item["driver"]
+                            ]
+
                         driver_item = None  # Force getting a new driver
-                
+
             except Exception as e:
                 error_message = f"Unexpected error for {url}: {e}"
                 logger.error(
                     f"{error_message} (Attempt {attempt+1}/{self.max_retries})"
                 )
-            
+
             # Handle retries
             if attempt < self.max_retries - 1:
                 backoff = calculate_backoff(attempt)
@@ -1201,26 +1221,26 @@ class SeleniumCrawler:
                     f"Retrying {url} in {backoff:.2f} seconds (attempt {attempt+1}/{self.max_retries})"
                 )
                 await asyncio.sleep(backoff)
-        
+
         # Return driver to pool
         if driver_item:
             await self._return_driver_to_pool(driver_item)
-        
+
         if error_message:
             fetch_duration = time.time() - fetch_start_time
             logger.error(
                 f"Failed to process {url} after {self.max_retries} attempts, took {fetch_duration:.2f} seconds."
             )
-        
+
         result = {
             "original_url": url,
             "final_url": final_url,
             "content": html_content,
             "error": error_message,
         }
-        
+
         return result
-    
+
     async def process_urls(
         self,
         urls: List[str],
@@ -1230,14 +1250,14 @@ class SeleniumCrawler:
         """Process a list of URLs and yield results containing raw HTML"""
         if not urls:
             return
-        
+
         # Ensure driver pool is started
         await self._ensure_driver_pool_started()
-        
+
         # Determine batch size if not provided
         if batch_size is None:
             batch_size = min(len(urls), self.driver_pool_size * 2)
-        
+
         # Process URLs in batches
         for i in range(0, len(urls), batch_size):
             batch = urls[i : i + batch_size]
@@ -1247,7 +1267,7 @@ class SeleniumCrawler:
                 )
                 for url in batch
             ]
-            
+
             # Process completed tasks
             for future in asyncio.as_completed(tasks):
                 try:
@@ -1278,11 +1298,11 @@ class SeleniumCrawler:
                         "content": "",
                         "error": f"Task execution failed: {e}",
                     }
-            
+
             # Small pause between batches
             if i + batch_size < len(urls):
                 await asyncio.sleep(0.5)
-    
+
     async def shutdown(self):
         """Close all WebDriver instances and release resources."""
         logger.info("Shutting down SeleniumCrawler...")

@@ -11,12 +11,11 @@ interface AnalysisModalProps {
 const AnalysisModal: React.FC<AnalysisModalProps> = ({ newsItemId, isOpen, onClose }) => {
   return (
     <Modal
-      title="News Analysis"
       open={isOpen}
       onCancel={onClose}
       footer={null}
-      width={800}
-      bodyStyle={{ padding: '0' }}
+      width={1000}
+      styles={{ body: { padding: '0' } }}
       destroyOnClose={true}
       maskClosable={true}
     >

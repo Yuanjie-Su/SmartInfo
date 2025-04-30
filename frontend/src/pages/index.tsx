@@ -30,7 +30,8 @@ import {
   GlobalOutlined,
   ExperimentOutlined,
   DownloadOutlined,
-  BarsOutlined
+  BarsOutlined,
+  LinkOutlined
 } from '@ant-design/icons';
 import { NewsItem, NewsCategory, NewsSource, NewsFilterParams, FetchTaskItem } from '@/utils/types';
 import * as newsService from '@/services/newsService';
@@ -480,60 +481,69 @@ const NewsPage: React.FC = () => {
             dataSource={news}
             renderItem={(item) => (
               <List.Item>
-                <Tooltip
-                  title={item.summary}
-                  color="#ffffff"
-                  overlayInnerStyle={{ color: '#333333' }}
-                >
-                  <Card hoverable style={{ borderRadius: '4px', boxShadow: 'none', border: '1px solid #f0f0f0' }}>
-                    <Card.Meta
-                      title={
-                        <Link href={`/news/${item.id}`}>
-                          <Text strong ellipsis style={{ fontSize: '16px', display: 'block', lineHeight: '1.4', maxHeight: '2.8em', overflow: 'hidden' }}>
-                            {item.title}
-                          </Text>
-                        </Link>
-                      }
-                      description={
-                        <Space direction="vertical" size={8} style={{ width: '100%' }}>
-                          {/* Date, Source, Category on one line */}
-                          <Space size={16} wrap>
-                            <Space size={4}>
-                              <CalendarOutlined style={{ color: '#8c8c8c' }} />
-                              <Text type="secondary" style={{ fontSize: '12px' }}>{formatDate(item.date)}</Text>
-                            </Space>
-                            <Space size={4}>
-                              <GlobalOutlined style={{ color: '#8c8c8c' }} />
-                              <Text type="secondary" style={{ fontSize: '12px' }}>{item.source_name}</Text>
-                            </Space>
-                            <Space size={4}>
-                              <TagOutlined style={{ color: '#8c8c8c' }} />
-                              <Text type="secondary" style={{ fontSize: '12px' }}>{item.category_name}</Text>
-                            </Space>
+                <Card hoverable style={{ borderRadius: '4px', boxShadow: 'none', border: '1px solid #f0f0f0' }}>
+                  <Card.Meta
+                    title={
+                      <Tooltip title={item.title}>
+                        <Text strong ellipsis style={{ fontSize: '16px', display: 'block', lineHeight: '1.4', maxHeight: '2.8em', overflow: 'hidden' }}>
+                          {item.title}
+                        </Text>
+                      </Tooltip>
+                    }
+                    description={
+                      <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                        {/* Date, Source, Category on one line */}
+                        <Space size={16} wrap>
+                          <Space size={4}>
+                            <CalendarOutlined style={{ color: '#8c8c8c' }} />
+                            <Text type="secondary" style={{ fontSize: '12px' }}>{formatDate(item.date)}</Text>
                           </Space>
+                          <Space size={4}>
+                            <GlobalOutlined style={{ color: '#8c8c8c' }} />
+                            <Text type="secondary" style={{ fontSize: '12px' }}>{item.source_name}</Text>
+                          </Space>
+                          {/* --- Start modification for Category and Link --- */}
+                          {/* Category */}
+                          <Space size={4}>
+                            <TagOutlined style={{ color: '#8c8c8c' }} />
+                            <Text type="secondary" style={{ fontSize: '12px' }}>{item.category_name}</Text>
+                          </Space>
+                          {/* Original URL Link */}
+                          {item.url && ( // Conditionally render link if URL exists
+                            <Space size={4}>
+                            <Tooltip title="查看原文">
+                              <a href={item.url} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', display: 'inline-flex', alignItems: 'center' }}>
+                              <LinkOutlined style={{ color: '#8c8c8c' }} />
+                              </a>
+                            </Tooltip>
+                            </Space>
+                          )}
+                          {/* --- End modification --- */}
+                        </Space>
 
-                          {/* Summary with ellipsis */}
-                          {item.summary && (
+                        {/* Summary with ellipsis */}
+                        {item.summary && (
+                          <Tooltip title={item.summary}>
                             <Paragraph ellipsis={{ rows: 3 }} style={{ marginBottom: '8px', color: '#595959' }}>
                               {item.summary}
                             </Paragraph>
-                          )}
+                          </Tooltip>
+                        )}
 
-                          {/* Analysis button at bottom right */}
-                          <div style={{ textAlign: 'right' }}>
+                        {/* Analysis button at bottom right - MODIFY HERE */}
+                        <div style={{ textAlign: 'right' }}>
+                          <Tooltip title="Analyze">
                             <Button
                               type="link"
                               icon={<ExperimentOutlined />}
                               onClick={() => openAnalysisModal(item.id)}
-                            >
-                              Analyze
-                            </Button>
-                          </div>
-                        </Space>
-                      }
-                    />
-                  </Card>
-                </Tooltip>
+                            />
+                          </Tooltip>
+                        </div>
+                      </Space>
+                    }
+                  />
+                </Card>
               </List.Item>
             )}
           />
