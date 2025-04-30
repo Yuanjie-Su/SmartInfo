@@ -7,9 +7,12 @@ Provides WebSocket connection for real-time task progress updates.
 """
 
 import logging
+import asyncio
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Path
+from celery.result import AsyncResult
 
 from backend.core.ws_manager import ws_manager
+from backend.tasks.news_tasks import process_source_url_task_celery
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +31,7 @@ async def websocket_task_endpoint(
 
     Clients connect to this endpoint with a task_group_id and receive
     progress updates for all tasks associated with that group ID.
+    This endpoint polls Celery task states and sends updates to the client.
 
     Args:
         websocket: The WebSocket connection
@@ -45,20 +49,157 @@ async def websocket_task_endpoint(
             {
                 "event": "connected",
                 "task_group_id": task_group_id,
-                "message": "WebSocket connection established. Waiting for task updates.",
+                "message": "WebSocket connection established. Starting task monitoring.",
             }
         )
 
-        # Keep the connection alive until client disconnects
+        # Get task data for this task group
+        task_data = ws_manager.get_task_data(task_group_id)
+        if not task_data or not task_data.get("task_ids"):
+            logger.warning(f"No task data found for task_group_id: {task_group_id}")
+            await websocket.send_json(
+                {
+                    "event": "error",
+                    "task_group_id": task_group_id,
+                    "message": "No tasks found for the specified task group ID.",
+                }
+            )
+            return
+
+        # Extract task IDs and source information
+        task_ids = task_data.get("task_ids", [])
+        source_info = task_data.get("source_info", {})
+
+        logger.info(
+            f"Monitoring {len(task_ids)} tasks for task_group_id: {task_group_id}"
+        )
+
+        # Task tracking
+        active_tasks = set(task_ids)
+        completed_tasks = set()
+        failed_tasks = set()
+
+        # Keep the connection alive and periodically check task states
         try:
-            # Wait for client to disconnect
-            while True:
-                # This will block until the client sends a message or disconnects
-                # We don't actually need to process incoming messages for this use case,
-                # but we need to listen for them to detect disconnection
-                data = await websocket.receive_text()
-                # Just log it for now
-                logger.debug(f"Received message from client: {data}")
+            while active_tasks and not websocket.client_state.DISCONNECTED:
+                # Check each active task's state
+                for task_id in list(active_tasks):
+                    # Get task result object
+                    task_result = AsyncResult(task_id)
+                    task_state = task_result.state
+
+                    # Get source info for this task
+                    source_id = source_info.get(task_id, {}).get("source_id", None)
+                    source_name = source_info.get(task_id, {}).get(
+                        "source_name", "Unknown Source"
+                    )
+
+                    # Process based on task state
+                    if task_state in ("PROGRESS", "STARTED"):
+                        # Task is still running, get progress info
+                        task_info = task_result.info or {}
+
+                        # Include source information with the update
+                        update_data = {
+                            "source_id": source_id,
+                            "source_name": source_name,
+                            "status": "processing",
+                            "step": task_info.get("step", "processing"),
+                            "progress": task_info.get("progress", 0),
+                            "message": task_info.get("message", "Processing..."),
+                        }
+
+                        # Add items_saved if available
+                        if "items_saved" in task_info:
+                            update_data["items_saved"] = task_info["items_saved"]
+
+                        # Send update to client
+                        await websocket.send_json(update_data)
+
+                    elif task_state == "SUCCESS":
+                        # Task completed successfully
+                        task_result_data = task_result.get() or {}
+
+                        # Format completion message
+                        update_data = {
+                            "source_id": source_id,
+                            "source_name": source_name,
+                            "status": "complete",
+                            "step": "complete",
+                            "progress": 100,
+                            "message": task_result_data.get(
+                                "message", "Task completed successfully."
+                            ),
+                        }
+
+                        # Add items_saved if available
+                        if "items_saved" in task_result_data:
+                            update_data["items_saved"] = task_result_data["items_saved"]
+
+                        # Send final update
+                        await websocket.send_json(update_data)
+
+                        # Mark task as completed
+                        active_tasks.remove(task_id)
+                        completed_tasks.add(task_id)
+
+                    elif task_state in ("FAILURE", "REVOKED"):
+                        # Task failed
+                        error_message = "Task failed"
+                        if hasattr(task_result, "traceback"):
+                            error_message = f"Task failed: {task_result.traceback}"
+
+                        # Send error update
+                        await websocket.send_json(
+                            {
+                                "source_id": source_id,
+                                "source_name": source_name,
+                                "status": "error",
+                                "step": "error",
+                                "progress": 0,
+                                "message": error_message,
+                            }
+                        )
+
+                        # Mark task as failed
+                        active_tasks.remove(task_id)
+                        failed_tasks.add(task_id)
+
+                # Send aggregate progress update
+                total_tasks = len(task_ids)
+                completed_count = len(completed_tasks) + len(failed_tasks)
+                if total_tasks > 0:
+                    overall_progress = int((completed_count / total_tasks) * 100)
+                    await websocket.send_json(
+                        {
+                            "event": "group_progress",
+                            "task_group_id": task_group_id,
+                            "total_sources": total_tasks,
+                            "completed_sources": completed_count,
+                            "progress": overall_progress,
+                            "message": f"Completed {completed_count} of {total_tasks} tasks",
+                        }
+                    )
+
+                # If all tasks are done, send final summary
+                if not active_tasks:
+                    await websocket.send_json(
+                        {
+                            "event": "group_complete",
+                            "task_group_id": task_group_id,
+                            "total_sources": total_tasks,
+                            "successful": len(completed_tasks),
+                            "failed": len(failed_tasks),
+                            "message": f"All tasks completed. {len(completed_tasks)} successful, {len(failed_tasks)} failed.",
+                        }
+                    )
+                    # Clean up task data
+                    ws_manager.cleanup_task_data(task_group_id)
+                    break
+
+                # Wait before checking again (1 second)
+                await asyncio.sleep(1)
+
         except WebSocketDisconnect:
             # Client disconnected, clean up
             logger.info(

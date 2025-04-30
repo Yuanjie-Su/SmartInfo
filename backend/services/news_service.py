@@ -16,16 +16,7 @@ from typing import List, Dict, Optional, Tuple, Callable, Any, Union, AsyncGener
 from urllib.parse import urljoin
 
 import aiohttp
-from fastapi import BackgroundTasks
-
-# Crawler for asynchronous HTTP requests
-from backend.core.crawler import (
-    AiohttpCrawler,
-    PlaywrightCrawler,
-    DEFAULT_MAX_CONCURRENT_REQUESTS,
-)
-
-from backend.core.workflow.news_fetch import fetch_news
+from celery import group
 
 # Repository interfaces for database operations
 from backend.db.repositories import (
@@ -40,24 +31,10 @@ from backend.core.llm import LLMClientPool
 # WebSocket manager for real-time updates
 from backend.core.ws_manager import ws_manager
 
-# Utilities for processing content and LLM output
-from backend.utils.markdown_utils import (
-    clean_markdown_links,
-    strip_markdown_divider,
-    strip_markdown_links,
-)
-from backend.utils.parse import parse_json_from_text
-from backend.utils.token_utils import get_token_size
-from backend.utils.html_utils import (
-    clean_and_format_html,
-    extract_metadata_from_article_html,
-)
-from backend.utils.text_utils import get_chunks
-from backend.utils.prompt import (
-    SYSTEM_PROMPT_EXTRACT_ARTICLE_LINKS,
-    SYSTEM_PROMPT_EXTRACT_SUMMARIZE_ARTICLE_BATCH,
-    SYSTEM_PROMPT_ANALYZE_CONTENT,
-)
+# Import Celery task
+from backend.tasks.news_tasks import process_source_url_task_celery
+
+from backend.utils.prompt import SYSTEM_PROMPT_ANALYZE_CONTENT
 
 # Configure module-level logger
 logger = logging.getLogger(__name__)
@@ -308,24 +285,22 @@ class NewsService:
         self,
         source_ids: List[int],
         task_group_id: str,
-        background_tasks: BackgroundTasks,
-    ):
+    ) -> Dict[str, List[str]]:
         """
-        Schedule background tasks to fetch and process news from multiple sources.
+        Schedule Celery tasks to fetch and process news from multiple sources.
 
         Args:
             source_ids: List of source IDs to process
             task_group_id: Unique identifier for this batch of tasks
-            background_tasks: FastAPI BackgroundTasks object to schedule tasks
 
         Returns:
-            None - tasks are scheduled in the background
+            Dict with task_group_id and list of Celery task IDs
         """
         if not source_ids:
             logger.warning(f"No source IDs provided for task group {task_group_id}")
-            return
+            return {"task_group_id": task_group_id, "task_ids": []}
 
-        # 发送整体任务开始进度更新
+        # Send overall task initialization update via WebSocket
         await ws_manager.send_update(
             task_group_id,
             {
@@ -339,39 +314,52 @@ class NewsService:
         )
 
         logger.info(
-            f"Scheduling background tasks for {len(source_ids)} sources in task group {task_group_id}"
+            f"Scheduling Celery tasks for {len(source_ids)} sources in task group {task_group_id}"
         )
 
-        # Schedule a task for each source
+        # Track task IDs and source info for each task
+        task_ids = []
+        source_info = {}
+
+        # Schedule a Celery task for each source
         for source_id in source_ids:
             try:
                 # Get source details
                 source = await self._source_repo.get_by_id(source_id)
                 if not source:
-                    # 使用进度回调发送错误信息
-                    progress_callback = await self._create_progress_callback(
-                        source_id,
-                        f"Unknown Source (ID: {source_id})",
+                    logger.error(f"Source ID {source_id} not found")
+                    # Send error update via WebSocket
+                    await ws_manager.send_update(
                         task_group_id,
+                        {
+                            "source_id": source_id,
+                            "source_name": f"Unknown Source (ID: {source_id})",
+                            "status": "error",
+                            "step": "error",
+                            "progress": 0,
+                            "message": f"源ID {source_id} 未找到",
+                        },
                     )
-                    await progress_callback("error", 0, f"源ID {source_id} 未找到")
                     continue
 
                 # Extract required details
                 url = source[2]  # URL is at index 2
                 source_name = source[1]  # Name is at index 1
 
-                # Add the background task
-                background_tasks.add_task(
-                    self._process_source_url_task,
-                    source_id,
-                    url,
-                    source_name,
-                    task_group_id,
+                # Create a Celery task
+                task = process_source_url_task_celery.delay(
+                    source_id, url, source_name, task_group_id
                 )
 
+                # Store the task ID and source info
+                task_ids.append(task.id)
+                source_info[task.id] = {
+                    "source_id": source_id,
+                    "source_name": source_name,
+                }
+
                 logger.info(
-                    f"Scheduled task for source: {source_name} (ID: {source_id})"
+                    f"Scheduled Celery task for source: {source_name} (ID: {source_id}), task ID: {task.id}"
                 )
 
             except Exception as e:
@@ -379,171 +367,33 @@ class NewsService:
                     f"Failed to schedule task for source ID {source_id}: {e}",
                     exc_info=True,
                 )
-                # 使用进度回调发送错误信息
-                progress_callback = await self._create_progress_callback(
-                    source_id, f"Unknown Source (ID: {source_id})", task_group_id
+                # Send error update via WebSocket
+                await ws_manager.send_update(
+                    task_group_id,
+                    {
+                        "source_id": source_id,
+                        "source_name": f"Unknown Source (ID: {source_id})",
+                        "status": "error",
+                        "step": "error",
+                        "progress": 0,
+                        "message": f"调度任务失败: {str(e)}",
+                    },
                 )
-                await progress_callback("error", 0, f"调度任务失败: {str(e)}")
 
-    async def _process_source_url_task(
-        self,
-        source_id: int,
-        url: str,
-        source_name: str,
-        task_group_id: str,
-    ):
-        """
-        Process a single source URL as a background task.
+        # Store task_ids and source_info mappings in Redis for the WebSocket endpoint to use
+        # This implementation stores the mappings in a way that the WebSocket endpoint can retrieve them
+        task_data = {
+            "task_group_id": task_group_id,
+            "task_ids": task_ids,
+            "source_info": source_info,
+        }
 
-        This implements the full multi-step pipeline:
-        1. Initial crawl of the source URL
-        2. HTML cleaning
-        3. LLM call for link extraction
-        4. Crawling extracted article links
-        5. LLM call for content analysis/summarization
-        6. Saving results to the database
-        7. Final update
+        # TODO: In a production implementation, store this in Redis
+        # For now, we'll use ws_manager to store task data
+        # This isn't ideal, but provides the necessary mappings without additional dependencies
+        await ws_manager.store_task_data(task_group_id, task_data)
 
-        Args:
-            source_id: ID of the news source
-            url: URL of the news source
-            source_name: Name of the news source
-            task_group_id: Unique identifier for the task group this task belongs to
-            crawler: PlaywrightCrawler instance to use for fetching
-
-        Returns:
-            None - results are saved to database and progress is sent via WebSocket
-        """
-        # Create a progress callback function
-        progress_callback = await self._create_progress_callback(
-            source_id, source_name, task_group_id
-        )
-
-        if not self._llm_pool:
-            error_message = "LLM client pool not initialized"
-            logger.error(error_message)
-            await progress_callback("error", 0, error_message)
-            return
-
-        logger.info(
-            f"Starting processing of source URL: {url} (Source: {source_name}, ID: {source_id})"
-        )
-
-        try:
-            # Send initial progress update
-            await progress_callback("initializing", 5, f"开始处理源: {source_name}")
-
-            # Get category information for this source
-            source_details = await self._source_repo.get_by_id_as_dict(source_id)
-            if not source_details:
-                await progress_callback(
-                    "error", 0, f"无法获取源 ID {source_id} 的详细信息"
-                )
-                return
-
-            # Extract category information
-            category_id = source_details.get("category_id")
-            category_name = source_details.get("category_name")
-
-            await progress_callback("preparing", 10, "准备抓取数据...")
-
-            # Get existing links to avoid duplicates
-            exclude_links = await self._news_repo.get_all_urls()
-
-            # Use progress callback to fetch news data
-            fetch_result = await fetch_news(
-                url=url,
-                llm_pool=self._llm_pool,
-                exclude_links=exclude_links,
-                progress_callback=progress_callback,
-            )
-
-            # Process the fetched results
-            if not fetch_result:
-                await progress_callback("complete", 100, "完成处理，但未找到新内容")
-                return
-
-            # Add source and category information to all result items
-            for result_item in fetch_result:
-                result_item["source_name"] = source_name
-                result_item["category_name"] = category_name
-                result_item["source_id"] = source_id
-                result_item["category_id"] = category_id
-
-            print(fetch_result)
-            # Update progress
-            await progress_callback(
-                "saving",
-                95,
-                f"正在保存 {len(fetch_result)} 个新闻项...",
-                len(fetch_result),
-            )
-
-            # Save to database
-            saved_count, skipped_count = await self._news_repo.add_batch(fetch_result)
-
-            # Send completion notification
-            await progress_callback(
-                "complete",
-                100,
-                f"成功处理并保存了 {saved_count} 个新闻项，跳过了 {skipped_count} 个新闻项",
-                saved_count,
-            )
-
-        except Exception as e:
-            logger.error(f"处理 {url} 的新闻时出错: {e}", exc_info=True)
-            await progress_callback("error", 0, f"处理错误: {str(e)}")
-            return
-
-    async def _create_progress_callback(
-        self, source_id: int, source_name: str, task_group_id: str
-    ) -> Callable:
-        """
-        Creates a standardized progress callback function for sending progress updates to the WebSocket.
-
-        Args:
-            source_id: The ID of the news source
-            source_name: The name of the news source
-            task_group_id: The ID of the task group this task belongs to
-
-        Returns:
-            A callback function that accepts step name, progress percentage, and details information
-        """
-
-        async def progress_callback(
-            step: str, progress: float, details: str = "", items_count: int = 0
-        ):
-            """Progress callback function
-
-            Args:
-                step: The current processing step, e.g. 'crawling', 'extracting', 'analyzing', etc.
-                progress: Completion percentage (0-100)
-                details: Additional details information
-                items_count: Number of items processed/saved
-            """
-            # Build a unified status update message
-            update_data = {
-                "source_id": source_id,
-                "source_name": source_name,
-                "status": "processing" if progress < 100 else "complete",
-                "step": step,
-                "progress": progress,
-                "message": details,
-            }
-
-            # If there is a project count, add it to the update data
-            if items_count > 0:
-                update_data["items_saved"] = items_count
-
-            # Send to WebSocket
-            await ws_manager.send_update(task_group_id, update_data)
-
-            # Also log to the console, maintaining a consistent log format
-            logger.info(
-                f"Source {source_id} ({source_name}): {step} - {progress:.1f}% - {details}"
-            )
-
-        return progress_callback
+        return {"task_group_id": task_group_id, "task_ids": task_ids}
 
     async def stream_analysis_for_news_item(
         self, news_id: int, force: bool = False

@@ -31,7 +31,6 @@ from fastapi import APIRouter, Depends, HTTPException, Body, Query, status
 from fastapi.responses import StreamingResponse
 from typing import List, Dict, Any, Optional, AsyncGenerator
 import uuid
-from fastapi import BackgroundTasks
 
 # Import dependencies from the centralized dependencies module
 from backend.api.dependencies import get_news_service
@@ -864,11 +863,10 @@ async def trigger_fetch_single_url(
 )
 async def trigger_fetch_batch_sources(
     request: FetchSourceBatchRequest,
-    background_tasks: BackgroundTasks,
     news_service: NewsService = Depends(get_news_service),
 ):
     """
-    Start background tasks to fetch news from multiple sources in parallel.
+    Start Celery tasks to fetch news from multiple sources in parallel.
     Each source is processed as a separate task, and progress can be monitored
     via WebSocket connection.
 
@@ -885,13 +883,13 @@ async def trigger_fetch_batch_sources(
         # Generate a unique task group ID
         task_group_id = str(uuid.uuid4())
 
-        # Schedule background tasks with this task group ID
-        await news_service.fetch_sources_in_background(
-            request.source_ids, task_group_id, background_tasks
+        # Schedule Celery tasks with this task group ID
+        result = await news_service.fetch_sources_in_background(
+            request.source_ids, task_group_id
         )
 
         logger.info(
-            f"Scheduled background tasks for {len(request.source_ids)} sources with task_group_id: {task_group_id}"
+            f"Scheduled Celery tasks for {len(request.source_ids)} sources with task_group_id: {task_group_id}"
         )
 
         # Return the task group ID for WebSocket monitoring

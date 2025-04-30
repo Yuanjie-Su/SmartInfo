@@ -106,3 +106,34 @@ The application supports the following command-line arguments when run from the 
 - `src/utils/`: Utility functions (e.g., token counting).
 - `requirements.txt`: Project dependencies.
 - `README.md` / `README_CN.md`: This documentation.
+
+## Running Background Tasks with Celery
+
+The application uses Celery with Redis for handling background tasks such as news fetching and analysis. To run these tasks, you need to start a Celery worker in addition to the main FastAPI application.
+
+### Starting the Celery Worker
+
+1. Make sure Redis is running on localhost:6379 (or configure the REDIS_URL environment variable)
+2. Open a terminal and navigate to the project directory
+3. Activate your virtual environment
+4. Run the following command:
+
+```bash
+# On Windows
+celery -A backend.celery_worker worker --loglevel=info --pool=solo
+
+# On Linux/Mac
+celery -A backend.celery_worker worker --loglevel=info
+```
+
+The worker will start and initialize all the necessary dependencies (database connection, LLM client pool, etc.) and then start listening for tasks.
+
+Note: On Windows, you need to use the `--pool=solo` option as the default prefork pool is not supported on Windows.
+
+### Configuring Redis
+
+By default, the application looks for Redis at `redis://localhost:6379/0`. You can change this by setting the `REDIS_URL` environment variable in your `.env` file:
+
+```
+REDIS_URL=redis://your-redis-host:6379/0
+```

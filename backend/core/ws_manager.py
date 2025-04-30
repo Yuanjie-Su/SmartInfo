@@ -7,7 +7,7 @@ Manages active WebSocket connections for task groups and handles message broadca
 """
 
 import logging
-from typing import Dict, List, Set, Any
+from typing import Dict, List, Set, Any, Optional
 from fastapi import WebSocket
 
 logger = logging.getLogger(__name__)
@@ -24,6 +24,8 @@ class ConnectionManager:
         """Initialize an empty connection manager."""
         # Maps task_group_id to a set of WebSocket connections
         self.active_connections: Dict[str, Set[WebSocket]] = {}
+        # Maps task_group_id to task data (task IDs and source info)
+        self.task_data: Dict[str, Dict[str, Any]] = {}
         logger.info("WebSocket ConnectionManager initialized")
 
     async def connect(self, websocket: WebSocket, task_group_id: str):
@@ -96,6 +98,40 @@ class ConnectionManager:
         # Clean up any disconnected websockets
         for websocket in disconnected_websockets:
             await self.disconnect(websocket, task_group_id)
+
+    async def store_task_data(self, task_group_id: str, data: Dict[str, Any]):
+        """
+        Store task data associated with a task group.
+
+        Args:
+            task_group_id: The task group ID
+            data: Dictionary containing task IDs and source information
+        """
+        self.task_data[task_group_id] = data
+        logger.info(f"Stored task data for task_group_id: {task_group_id}")
+
+    def get_task_data(self, task_group_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Retrieve task data for a task group.
+
+        Args:
+            task_group_id: The task group ID
+
+        Returns:
+            Dictionary containing task data or None if not found
+        """
+        return self.task_data.get(task_group_id)
+
+    def cleanup_task_data(self, task_group_id: str):
+        """
+        Remove task data for a completed task group.
+
+        Args:
+            task_group_id: The task group ID to clean up
+        """
+        if task_group_id in self.task_data:
+            del self.task_data[task_group_id]
+            logger.info(f"Cleaned up task data for task_group_id: {task_group_id}")
 
 
 # Global instance of the connection manager
