@@ -165,40 +165,40 @@ const NewsPage: React.FC = () => {
 
         ws.onmessage = (event) => {
           try {
-            const taskUpdate = JSON.parse(event.data);
-            console.log('Received task update:', taskUpdate);
-
-            // Update the specific task in the monitoring list
-            setTasksToMonitor(prevTasks => {
-              // Find the index of the task to update
-              const taskIndex = prevTasks.findIndex(t => t.sourceId === taskUpdate.source_id);
-
-              // If task not found, maybe log a warning or ignore
-              if (taskIndex === -1) {
-                console.warn(`Received update for unknown source ID: ${taskUpdate.source_id}`);
-                return prevTasks; // Return previous state if task not found
+              const taskUpdate = JSON.parse(event.data);
+              console.log('Received task update:', taskUpdate);
+              
+              // 只处理包含source_id的消息
+              if (taskUpdate.source_id === undefined) {
+                  console.log('Received message without source_id (ignoring for task list):', taskUpdate);
+                  return;
               }
+              
+              // 更新特定source任务的状态
+              setTasksToMonitor(prevTasks => {
+                  const taskIndex = prevTasks.findIndex(t => t.sourceId === taskUpdate.source_id);
+  
+                  if (taskIndex === -1) {
+                      console.warn(`Received update for source ID ${taskUpdate.source_id}, but task not found in monitor list.`);
+                      return prevTasks;
+                  }
 
-              // Create a new array with the updated task
-              const updatedTasks = [...prevTasks];
-              const taskToUpdate = { ...updatedTasks[taskIndex] }; // Copy the task object
-
-              // Update fields based on the received message
-              taskToUpdate.status = taskUpdate.status || taskUpdate.step || taskToUpdate.status; // Use status or step
-              taskToUpdate.progress = taskUpdate.progress !== undefined ? taskUpdate.progress : taskToUpdate.progress;
-              taskToUpdate.message = taskUpdate.message || taskToUpdate.message;
-              if (taskUpdate.items_saved !== undefined) {
-                  taskToUpdate.items_saved = taskUpdate.items_saved;
-              }
-
-              // Replace the old task with the updated one
-              updatedTasks[taskIndex] = taskToUpdate;
-
-              return updatedTasks;
-            });
-
+                  const updatedTasks = [...prevTasks];
+                  const taskToUpdate = { ...updatedTasks[taskIndex] };
+  
+                  // 根据接收到的消息更新字段
+                  taskToUpdate.status = taskUpdate.status || taskUpdate.step || taskToUpdate.status;
+                  taskToUpdate.progress = taskUpdate.progress !== undefined ? taskUpdate.progress : taskToUpdate.progress;
+                  taskToUpdate.message = taskUpdate.message || taskToUpdate.message;
+                  if (taskUpdate.items_saved !== undefined) {
+                      taskToUpdate.items_saved = taskUpdate.items_saved;
+                  }
+  
+                  updatedTasks[taskIndex] = taskToUpdate;
+                  return updatedTasks;
+              });
           } catch (e) {
-            console.error('Failed to parse WebSocket message:', e);
+              console.error('Failed to parse or process WebSocket message:', e);
           }
         };
 

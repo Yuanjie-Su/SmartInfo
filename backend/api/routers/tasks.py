@@ -8,6 +8,7 @@ Provides WebSocket connection for real-time task progress updates.
 
 import logging
 import asyncio
+from starlette.websockets import WebSocketState
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Path
 from celery.result import AsyncResult
 
@@ -44,14 +45,8 @@ async def websocket_task_endpoint(
             f"WebSocket connection established for task_group_id: {task_group_id}"
         )
 
-        # Send initial connection confirmation
-        await websocket.send_json(
-            {
-                "event": "connected",
-                "task_group_id": task_group_id,
-                "message": "WebSocket connection established. Starting task monitoring.",
-            }
-        )
+        # Send initial connection confirmation - REMOVED
+        # await websocket.send_json({"event": "connected", "task_group_id": task_group_id, "message": "WebSocket connection established. Starting task monitoring."})
 
         # Get task data for this task group
         task_data = ws_manager.get_task_data(task_group_id)
@@ -81,77 +76,97 @@ async def websocket_task_endpoint(
 
         # Keep the connection alive and periodically check task states
         try:
-            while active_tasks and not websocket.client_state.DISCONNECTED:
+            while (
+                active_tasks and websocket.client_state != WebSocketState.DISCONNECTED
+            ):
+                logger.info(
+                    f"Task group {task_group_id}: Checking {len(active_tasks)} active tasks..."
+                )
                 # Check each active task's state
                 for task_id in list(active_tasks):
-                    # Get task result object
-                    task_result = AsyncResult(task_id)
-                    task_state = task_result.state
+                    try:
+                        logger.debug(f"Checking task ID: {task_id}")
+                        # Get task result object
+                        task_result = AsyncResult(task_id)
+                        task_state = task_result.state
+                        task_info = task_result.info
+                        logger.debug(
+                            f"Task {task_id} state: {task_state}, info: {task_info}"
+                        )
 
-                    # Get source info for this task
-                    source_id = source_info.get(task_id, {}).get("source_id", None)
-                    source_name = source_info.get(task_id, {}).get(
-                        "source_name", "Unknown Source"
-                    )
+                        # Get source info for this task
+                        source_id = source_info.get(task_id, {}).get("source_id", None)
+                        source_name = source_info.get(task_id, {}).get(
+                            "source_name", "Unknown Source"
+                        )
 
-                    # Process based on task state
-                    if task_state in ("PROGRESS", "STARTED"):
-                        # Task is still running, get progress info
-                        task_info = task_result.info or {}
+                        # Process based on task state
+                        if task_state in ("PROGRESS", "STARTED") and isinstance(
+                            task_info, dict
+                        ):
+                            # Task is still running, get progress info
+                            # Include source information with the update
+                            update_data = {
+                                "source_id": source_id,
+                                "source_name": source_name,
+                                "status": "processing",
+                                "step": task_info.get("step", "processing"),
+                                "progress": task_info.get("progress", 0),
+                                "message": task_info.get("message", "Processing..."),
+                            }
 
-                        # Include source information with the update
-                        update_data = {
-                            "source_id": source_id,
-                            "source_name": source_name,
-                            "status": "processing",
-                            "step": task_info.get("step", "processing"),
-                            "progress": task_info.get("progress", 0),
-                            "message": task_info.get("message", "Processing..."),
-                        }
+                            # Add items_saved if available
+                            if "items_saved" in task_info:
+                                update_data["items_saved"] = task_info["items_saved"]
 
-                        # Add items_saved if available
-                        if "items_saved" in task_info:
-                            update_data["items_saved"] = task_info["items_saved"]
+                            # Send update to client
+                            logger.debug(
+                                f"Sending update for task {task_id}: {update_data}"
+                            )
+                            await websocket.send_json(update_data)
+                            logger.debug(f"Update sent for task {task_id}")
 
-                        # Send update to client
-                        await websocket.send_json(update_data)
+                        elif task_state == "SUCCESS":
+                            # Task completed successfully
+                            task_result_data = task_result.get() or {}
 
-                    elif task_state == "SUCCESS":
-                        # Task completed successfully
-                        task_result_data = task_result.get() or {}
+                            # Format completion message
+                            update_data = {
+                                "source_id": source_id,
+                                "source_name": source_name,
+                                "status": "complete",
+                                "step": "complete",
+                                "progress": 100,
+                                "message": task_result_data.get(
+                                    "message", "Task completed successfully."
+                                ),
+                            }
 
-                        # Format completion message
-                        update_data = {
-                            "source_id": source_id,
-                            "source_name": source_name,
-                            "status": "complete",
-                            "step": "complete",
-                            "progress": 100,
-                            "message": task_result_data.get(
-                                "message", "Task completed successfully."
-                            ),
-                        }
+                            # Add items_saved if available
+                            if "items_saved" in task_result_data:
+                                update_data["items_saved"] = task_result_data[
+                                    "items_saved"
+                                ]
 
-                        # Add items_saved if available
-                        if "items_saved" in task_result_data:
-                            update_data["items_saved"] = task_result_data["items_saved"]
+                            # Send final update
+                            logger.debug(
+                                f"Sending SUCCESS update for task {task_id}: {update_data}"
+                            )
+                            await websocket.send_json(update_data)
+                            logger.debug(f"SUCCESS Update sent for task {task_id}")
 
-                        # Send final update
-                        await websocket.send_json(update_data)
+                            # Mark task as completed
+                            active_tasks.remove(task_id)
+                            completed_tasks.add(task_id)
 
-                        # Mark task as completed
-                        active_tasks.remove(task_id)
-                        completed_tasks.add(task_id)
+                        elif task_state in ("FAILURE", "REVOKED"):
+                            # Task failed
+                            error_message = "Task failed"
+                            if hasattr(task_result, "traceback"):
+                                error_message = f"Task failed: {task_result.traceback}"
 
-                    elif task_state in ("FAILURE", "REVOKED"):
-                        # Task failed
-                        error_message = "Task failed"
-                        if hasattr(task_result, "traceback"):
-                            error_message = f"Task failed: {task_result.traceback}"
-
-                        # Send error update
-                        await websocket.send_json(
-                            {
+                            # Send error update
+                            update_data = {
                                 "source_id": source_id,
                                 "source_name": source_name,
                                 "status": "error",
@@ -159,53 +174,60 @@ async def websocket_task_endpoint(
                                 "progress": 0,
                                 "message": error_message,
                             }
+
+                            logger.debug(
+                                f"Sending FAILURE update for task {task_id}: {update_data}"
+                            )
+                            await websocket.send_json(update_data)
+                            logger.debug(f"FAILURE Update sent for task {task_id}")
+
+                            # Mark task as failed
+                            active_tasks.remove(task_id)
+                            failed_tasks.add(task_id)
+
+                    except Exception as loop_error:
+                        logger.error(
+                            f"Error processing task {task_id} in WS loop: {loop_error}",
+                            exc_info=True,
                         )
+                        # 决定是否将错误通知前端或直接断开
+                        await websocket.send_json(
+                            {
+                                "event": "error",
+                                "task_id": task_id,
+                                "message": f"Internal server error while monitoring task {task_id}.",
+                            }
+                        )
+                        # 可以选择移除任务或继续监控其他任务
+                        if task_id in active_tasks:
+                            active_tasks.remove(task_id)
+                        failed_tasks.add(task_id)  # 标记为失败
 
-                        # Mark task as failed
-                        active_tasks.remove(task_id)
-                        failed_tasks.add(task_id)
-
-                # Send aggregate progress update
-                total_tasks = len(task_ids)
-                completed_count = len(completed_tasks) + len(failed_tasks)
-                if total_tasks > 0:
-                    overall_progress = int((completed_count / total_tasks) * 100)
-                    await websocket.send_json(
-                        {
-                            "event": "group_progress",
-                            "task_group_id": task_group_id,
-                            "total_sources": total_tasks,
-                            "completed_sources": completed_count,
-                            "progress": overall_progress,
-                            "message": f"Completed {completed_count} of {total_tasks} tasks",
-                        }
-                    )
-
-                # If all tasks are done, send final summary
+                # If all tasks are done, send final summary - REMOVED
                 if not active_tasks:
-                    await websocket.send_json(
-                        {
-                            "event": "group_complete",
-                            "task_group_id": task_group_id,
-                            "total_sources": total_tasks,
-                            "successful": len(completed_tasks),
-                            "failed": len(failed_tasks),
-                            "message": f"All tasks completed. {len(completed_tasks)} successful, {len(failed_tasks)} failed.",
-                        }
-                    )
+                    logger.info(f"All tasks completed for group {task_group_id}.")
+                    # await websocket.send_json({"event": "group_complete", "task_group_id": task_group_id, "total_sources": total_tasks, "successful": len(completed_tasks), "failed": len(failed_tasks), "message": f"All tasks completed. {len(completed_tasks)} successful, {len(failed_tasks)} failed."})
                     # Clean up task data
                     ws_manager.cleanup_task_data(task_group_id)
                     break
 
                 # Wait before checking again (1 second)
                 await asyncio.sleep(1)
+                logger.debug(f"Task group {task_group_id}: Loop finished iteration.")
 
         except WebSocketDisconnect:
-            # Client disconnected, clean up
             logger.info(
-                f"WebSocket client disconnected from task_group_id: {task_group_id}"
+                f"WebSocket client disconnected explicitly from task_group_id: {task_group_id}"
+            )
+        except Exception as e:
+            logger.error(
+                f"Unhandled exception in websocket_task_endpoint for {task_group_id}: {e}",
+                exc_info=True,
             )
         finally:
+            logger.warning(
+                f"Executing finally block for task_group_id: {task_group_id}. Cleaning up connection."
+            )
             # Ensure we clean up the connection when it ends
             await ws_manager.disconnect(websocket, task_group_id)
 

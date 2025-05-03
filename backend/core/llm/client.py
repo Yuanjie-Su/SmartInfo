@@ -55,7 +55,9 @@ class LLMClientBase(abc.ABC):
         base_url: str,
         api_key: Optional[str],
         model: Optional[str] = None,
-        timeout: int = 60,
+        context_window: int = 4096,
+        max_output_tokens: int = 2048,
+        timeout: int = 600,
         max_retries: int = 3,
     ) -> None:
         """
@@ -78,6 +80,9 @@ class LLMClientBase(abc.ABC):
         self.base_url = base_url
         self.api_key = api_key
         self.default_model = model
+        self.context_window = context_window
+        self.max_output_tokens = max_output_tokens
+        self.max_input_tokens = context_window - max_output_tokens
         self.timeout = timeout
         self.max_retries = max_retries
         self._client = None
@@ -182,7 +187,7 @@ class AsyncLLMClient(LLMClientBase):
         self,
         messages: List[Dict[str, str]],
         model: Optional[str] = None,
-        max_tokens: Optional[int] = 2048,
+        max_output_tokens: Optional[int] = None,
         temperature: float = 0.7,
         top_p: Optional[float] = None,
         **kwargs,
@@ -193,7 +198,7 @@ class AsyncLLMClient(LLMClientBase):
         Args:
             messages: List of messages forming the conversation history/prompt.
             model: Model name to use (overrides client default).
-            max_tokens: Max tokens for the response.
+            max_output_tokens: Max tokens for the response.
             temperature: Sampling temperature (0.0-2.0).
             top_p: Nucleus sampling parameter.
             **kwargs: Additional valid parameters for the OpenAI API completions endpoint.
@@ -216,7 +221,7 @@ class AsyncLLMClient(LLMClientBase):
         request_params = {
             "model": model_to_use,
             "messages": messages,
-            "max_tokens": max_tokens,
+            "max_tokens": max_output_tokens or self.max_output_tokens,
             "temperature": temperature,
             "top_p": top_p,
             "stream": False,
@@ -270,7 +275,7 @@ class AsyncLLMClient(LLMClientBase):
         self,
         messages: List[Dict[str, str]],
         model: Optional[str] = None,
-        max_tokens: Optional[int] = 2048,
+        max_output_tokens: Optional[int] = None,
         temperature: float = 0.7,
         top_p: Optional[float] = None,
         **kwargs,
@@ -281,7 +286,7 @@ class AsyncLLMClient(LLMClientBase):
         Args:
             messages: List of messages forming the conversation history/prompt.
             model: Model name to use (overrides client default).
-            max_tokens: Max tokens for the response.
+            max_output_tokens: Max tokens for the response.
             temperature: Sampling temperature (0.0-2.0).
             top_p: Nucleus sampling parameter.
             **kwargs: Additional valid parameters for the OpenAI API completions endpoint.
@@ -304,7 +309,7 @@ class AsyncLLMClient(LLMClientBase):
         request_params = {
             "model": model_to_use,
             "messages": messages,
-            "max_tokens": max_tokens,
+            "max_tokens": max_output_tokens or self.max_output_tokens,
             "temperature": temperature,
             "top_p": top_p,
             "stream": True,
@@ -415,7 +420,7 @@ class SyncLLMClient(LLMClientBase):
         self,
         messages: List[Dict[str, str]],
         model: Optional[str] = None,
-        max_tokens: Optional[int] = 2048,
+        max_output_tokens: Optional[int] = None,
         temperature: float = 0.7,
         top_p: Optional[float] = None,
         **kwargs,
@@ -426,7 +431,7 @@ class SyncLLMClient(LLMClientBase):
         Args:
             messages: List of messages forming the conversation history/prompt.
             model: Model name to use (overrides client default).
-            max_tokens: Max tokens for the response.
+            max_output_tokens: Max tokens for the response.
             temperature: Sampling temperature (0.0-2.0).
             top_p: Nucleus sampling parameter.
             **kwargs: Additional valid parameters for the OpenAI API completions endpoint.
@@ -449,7 +454,7 @@ class SyncLLMClient(LLMClientBase):
         request_params = {
             "model": model_to_use,
             "messages": messages,
-            "max_tokens": max_tokens,
+            "max_tokens": max_output_tokens or self.max_output_tokens,
             "temperature": temperature,
             "top_p": top_p,
             "stream": False,
@@ -503,7 +508,7 @@ class SyncLLMClient(LLMClientBase):
         self,
         messages: List[Dict[str, str]],
         model: Optional[str] = None,
-        max_tokens: Optional[int] = 2048,
+        max_output_tokens: Optional[int] = None,
         temperature: float = 0.7,
         top_p: Optional[float] = None,
         **kwargs,
@@ -514,7 +519,7 @@ class SyncLLMClient(LLMClientBase):
         Args:
             messages: List of messages forming the conversation history/prompt.
             model: Model name to use (overrides client default).
-            max_tokens: Max tokens for the response.
+            max_output_tokens: Max tokens for the response.
             temperature: Sampling temperature (0.0-2.0).
             top_p: Nucleus sampling parameter.
             **kwargs: Additional valid parameters for the OpenAI API completions endpoint.
@@ -537,7 +542,7 @@ class SyncLLMClient(LLMClientBase):
         request_params = {
             "model": model_to_use,
             "messages": messages,
-            "max_tokens": max_tokens,
+            "max_tokens": max_output_tokens or self.max_output_tokens,
             "temperature": temperature,
             "top_p": top_p,
             "stream": True,
@@ -608,7 +613,9 @@ def LLMClient(
     api_key: Optional[str],
     async_mode: bool = True,
     model: Optional[str] = None,
-    timeout: int = 60,
+    context_window: int = 4096,
+    max_output_tokens: int = 2048,
+    timeout: int = 600,
     max_retries: int = 3,
 ) -> Union[AsyncLLMClient, SyncLLMClient]:
     """
@@ -630,6 +637,8 @@ def LLMClient(
             base_url=base_url,
             api_key=api_key,
             model=model,
+            context_window=context_window,
+            max_output_tokens=max_output_tokens,
             timeout=timeout,
             max_retries=max_retries,
         )
@@ -638,6 +647,8 @@ def LLMClient(
             base_url=base_url,
             api_key=api_key,
             model=model,
+            context_window=context_window,
+            max_output_tokens=max_output_tokens,
             timeout=timeout,
             max_retries=max_retries,
         )

@@ -31,9 +31,6 @@ def get_token_size(text: str, model_type: str = "deepseek") -> int:
     if model_type == "deepseek":
         if ds_token:
             try:
-                # Ensure text is string
-                if not isinstance(text, str):
-                    text = str(text)
                 return len(ds_token.encode(text))
             except Exception as e:
                 logger.warning(

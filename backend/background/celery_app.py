@@ -35,6 +35,6 @@ celery_app.conf.update(
 )
 
 
-# This allows you to run celery with: celery -A backend.celery_app worker --loglevel=info
+# This allows you to run celery with: celery -A backend.background.celery_app worker --loglevel=info
 if __name__ == "__main__":
     celery_app.start()

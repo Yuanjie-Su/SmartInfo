@@ -9,36 +9,30 @@ while reporting progress through Celery's task state mechanism.
 
 import logging
 import asyncio
-from typing import List, Dict, Any, Optional
+from typing import Dict, Any, Optional
+import os  # Import os to get pid for logging
 
 from celery import shared_task
-from core.llm import LLMClientPool
+from celery.exceptions import Reject  # Import Reject for clean error handling
+
+# Import resources TYPE HINTS only, actual instances come from celery_worker globals
+from core.llm import AsyncLLMClient
 from db.repositories import NewsRepository, NewsSourceRepository
+
+# Import the actual workflow function
 from core.workflow.news_fetch import fetch_news
 
 # Configure module-level logger
 logger = logging.getLogger(__name__)
 
-# Global shared instances that will be set in the worker process
-_llm_pool: Optional[LLMClientPool] = None
-_news_repo: Optional[NewsRepository] = None
-_source_repo: Optional[NewsSourceRepository] = None
+# --- IMPORTANT ---
+# Tasks will now access the process-specific globals defined in celery_worker.py
 
-
-def init_task_dependencies(
-    llm_pool: LLMClientPool,
-    news_repo: NewsRepository,
-    source_repo: NewsSourceRepository,
-):
-    """
-    Initialize shared dependencies for task execution.
-    Called when the worker starts to set global instances.
-    """
-    global _llm_pool, _news_repo, _source_repo
-    _llm_pool = llm_pool
-    _news_repo = news_repo
-    _source_repo = source_repo
-    logger.info("Task dependencies initialized")
+# Access the process-specific globals from celery_worker
+# It's generally better practice to pass dependencies if possible, but for
+# Celery process globals, accessing them directly is a common pattern.
+# We import the worker module itself to access its globals.
+from background import celery_worker
 
 
 @shared_task(bind=True, name="process_source_url_task")
@@ -47,13 +41,7 @@ def process_source_url_task_celery(
 ):
     """
     Celery task to process a single news source URL.
-
-    This task:
-    1. Fetches articles from the source URL
-    2. Extracts content and metadata
-    3. Analyzes content if needed
-    4. Saves results to the database
-    5. Reports progress through task state updates
+    Uses process-specific resources initialized via signals.
 
     Args:
         self: Celery task instance (injected by bind=True)
@@ -65,8 +53,9 @@ def process_source_url_task_celery(
     Returns:
         Dict with summary of results
     """
+    pid = os.getpid()
     logger.info(
-        f"Starting processing of source URL: {url} (Source: {source_name}, ID: {source_id})"
+        f"[PID:{pid}] Starting task {self.request.id} for source URL: {url} (Source: {source_name}, ID: {source_id})"
     )
 
     # Initial state update
@@ -81,9 +70,14 @@ def process_source_url_task_celery(
         },
     )
 
-    # Verify dependencies are initialized
-    if not all((_llm_pool, _news_repo, _source_repo)):
-        error_message = "Task dependencies not initialized"
+    # --- Verify Dependencies ---
+    # Access the globals from the imported celery_worker module
+    llm_client = celery_worker._process_llm_client
+    news_repo = celery_worker._process_news_repo
+    source_repo = celery_worker._process_source_repo
+
+    if not all((llm_client, news_repo, source_repo)):
+        error_message = f"[PID:{pid}] Task dependencies not available in this worker process. Setup might have failed."
         logger.error(error_message)
         self.update_state(
             state="FAILURE",
@@ -92,21 +86,33 @@ def process_source_url_task_celery(
                 "source_name": source_name,
                 "step": "error",
                 "progress": 0,
-                "message": error_message,
+                "message": "内部错误：工作进程资源初始化失败",  # User-friendly message
             },
         )
-        return {"status": "error", "message": error_message}
+        # Use Reject to signal the task should not be retried easily for this kind of error
+        raise Reject(error_message, requeue=False)
 
+    # --- Execute Async Logic ---
     try:
-        # This is a synchronous Celery task, but fetch_news is async
-        # We need to run the async code in an event loop
-        loop = asyncio.get_event_loop()
-        result = loop.run_until_complete(
-            _process_source_url_async(self, source_id, url, source_name, task_group_id)
+        # Get or create an event loop for this task execution within the sync worker process
+        # loop = asyncio.get_event_loop() <--- Avoid this in tasks, it might get a closed loop
+        # Instead, use asyncio.run() for the main async call within the task
+        result = asyncio.run(
+            _process_source_url_async(
+                self,
+                source_id,
+                url,
+                source_name,
+                task_group_id,
+                llm_client,
+                news_repo,
+                source_repo,
+            )
         )
+        # Final state is set within _process_source_url_async via progress_callback
         return result
     except Exception as e:
-        logger.exception(f"Error in process_source_url_task_celery: {e}")
+        logger.exception(f"[PID:{pid}] Error processing source {source_id}: {e}")
         self.update_state(
             state="FAILURE",
             meta={
@@ -117,40 +123,30 @@ def process_source_url_task_celery(
                 "message": f"处理错误: {str(e)}",
             },
         )
-        return {"status": "error", "message": str(e)}
+        # Reraise the exception so Celery knows the task failed
+        raise
 
 
 async def _process_source_url_async(
-    task, source_id: int, url: str, source_name: str, task_group_id: str
+    task,
+    source_id: int,
+    url: str,
+    source_name: str,
+    task_group_id: str,
+    llm_client: AsyncLLMClient,
+    news_repo: NewsRepository,
+    source_repo: NewsSourceRepository,  # Receive dependencies
 ) -> Dict[str, Any]:
     """
     Async implementation of the source URL processing logic.
-    This function is called within the Celery task and handles all the async operations.
-
-    Args:
-        task: The Celery task instance (for progress updates)
-        source_id: ID of the news source
-        url: URL of the news source
-        source_name: Name of the source
-        task_group_id: Group ID for related tasks
-
-    Returns:
-        Dict with summary of the processing results
+    Uses the dependencies passed from the sync task wrapper.
     """
+    pid = os.getpid()  # Get PID for logging clarity
     try:
         # Define progress callback that updates Celery task state
         async def progress_callback(
             step: str, progress: float, details: str = "", items_count: int = 0
         ):
-            """Progress callback function for fetch_news
-
-            Args:
-                step: Processing step name
-                progress: Percentage complete (0-100)
-                details: Description of current status
-                items_count: Number of items processed
-            """
-            # Create meta data for task update
             meta = {
                 "source_id": source_id,
                 "source_name": source_name,
@@ -158,45 +154,39 @@ async def _process_source_url_async(
                 "progress": progress,
                 "message": details,
             }
-
             if items_count > 0:
                 meta["items_saved"] = items_count
-
-            # Update task state in Celery
             task.update_state(state="PROGRESS", meta=meta)
-
-            # Log to console
             logger.info(
-                f"Source {source_id} ({source_name}): {step} - {progress:.1f}% - {details}"
+                f"[PID:{pid}] Task {task.request.id} Progress: Source {source_id} ({source_name}): {step} - {progress:.1f}% - {details}"
             )
 
-        # Update progress to preparing state
         await progress_callback("preparing", 10, "准备抓取数据...")
 
-        # Get the source details from the database
-        source_details = await _source_repo.get_by_id_as_dict(source_id)
+        # Get source details (use the passed repo instance)
+        source_details = await source_repo.get_by_id_as_dict(source_id)
         if not source_details:
             await progress_callback("error", 0, f"无法获取源 ID {source_id} 的详细信息")
+            # No need to raise Reject here, just return error status
             return {"status": "error", "message": f"Source ID {source_id} not found"}
 
-        # Extract category information
         category_id = source_details.get("category_id")
         category_name = source_details.get("category_name")
 
-        # Get existing URLs to avoid duplicates
-        exclude_links = await _news_repo.get_all_urls()
+        # Get existing URLs (use the passed repo instance)
+        exclude_links = await news_repo.get_all_urls()
+        logger.info(
+            f"[PID:{pid}] Task {task.request.id}: Found {len(exclude_links)} existing URLs."
+        )
 
-        logger.info(f"exclude_links finished.")
-
-        # Use progress callback to fetch news data
+        # Call the core workflow function (use the passed llm_client)
         fetch_result = await fetch_news(
             url=url,
-            llm_pool=_llm_pool,
+            llm_client=llm_client,  # Use passed client
             exclude_links=exclude_links,
             progress_callback=progress_callback,
         )
 
-        # Process the fetched results
         if not fetch_result:
             await progress_callback("complete", 100, "完成处理，但未找到新内容")
             return {
@@ -205,25 +195,20 @@ async def _process_source_url_async(
                 "items_saved": 0,
             }
 
-        # Add source and category information to all result items
+        # Add source/category info
         for result_item in fetch_result:
             result_item["source_name"] = source_name
             result_item["category_name"] = category_name
             result_item["source_id"] = source_id
             result_item["category_id"] = category_id
 
-        # Update progress to saving state
         await progress_callback(
-            "saving",
-            95,
-            f"正在保存 {len(fetch_result)} 个新闻项...",
-            len(fetch_result),
+            "saving", 95, f"正在保存 {len(fetch_result)} 个新闻项...", len(fetch_result)
         )
 
-        # Save to database
-        saved_count, skipped_count = await _news_repo.add_batch(fetch_result)
+        # Save to DB (use the passed repo instance)
+        saved_count, skipped_count = await news_repo.add_batch(fetch_result)
 
-        # Send completion notification
         await progress_callback(
             "complete",
             100,
@@ -239,6 +224,16 @@ async def _process_source_url_async(
         }
 
     except Exception as e:
-        logger.exception(f"处理 {url} 的新闻时出错: {e}")
-        await progress_callback("error", 0, f"处理错误: {str(e)}")
-        return {"status": "error", "message": str(e)}
+        # Log the error within the async function
+        logger.exception(
+            f"[PID:{pid}] Task {task.request.id}: Async processing error for source {source_id}: {e}"
+        )
+        # Update state via callback before raising
+        try:
+            await progress_callback("error", 0, f"处理错误: {str(e)}")
+        except Exception as cb_e:
+            logger.error(
+                f"[PID:{pid}] Task {task.request.id}: Failed to update error state via callback: {cb_e}"
+            )
+        # Re-raise the exception to be caught by the sync wrapper
+        raise

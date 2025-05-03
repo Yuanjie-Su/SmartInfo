@@ -14,6 +14,7 @@ from contextlib import asynccontextmanager
 from typing import Optional
 from dotenv import load_dotenv
 import logging
+import argparse  # Add argparse for potential future direct script execution
 
 # Load environment variable configuration
 load_dotenv()
@@ -23,18 +24,34 @@ from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
+# --- Logging Setup ---
+# Determine log level from environment variable or default to INFO
+log_level_name = os.environ.get("LOG_LEVEL", "INFO").upper()
+log_level = getattr(logging, log_level_name, logging.INFO)
+if not isinstance(log_level, int):  # Fallback if getattr fails or returns non-int
+    print(
+        f"Warning: Invalid LOG_LEVEL '{log_level_name}'. Defaulting to INFO.",
+        file=sys.stderr,
+    )
+    log_level = logging.INFO
+
 # Set up logging BEFORE other imports that might log
-# Log INFO level and above to stdout
 logging.basicConfig(
-    level=logging.INFO,
+    level=log_level,  # Use the determined log level
     format="%(asctime)s [%(levelname)-8s] %(name)s: %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
     stream=sys.stdout,
 )
 # Set logger level for httpx's warnings to WARNING to reduce noise
 logging.getLogger("httpx").setLevel(logging.WARNING)
+# Set uvicorn access log level based on our setting if desired (optional)
+# logging.getLogger("uvicorn.access").setLevel(log_level)
+
 
 logger = logging.getLogger(__name__)
+logger.info(
+    f"Logging level set to: {logging.getLevelName(log_level)}"
+)  # Log the effective level
 
 
 # --- Core Application Imports ---
@@ -91,6 +108,8 @@ async def lifespan(app: FastAPI):
             "LLM_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3"
         )  # Ensure default
         pool_size = config.get("LLM_POOL_SIZE", 3)  # Ensure default
+        context_window = config.get("LLM_CONTEXT_WINDOW", 4096)  # Ensure default
+        max_output_tokens = config.get("LLM_MAX_OUTPUT_TOKENS", 2048)  # Ensure default
         default_model = config.get("LLM_MODEL", "deepseek-v3-250324")  # Ensure default
 
         if not api_key_to_use:
@@ -103,11 +122,13 @@ async def lifespan(app: FastAPI):
             base_url=base_url,
             api_key=api_key_to_use,  # Can be None if no key found
             model=default_model,
+            context_window=context_window,
+            max_output_tokens=max_output_tokens,
         )
         # Set the global pool instance for the dependency injector in api/dependencies.py
         set_global_llm_pool(llm_pool_instance)
         logger.info(
-            f"LLM Client Pool initialized (Size: {pool_size}, Base URL: {base_url}, Model: {default_model})."
+            f"LLM Client Pool initialized (Size: {pool_size}, Base URL: {base_url}, Model: {default_model}, Context Window: {context_window}, Max Output Tokens: {max_output_tokens})."
         )
         # Note: Actual client connections within the pool are lazy-initialized on first use.
 
@@ -261,9 +282,10 @@ def start_api():
     """
     Function to start the API directly (used when run as module).
     Can be configured with environment variables:
-    - HOST: The host to bind to (default: 127.0.0.1)
+    - HOST: The host to bind to (default: 0.0.0.0)
     - PORT: The port to bind to (default: 8000)
     - RELOAD: Whether to auto-reload on code changes (default: False)
+    - LOG_LEVEL: Logging level (e.g., DEBUG, INFO, WARNING) - Handled globally now
     """
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", 8000))
@@ -274,16 +296,22 @@ def start_api():
         "y",
         "yes",
     )
+    # Log level for uvicorn itself. Match our app's log level.
+    uvicorn_log_level = logging.getLevelName(log_level).lower()
 
-    logger.info(f"Starting SmartInfo API on {host}:{port} (reload: {reload_enabled})")
+    logger.info(
+        f"Starting SmartInfo API on {host}:{port} (reload: {reload_enabled}, log level: {uvicorn_log_level})"
+    )
     uvicorn.run(
         "backend.main:app",
         host=host,
         port=port,
         reload=reload_enabled,
-        log_level="info",
+        log_level=uvicorn_log_level,  # Pass log level to uvicorn
     )
 
 
 if __name__ == "__main__":
+    # Although uvicorn main:app bypasses this, keep it for potential direct execution
+    # You could add argparse here if needed for direct script runs
     start_api()
