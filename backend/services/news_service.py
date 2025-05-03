@@ -7,34 +7,26 @@ NewsService Module
 - Utilizes an LLM for link extraction and in-depth content summarization.
 """
 
-import json
 import logging
-import asyncio
-import re
-import uuid
-from typing import List, Dict, Optional, Tuple, Callable, Any, Union, AsyncGenerator
-from urllib.parse import urljoin
-
-import aiohttp
-from celery import group
+from typing import List, Dict, Optional, Any, AsyncGenerator
 
 # Repository interfaces for database operations
-from backend.db.repositories import (
+from db.repositories import (
     NewsRepository,
     NewsSourceRepository,
     NewsCategoryRepository,
 )
 
 # Client to interact with the LLM API
-from backend.core.llm import LLMClientPool
+from core.llm import LLMClientPool
 
 # WebSocket manager for real-time updates
-from backend.core.ws_manager import ws_manager
+from core.ws_manager import ws_manager
 
-# Import Celery task
-from backend.tasks.news_tasks import process_source_url_task_celery
+# Import Celery tasks for background processing
+from background.tasks.news_tasks import process_source_url_task_celery
 
-from backend.utils.prompt import SYSTEM_PROMPT_ANALYZE_CONTENT
+from utils.prompt import SYSTEM_PROMPT_ANALYZE_CONTENT
 
 # Configure module-level logger
 logger = logging.getLogger(__name__)

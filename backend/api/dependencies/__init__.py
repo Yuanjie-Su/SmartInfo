@@ -1,6 +1,6 @@
 # backend/api/dependencies/__init__.py
 
-from backend.api.dependencies.dependencies import (
+from api.dependencies.dependencies import (
     # Connection
     get_db_connection_dependency,
     # LLM Pool

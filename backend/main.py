@@ -38,15 +38,15 @@ logger = logging.getLogger(__name__)
 
 
 # --- Core Application Imports ---
-from backend.config import config  # Import the global config instance
-from backend.db.connection import (
+from config import config  # Import the global config instance
+from db.connection import (
     init_db_connection,
     get_db_connection,
 )
-from backend.db.repositories import SystemConfigRepository  # Needed for config init
-from backend.core.llm import LLMClientPool  # Import from new location
-from backend.api import api_router  # Import the main API router
-from backend.api.dependencies import (
+from db.repositories import SystemConfigRepository  # Needed for config init
+from core.llm import LLMClientPool  # Import from new location
+from api import api_router  # Import the main API router
+from api.dependencies import (
     set_global_llm_pool,
     get_llm_pool_dependency,
 )  # Import from new dependencies module
@@ -164,7 +164,9 @@ app = FastAPI(
 # Add CORS middleware
 # Configure origins according to your frontend deployment
 origins = [
-    "http://172.18.0.1:3000",  # Example React dev server
+    "http://localhost:3000",  # 本地环回地址
+    "http://172.18.0.1:3000",  # WSL/Docker 虚拟地址
+    "http://192.168.0.107:3000",  # 局域网IP请求
 ]
 app.add_middleware(
     CORSMiddleware,
@@ -263,7 +265,7 @@ def start_api():
     - PORT: The port to bind to (default: 8000)
     - RELOAD: Whether to auto-reload on code changes (default: False)
     """
-    host = os.environ.get("HOST", "127.0.0.1")
+    host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", 8000))
     reload_enabled = os.environ.get("RELOAD", "").lower() in (
         "true",

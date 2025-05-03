@@ -12,9 +12,9 @@ from fastapi import Depends, HTTPException, status
 from typing import Optional
 
 # Import components using absolute backend package path
-from backend.config import config
-from backend.db.connection import get_db_connection
-from backend.db.repositories import (
+from config import config
+from db.connection import get_db_connection
+from db.repositories import (
     ApiKeyRepository,
     ChatRepository,
     MessageRepository,
@@ -23,17 +23,17 @@ from backend.db.repositories import (
     NewsSourceRepository,
     SystemConfigRepository,
 )
-from backend.services import (
+from services import (
     ChatService,
     NewsService,
     SettingService,
 )
 
 # Import LLM Pool from its new location in core
-from backend.core.llm import LLMClientPool
+from core.llm import LLMClientPool
 
 # Import WebSocket manager
-from backend.core.ws_manager import ws_manager
+from core.ws_manager import ws_manager
 
 logger = logging.getLogger(__name__)
 
@@ -169,7 +169,7 @@ async def get_setting_service(
     system_config_repo: SystemConfigRepository = Depends(get_system_config_repository),
 ) -> SettingService:
     """Provides an instance of SettingService with its dependencies."""
-    # Requires the global 'config' instance from backend.config
+    # Requires the global 'config' instance from config
     return SettingService(
         config=config,
         api_key_repo=api_key_repo,

@@ -10,8 +10,8 @@ import logging
 import time
 from typing import Dict, List, Optional, Tuple, Union, Any
 
-from backend.db.repositories.base_repository import BaseRepository
-from backend.db.schema_constants import (
+from db.repositories.base_repository import BaseRepository
+from db.schema_constants import (
     MESSAGES_TABLE,
     MESSAGE_ID,
     MESSAGE_CHAT_ID,

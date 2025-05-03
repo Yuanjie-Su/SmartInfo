@@ -9,18 +9,18 @@ from fastapi import APIRouter, Depends, HTTPException, Body, status
 from typing import List, Dict, Any, Optional
 
 # Import dependencies from the centralized dependencies module
-from backend.api.dependencies import (
+from api.dependencies import (
     get_setting_service,
     get_llm_pool_dependency,
 )
 
 # Import schemas from the main models package
-from backend.models.schemas.api_key import ApiKey, ApiKeyCreate
-from backend.models.schemas.settings import SystemConfigUpdate
+from models.schemas.api_key import ApiKey, ApiKeyCreate
+from models.schemas.settings import SystemConfigUpdate
 
 # Import service and pool type hints
-from backend.services.setting_service import SettingService
-from backend.core.llm.pool import LLMClientPool  # Corrected import path
+from services.setting_service import SettingService
+from core.llm.pool import LLMClientPool  # Corrected import path
 
 logger = logging.getLogger(__name__)
 

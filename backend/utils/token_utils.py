@@ -1,18 +1,19 @@
 # -*- coding: utf-8 -*-
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 # Requires installing the deepseek tokenizer: pip install deepseek-tokenizer
 try:
     from deepseek_tokenizer import ds_token
 except ImportError:
     ds_token = None
-    print(
+    # Removed print statements
+    logger.warning(
         "Warning: deepseek-tokenizer not installed. Token size calculation for deepseek models will not work."
     )
-    print("Please run: pip install deepseek-tokenizer")
-
-import logging
-
-logger = logging.getLogger(__name__)
+    logger.warning("Please run: pip install deepseek-tokenizer")
 
 
 def get_token_size(text: str, model_type: str = "deepseek") -> int:

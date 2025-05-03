@@ -10,7 +10,7 @@ import logging
 import aiosqlite
 from typing import Any, List, Tuple, Optional, Dict, Union
 
-from backend.db.connection import get_db_connection
+from db.connection import get_db_connection
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,6 @@ class BaseRepository:
             conn = await self._get_connection()
             cursor = await conn.cursor()
             await cursor.execute(query, params)
-
             if commit:
                 await conn.commit()
 
@@ -184,4 +183,5 @@ class BaseRepository:
     ) -> Optional[Dict[str, Any]]:
         """Execute a query and fetch one row as dictionary."""
         results = await self._fetch_as_dict(query_str, params)
+        # print(f"results: {results}") # Removed print statement
         return results[0] if results else None

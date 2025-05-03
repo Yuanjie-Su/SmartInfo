@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 # Type hint for repository to avoid circular import issues
 if TYPE_CHECKING:
-    from backend.db.repositories.system_config_repository import SystemConfigRepository
+    from db.repositories.system_config_repository import SystemConfigRepository
 
 # --- Constants ---
 DEFAULT_DATA_DIR = os.path.join(os.path.expanduser("~"), "SmartInfo", "data")

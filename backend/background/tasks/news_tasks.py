@@ -12,9 +12,9 @@ import asyncio
 from typing import List, Dict, Any, Optional
 
 from celery import shared_task
-from backend.core.llm import LLMClientPool
-from backend.db.repositories import NewsRepository, NewsSourceRepository
-from backend.core.workflow.news_fetch import fetch_news
+from core.llm import LLMClientPool
+from db.repositories import NewsRepository, NewsSourceRepository
+from core.workflow.news_fetch import fetch_news
 
 # Configure module-level logger
 logger = logging.getLogger(__name__)
@@ -185,6 +185,8 @@ async def _process_source_url_async(
 
         # Get existing URLs to avoid duplicates
         exclude_links = await _news_repo.get_all_urls()
+
+        logger.info(f"exclude_links finished.")
 
         # Use progress callback to fetch news data
         fetch_result = await fetch_news(

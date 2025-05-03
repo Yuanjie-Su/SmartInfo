@@ -11,7 +11,7 @@ import time
 from typing import List, Optional, Tuple, Dict, Any, Union
 import sqlite3
 
-from backend.db.schema_constants import (
+from db.schema_constants import (
     API_CONFIG_TABLE,
     API_CONFIG_ID,
     API_CONFIG_MODEL,
@@ -23,7 +23,7 @@ from backend.db.schema_constants import (
     API_CONFIG_CREATED_DATE,
     API_CONFIG_MODIFIED_DATE,
 )
-from backend.db.repositories.base_repository import BaseRepository
+from db.repositories.base_repository import BaseRepository
 
 logger = logging.getLogger(__name__)
 

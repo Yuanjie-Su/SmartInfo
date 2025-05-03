@@ -11,10 +11,10 @@ import time
 from typing import List, Dict, Any, Optional, Union
 from datetime import datetime
 
-from backend.db.repositories.chat_repository import ChatRepository
-from backend.db.repositories.message_repository import MessageRepository
-from backend.core.llm import LLMClientPool
-from backend.models.schemas.chat import (
+from db.repositories.chat_repository import ChatRepository
+from db.repositories.message_repository import MessageRepository
+from core.llm import LLMClientPool
+from models.schemas.chat import (
     Chat,
     ChatCreate,
     Message,

@@ -8,10 +8,10 @@ This module assembles the main API router by including routers directly.
 from fastapi import APIRouter
 
 # Import the routers from the new location
-from backend.api.routers.chat import router as chat_router
-from backend.api.routers.news import router as news_router
-from backend.api.routers.settings import router as settings_router
-from backend.api.routers.tasks import router as tasks_router
+from api.routers.chat import router as chat_router
+from api.routers.news import router as news_router
+from api.routers.settings import router as settings_router
+from api.routers.tasks import router as tasks_router
 
 # Create the main API router instance
 api_router = APIRouter()

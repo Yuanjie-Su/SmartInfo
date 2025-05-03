@@ -25,6 +25,7 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+poetry.lock
 
 # IDE配置文件
 .idea/
@@ -45,3 +46,4 @@ htmlcov/
 
 # node_modules
 node_modules/
+package-lock.json

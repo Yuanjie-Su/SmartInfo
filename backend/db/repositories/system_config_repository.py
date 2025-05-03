@@ -9,13 +9,13 @@ Provides data access operations for system configuration settings
 import logging
 from typing import List, Optional, Tuple, Dict, Any
 
-from backend.db.schema_constants import (
+from db.schema_constants import (
     SYSTEM_CONFIG_TABLE,
     SYSTEM_CONFIG_KEY,
     SYSTEM_CONFIG_VALUE,
     SYSTEM_CONFIG_DESCRIPTION,
 )
-from backend.db.repositories.base_repository import BaseRepository
+from db.repositories.base_repository import BaseRepository
 
 logger = logging.getLogger(__name__)
 

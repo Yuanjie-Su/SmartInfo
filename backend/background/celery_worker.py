@@ -4,11 +4,14 @@
 """
 Celery Worker Initialization
 This module initializes the Celery worker with the necessary task dependencies.
-Run with: celery -A backend.celery_worker worker --loglevel=info
+Run with: celery -A celery_worker worker --loglevel=info
 """
 
 import asyncio
 import logging
+import os
+import sys
+import threading
 from typing import Dict, Any, Optional
 from dotenv import load_dotenv
 
@@ -24,10 +27,21 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Import Celery app
-from backend.celery_app import celery_app
+from background.celery_app import celery_app
+from celery.signals import (
+    worker_init,
+    worker_ready,
+    celeryd_init,
+    worker_process_init,
+    worker_before_create_process,
+    worker_shutting_down,
+    heartbeat_sent,
+    worker_shutdown,
+    worker_process_shutdown,
+)
 
 # Import task dependencies initialization
-from backend.tasks.news_tasks import (
+from background.tasks.news_tasks import (
     init_task_dependencies,
     _llm_pool,
     _news_repo,
@@ -35,52 +49,74 @@ from backend.tasks.news_tasks import (
 )
 
 # Import database and LLM components
-from backend.db.connection import init_db_connection, DatabaseConnectionManager
-from backend.db.repositories import NewsRepository, NewsSourceRepository
-from backend.core.llm import LLMClientPool
-from backend.config import config
-from backend.db.repositories import SystemConfigRepository
+from db.connection import init_db_connection, DatabaseConnectionManager
+from db.repositories import NewsRepository, NewsSourceRepository
+from core.llm import LLMClientPool
+from config import config
+from db.repositories import SystemConfigRepository
 
 _worker_db_manager: Optional[DatabaseConnectionManager] = None
+
+
+@celeryd_init.connect
+def celeryd_init_handler(sender=None, conf=None, **kwargs):
+    """
+    Signal handler for Celery worker initialization.
+    This is the first signal sent when a worker starts, and can be used to set node-specific configurations.
+    """
+    logger.info(f"Worker node {sender} initializing...")
+
+    # Set node-specific configurations
+    if conf:
+        # Set different configurations based on node name
+        if sender and "news_worker" in sender:
+            # Set specific configurations for news processing node
+            conf.worker_prefetch_multiplier = 1
+        elif sender and "analysis_worker" in sender:
+            # Set specific configurations for analysis node
+            conf.worker_prefetch_multiplier = 1
+            conf.task_time_limit = 3600  # Analysis tasks may take longer
+
+    logger.info(f"Worker node {sender} initialization configuration completed")
+
+
+@worker_init.connect
+def worker_init_handler(**kwargs):
+    """
+    Signal handler for worker initialization before starting.
+    This is called before the worker starts, and can be used for resource preparation.
+    """
+    logger.info("Worker process initialization...")
+
+    try:
+        # Here you can perform any global resource initialization logic
+        # For example, setting global variables, configuration validation, etc.
+
+        # Check necessary environment variables
+        required_vars = ["LLM_API_KEY", "LLM_BASE_URL", "DATABASE_URL"]
+        missing_vars = [var for var in required_vars if not os.getenv(var)]
+
+        if missing_vars:
+            logger.warning(
+                f"Missing critical environment variable(s): {', '.join(missing_vars)}"
+            )
+
+    except Exception as e:
+        logger.error(f"Worker initialization error: {e}", exc_info=True)
 
 
 @celery_app.on_after_configure.connect
 def setup_worker_dependencies(sender, **kwargs):
     logger.info("Configuring Celery worker dependencies...")
     loop = asyncio.get_event_loop()
+
     try:
         loop.run_until_complete(_setup_async_dependencies())
-        # Explicitly check if globals were set after setup attempt
-        if not _llm_pool:
-            logger.critical(
-                "FATAL: LLM pool is not set after setup attempt! Worker may not function."
-            )
-            raise RuntimeError("Failed to set up worker dependencies.")
-        if not _news_repo:
-            logger.critical(
-                "FATAL: News repository is not set after setup attempt! Worker may not function."
-            )
-            raise RuntimeError("Failed to set up worker dependencies.")
-        if not _source_repo:
-            logger.critical(
-                "FATAL: Source repository is not set after setup attempt! Worker may not function."
-            )
-            raise RuntimeError("Failed to set up worker dependencies.")
-        if not all((_llm_pool, _news_repo, _source_repo)):
-            logger.critical(
-                "FATAL: Dependencies are still None after setup attempt! Worker may not function."
-            )
-            # Optionally raise an error here to stop the worker if dependencies are critical
-            raise RuntimeError("Failed to set up worker dependencies.")
-        else:
-            logger.info("Worker dependencies appear to be set successfully.")
     except Exception as e:
         logger.critical(
             f"CRITICAL FAILURE during worker dependency setup: {e}", exc_info=True
         )
         # Stop the worker process if setup fails critically
-        import sys
-
         sys.exit(1)  # Exit worker if setup fails
 
 
@@ -88,10 +124,6 @@ async def _setup_async_dependencies():
     logger.info("Running async dependency setup...")
     # Explicitly declare intent to modify globals if not done in init_task_dependencies
     # global _llm_pool, _news_repo, _source_repo
-
-    llm_pool_instance = None
-    news_repo_instance = None
-    source_repo_instance = None
 
     try:
         logger.info("Initializing database connection...")
@@ -105,8 +137,9 @@ async def _setup_async_dependencies():
         logger.info("Configuration loaded")
 
         logger.info("Initializing repositories...")
-        news_repo_instance = NewsRepository()
-        source_repo_instance = NewsSourceRepository()
+        global _news_repo, _source_repo
+        _news_repo = NewsRepository()
+        _source_repo = NewsSourceRepository()
         logger.info("Repositories initialized")
 
         logger.info("Initializing LLM Client Pool...")
@@ -146,7 +179,8 @@ async def _setup_async_dependencies():
             )
             raise ValueError("Invalid LLM_MAX_TOKENS.")
 
-        llm_pool_instance = LLMClientPool(
+        global _llm_pool
+        _llm_pool = LLMClientPool(
             pool_size=pool_size,
             base_url=base_url,
             api_key=api_key,
@@ -160,9 +194,7 @@ async def _setup_async_dependencies():
 
         logger.info("Calling init_task_dependencies...")
         # Pass the successfully created instances
-        init_task_dependencies(
-            llm_pool_instance, news_repo_instance, source_repo_instance
-        )
+        init_task_dependencies(_llm_pool, _news_repo, _source_repo)
         logger.info("init_task_dependencies called.")
 
     except Exception as e:
@@ -171,7 +203,84 @@ async def _setup_async_dependencies():
         raise  # Re-raise the exception to be caught by the outer handler
 
 
-@celery_app.signals.worker_shutdown.connect
+@worker_ready.connect
+def worker_ready_handler(**kwargs):
+    """
+    Signal handler for when the worker is ready to accept tasks.
+    This is called when all initialization is complete and the worker can start accepting tasks.
+    """
+    logger.info("Worker is now ready and can accept tasks")
+
+
+@worker_process_init.connect
+def worker_process_init_handler(**kwargs):
+    """
+    Signal handler for when a worker process is being created.
+    This is called when each worker subprocess starts, and is suitable for setting up each process's resources.
+    """
+    logger.info("Worker process initialization in progress...")
+
+
+@worker_before_create_process.connect
+def worker_before_create_process_handler(**kwargs):
+    """
+    Signal handler for when a prefork pool is creating a new subprocess before fork.
+    This can be used to clean up instances that do not behave well in fork.
+    """
+    logger.info("Preparing to create new worker process...")
+
+    # Here you can clean up resources that should not be shared
+    # For example: Closing database connections, cleaning channels, etc.
+
+    # Example: If there are any global channels or connections to clean up
+    try:
+        # Clean up any possible global channels or connections
+        # If there are any global resources to clean up before fork, do it here
+        pass
+    except Exception as e:
+        logger.warning(f"Error cleaning up resources: {e}")
+
+
+@heartbeat_sent.connect
+def heartbeat_handler(sender, **kwargs):
+    """
+    Signal handler for when Celery sends a worker heartbeat.
+    This can be used for periodic health checks.
+    """
+    # This function will be called frequently, so set log level to debug
+    logger.debug("Sent worker heartbeat")
+
+
+@worker_process_shutdown.connect
+def worker_process_shutdown_handler(**kwargs):
+    """
+    Signal handler for when a worker process is shutting down.
+    This is called when the worker process is terminating, and can be used for cleanup.
+    """
+    logger.info("Worker process is shutting down...")
+
+
+@worker_shutting_down.connect
+def worker_shutting_down_handler(sig=None, how=None, exitcode=None, **kwargs):
+    """
+    Signal handler for when a worker starts shutting down process.
+    Provides detailed information about the shutdown, such as signal and shutdown method.
+    """
+    logger.info(
+        f"Worker shutting down...(signal:{sig}, method:{how}, exit code:{exitcode})"
+    )
+
+    # Perform any critical pre-shutdown tasks here
+    # For example: Saving state, completing critical operations, etc.
+
+    # Different actions can be taken based on shutdown method
+    if how == "warm":
+        logger.info("Executing warm shutdown - waiting for tasks to complete")
+    elif how == "cold":
+        logger.info("Executing cold shutdown - terminating quickly")
+
+
+@worker_shutdown.connect
 def worker_shutdown_handler(**kwargs):
     """Signal handler for cleaning up resources when the worker shuts down."""
     logger.info("Celery worker shutting down. Cleaning up resources...")

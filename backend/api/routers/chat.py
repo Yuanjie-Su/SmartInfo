@@ -10,10 +10,10 @@ from fastapi import APIRouter, Depends, HTTPException, Body, status
 from typing import List, Dict, Any, Optional
 
 # Import dependencies from the centralized dependencies module
-from backend.api.dependencies import get_chat_service
+from api.dependencies import get_chat_service
 
 # Import schemas from the main models package
-from backend.models.schemas.chat import (
+from models.schemas.chat import (
     Chat,
     ChatCreate,
     Message,
@@ -23,7 +23,7 @@ from backend.models.schemas.chat import (
 )
 
 # Import the service class type hint
-from backend.services.chat_service import ChatService
+from services.chat_service import ChatService
 
 logger = logging.getLogger(__name__)
 

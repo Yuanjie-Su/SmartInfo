@@ -8,6 +8,7 @@ virtualenv/
 
 # Python compiled files
 __pycache__/
+*.pyc
 *.py[cod]
 *$py.class
 *.so
@@ -27,6 +28,7 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+poetry.lock
 
 # Cursor editor files
 .cursor/
@@ -41,6 +43,7 @@ wheels/
 
 # node_modules
 node_modules/
+package-lock.json
 
 # Next.js build files
 .next/
@@ -65,8 +68,3 @@ pytest.ini
 
 # Test data
 tests/
-stastic.py
-test.py
-test_data/
-test_db.py
-__tests__/

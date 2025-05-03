@@ -10,11 +10,11 @@ import json
 from typing import Dict, Any, List, Optional, Union
 
 # Import using backend package path
-from backend.config import AppConfig
-from backend.db.repositories.api_key_repository import ApiKeyRepository
-from backend.db.repositories.system_config_repository import SystemConfigRepository
-from backend.models.schemas.api_key import ApiKey
-from backend.core.llm.client import AsyncLLMClient
+from config import AppConfig
+from db.repositories.api_key_repository import ApiKeyRepository
+from db.repositories.system_config_repository import SystemConfigRepository
+from models.schemas.api_key import ApiKey
+from core.llm.client import AsyncLLMClient
 
 logger = logging.getLogger(__name__)
 

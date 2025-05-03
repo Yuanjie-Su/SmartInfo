@@ -860,7 +860,6 @@ class SeleniumCrawler:
         user_agent: Optional[str] = None,
         user_agent_rotation: bool = True,
         max_retries: int = DEFAULT_MAX_RETRY_ATTEMPTS,
-        chromedriver_path: Optional[str] = None,
     ):
         self.headless = headless
         self.page_timeout = page_timeout
@@ -868,7 +867,6 @@ class SeleniumCrawler:
         self.browser_args = browser_args or {}
         self.user_agent = user_agent
         self.user_agent_rotation = user_agent_rotation
-        self.chromedriver_path = chromedriver_path
 
         # Browser pool management
         self.driver_pool = []
@@ -971,11 +969,7 @@ class SeleniumCrawler:
         create_driver_func = functools.partial(
             webdriver.Chrome,
             options=options,
-            service=Service(
-                ChromeDriverManager().install()
-                if not self.chromedriver_path
-                else self.chromedriver_path
-            ),
+            service=Service(ChromeDriverManager().install()),
         )
 
         # Execute the synchronous operation in a thread pool

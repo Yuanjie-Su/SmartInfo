@@ -11,8 +11,8 @@ import asyncio
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Path
 from celery.result import AsyncResult
 
-from backend.core.ws_manager import ws_manager
-from backend.tasks.news_tasks import process_source_url_task_celery
+from core.ws_manager import ws_manager
+from background.tasks.news_tasks import process_source_url_task_celery
 
 logger = logging.getLogger(__name__)
 

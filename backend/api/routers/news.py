@@ -33,10 +33,10 @@ from typing import List, Dict, Any, Optional, AsyncGenerator
 import uuid
 
 # Import dependencies from the centralized dependencies module
-from backend.api.dependencies import get_news_service
+from api.dependencies import get_news_service
 
 # Import schemas from the main models package
-from backend.models.schemas.news import (
+from models.schemas.news import (
     NewsItem,
     NewsItemCreate,
     NewsItemUpdate,
@@ -56,7 +56,7 @@ from backend.models.schemas.news import (
 )
 
 # Import the service class type hint
-from backend.services.news_service import NewsService
+from services.news_service import NewsService
 
 logger = logging.getLogger(__name__)
 

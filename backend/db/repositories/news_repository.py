@@ -9,7 +9,7 @@ Provides data access operations for news articles using aiosqlite
 import logging
 from typing import List, Dict, Optional, Tuple, Any
 
-from backend.db.schema_constants import (
+from db.schema_constants import (
     NEWS_TABLE,
     NEWS_ID,
     NEWS_TITLE,
@@ -24,7 +24,7 @@ from backend.db.schema_constants import (
     NEWS_CONTENT,
 )
 
-from backend.db.repositories.base_repository import BaseRepository
+from db.repositories.base_repository import BaseRepository
 
 logger = logging.getLogger(__name__)
 

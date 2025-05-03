@@ -8,8 +8,8 @@ News Source Repository Module for FastAPI backend
 import logging
 from typing import List, Optional, Tuple, Dict, Any
 
-from backend.db.schema_constants import NEWS_SOURCES_TABLE, NEWS_CATEGORY_TABLE
-from backend.db.repositories.base_repository import BaseRepository
+from db.schema_constants import NEWS_SOURCES_TABLE, NEWS_CATEGORY_TABLE
+from db.repositories.base_repository import BaseRepository
 
 logger = logging.getLogger(__name__)
 

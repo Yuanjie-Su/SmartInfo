@@ -17,8 +17,8 @@ from threading import Lock
 from typing import Optional
 
 # Import using backend package path
-from backend.config import config
-from backend.db.schema_constants import (
+from config import config
+from db.schema_constants import (
     # Table names
     NEWS_CATEGORY_TABLE,
     NEWS_SOURCES_TABLE,
