@@ -5,7 +5,7 @@
 """
 Pydantic models for chat related data (sessions and messages).
 """
-
+from datetime import datetime
 from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional
 
@@ -38,8 +38,8 @@ class Message(MessageBase):
     """Schema for representing a message, including database ID and timestamps."""
 
     id: int = Field(..., description="Unique identifier for the message")
-    timestamp: Optional[int] = Field(
-        None, description="Timestamp when the message was created (Unix epoch integer)"
+    timestamp: Optional[datetime] = Field(
+        None, description="Timestamp when the message was created (ISO 8601 format)"
     )
     sequence_number: int = Field(
         ..., description="Order of the message within the chat"
@@ -67,11 +67,11 @@ class Chat(ChatBase):
     """Schema for representing a chat session, including database ID and messages."""
 
     id: int = Field(..., description="Unique identifier for the chat session")
-    created_at: Optional[int] = Field(
-        None, description="Creation timestamp (Unix epoch integer)"
+    created_at: Optional[datetime] = Field(
+        None, description="Creation timestamp (ISO 8601 format)"
     )
-    updated_at: Optional[int] = Field(
-        None, description="Last modification timestamp (Unix epoch integer)"
+    updated_at: Optional[datetime] = Field(
+        None, description="Last modification timestamp (ISO 8601 format)"
     )
     messages: Optional[List[Message]] = Field(
         None,

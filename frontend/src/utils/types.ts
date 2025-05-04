@@ -46,7 +46,7 @@ export interface NewsItem {
   analysis?: string;
   date?: string;
   source_name?: string;
-  category_name?: string; 
+  category_name?: string;
 }
 
 export interface NewsItemCreate {
@@ -127,8 +127,8 @@ export interface ApiKey {
   context: number;
   max_output_tokens: number;
   description?: string;
-  created_date?: number;
-  modified_date?: number;
+  created_date?: string; // ISO 8601 string
+  modified_date?: string; // ISO 8601 string
 }
 
 export interface ApiKeyCreate {
@@ -149,8 +149,8 @@ export interface SystemConfigUpdate {
 export interface Chat {
   id: number;
   title: string;
-  created_at?: number;
-  updated_at?: number;
+  created_at?: string; // ISO 8601 string
+  updated_at?: string; // ISO 8601 string
   messages?: Message[];
 }
 
@@ -165,7 +165,7 @@ export interface Message {
   sender: string; // "user", "assistant", "system"
   content: string;
   sequence_number: number;
-  timestamp?: number;
+  timestamp?: string; // ISO 8601 string
 }
 
 export interface MessageCreate {
@@ -185,4 +185,4 @@ export interface ChatAnswer {
   chat_id: number;
   message_id?: number;
   content: string;
-} 
+}

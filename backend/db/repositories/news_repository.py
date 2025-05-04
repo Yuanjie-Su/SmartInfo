@@ -8,6 +8,8 @@ Provides data access operations for news articles using aiosqlite
 
 import logging
 from typing import List, Dict, Optional, Tuple, Any
+import asyncpg  # Add asyncpg
+from datetime import datetime, timezone  # Import for TIMESTAMPTZ
 
 from db.schema_constants import (
     NEWS_TABLE,
@@ -33,69 +35,81 @@ class NewsRepository(BaseRepository):
     """Repository for news table operations."""
 
     async def add(self, item: Dict[str, Any]) -> Optional[int]:
-        """Adds a single news item. Returns new ID or None if failed/exists."""
-        # Basic validation
-        if not item.get("title") or not item.get("url"):
-            logger.warning(
-                f"Skipping news item due to missing title or url: {item.get('url')}"
-            )
+        """Adds a single news item using ON CONFLICT. Returns new ID or None if exists/failed."""
+        url = item.get("url")
+        if not item.get("title") or not url:
+            logger.warning(f"Skipping news item due to missing title or url: {url}")
             return None
 
-        # Check for duplicates by url
-        if await self.exists_by_url(item["url"]):
-            logger.debug(f"News with url {item['url']} already exists, skipping.")
-            return None
+        # Removed explicit exists_by_url check; handled by ON CONFLICT
 
-        # Ensure category_name has a default value if missing
-        if not item.get("category_name"):
-            item["category_name"] = "Uncategorized"
+        category_name = item.get("category_name", "Uncategorized")
 
-        # Prepare query and params
+        # Use INSERT ... ON CONFLICT (url) DO NOTHING RETURNING id
         query_str = f"""
             INSERT INTO {NEWS_TABLE} (
                 {NEWS_TITLE}, {NEWS_URL}, {NEWS_SOURCE_NAME}, {NEWS_CATEGORY_NAME},
                 {NEWS_SOURCE_ID}, {NEWS_CATEGORY_ID}, {NEWS_SUMMARY},
                 {NEWS_ANALYSIS}, {NEWS_DATE}, {NEWS_CONTENT}
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            ON CONFLICT ({NEWS_URL}) DO NOTHING
+            RETURNING {NEWS_ID}
         """
         params = (
             item.get("title"),
-            item.get("url"),
+            url,
             item.get("source_name"),
-            item.get("category_name"),
+            category_name,
             item.get("source_id"),
             item.get("category_id"),
             item.get("summary"),
             item.get("analysis"),
-            item.get("date"),
+            item.get("date"),  # 直接使用date值，不进行转换
             item.get("content"),
         )
 
         try:
-            cursor = await self._execute(query_str, params, commit=True)
-            last_id = self._get_last_insert_id(cursor)
-            if last_id:
+            # Use _fetchone for RETURNING id
+            record = await self._fetchone(query_str, params)
+            last_id = record[0] if record else None
+
+            if last_id is not None:
                 logger.info(f"Added news item '{item.get('title')}' with ID {last_id}.")
+            else:
+                # This now means the URL already existed and ON CONFLICT was triggered
+                logger.debug(
+                    f"News item with URL {url} already exists or failed to insert, ON CONFLICT triggered."
+                )
             return last_id
+        except asyncpg.IntegrityConstraintViolationError as e:
+            # Catch other integrity errors like foreign key violations
+            logger.error(
+                f"Error adding news item due to integrity constraint (URL: {url}, FKs: {item.get('source_id')}, {item.get('category_id')}): {e}"
+            )
+            return None
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error adding news item (URL: {url}): {e}")
+            return None
         except Exception as e:
-            logger.error(f"Error adding news item: {e}")
+            logger.error(f"Unexpected error adding news item (URL: {url}): {e}")
             return None
 
     async def add_batch(self, items: List[Dict[str, Any]]) -> Tuple[int, int]:
-        """Adds multiple news items in a batch. Returns (success_count, skipped_count)."""
+        """Adds multiple news items in a batch. Returns (success_count, skipped_count). Uses ON CONFLICT."""
         if not items:
             return 0, 0
 
         params_list = []
         skipped_count = 0
-        processed_urls = set(await self.get_all_urls())  # Get existing urls efficiently
+        urls_in_batch = set()
 
         for item in items:
             url = item.get("url")
             if not item.get("title") or not url:
                 skipped_count += 1
                 continue
-            if url in processed_urls:
+            # Avoid processing duplicates within the same batch
+            if url in urls_in_batch:
                 skipped_count += 1
                 continue
 
@@ -103,81 +117,103 @@ class NewsRepository(BaseRepository):
                 item.get("title", ""),
                 url,
                 item.get("source_name", ""),
-                item.get("category_name", ""),
+                item.get("category_name", "Uncategorized"),
                 item.get("source_id"),
                 item.get("category_id"),
                 item.get("summary", ""),
                 item.get("analysis", ""),
-                item.get("date", ""),
+                item.get("date"),  # 直接使用date值，不进行转换
                 item.get("content", ""),
             )
             params_list.append(params)
-            processed_urls.add(url)  # Add to set to avoid duplicates within the batch
+            urls_in_batch.add(url)
 
         if not params_list:
             return 0, skipped_count
 
+        # Change placeholders to $n, use ON CONFLICT DO NOTHING
         query_str = f"""
             INSERT INTO {NEWS_TABLE} (
                 {NEWS_TITLE}, {NEWS_URL}, {NEWS_SOURCE_NAME}, {NEWS_CATEGORY_NAME},
                 {NEWS_SOURCE_ID}, {NEWS_CATEGORY_ID}, {NEWS_SUMMARY},
                 {NEWS_ANALYSIS}, {NEWS_DATE}, {NEWS_CONTENT}
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            ON CONFLICT ({NEWS_URL}) DO NOTHING
         """
 
         success_count = 0
         try:
-            success_count = await self._executemany(query_str, params_list, commit=True)
+            # Use _executemany
+            # Success means the command executed without raising a DB error
+            await self._executemany(query_str, params_list)
+            # We can report the number attempted as success, conflicts are ignored by DB
+            success_count = len(params_list)
             logger.info(
-                f"Batch add news: {success_count} added, {skipped_count} skipped."
+                f"Batch add news attempted for {success_count} items, {skipped_count} skipped beforehand. Conflicts ignored."
             )
-        except Exception as e:
+
+        except asyncpg.IntegrityConstraintViolationError as e:
+            # This might catch FK violations if IDs are invalid
+            logger.error(f"Error during batch add news (check foreign keys): {e}")
+            # Partial success might have occurred before the error
+            success_count = 0  # Or try to estimate based on error context if possible
+        except asyncpg.PostgresError as e:
             logger.error(f"Error in batch add news: {e}")
+            success_count = 0
+        except Exception as e:
+            logger.error(f"Unexpected error in batch add news: {e}")
+            success_count = 0
 
         return success_count, skipped_count
 
-    async def get_by_id(self, news_id: int) -> Optional[Dict[str, Any]]:
+    # Update return type hint (Dict -> asyncpg.Record)
+    async def get_by_id(self, news_id: int) -> Optional[asyncpg.Record]:
         """Gets a news item by its ID."""
+        # Change placeholder to $1
         query_str = f"""
             SELECT {NEWS_ID}, {NEWS_TITLE}, {NEWS_URL}, {NEWS_SOURCE_NAME},
                    {NEWS_CATEGORY_NAME}, {NEWS_SOURCE_ID}, {NEWS_CATEGORY_ID},
                    {NEWS_SUMMARY}, {NEWS_ANALYSIS}, {NEWS_DATE}, {NEWS_CONTENT}
-            FROM {NEWS_TABLE} WHERE {NEWS_ID} = ?
+            FROM {NEWS_TABLE} WHERE {NEWS_ID} = $1
         """
         try:
-            row = await self._fetchone(query_str, (news_id,))
-            return self._row_to_dict(row) if row else None
+            # _fetchone returns Record or None
+            # Remove _row_to_dict call
+            return await self._fetchone(query_str, (news_id,))
         except Exception as e:
             logger.error(f"Error getting news by ID: {e}")
-            return None
+            return None  # Or re-raise
 
     async def get_content_by_id(self, news_id: int) -> Optional[str]:
         """Gets the content of a news item by its ID."""
-        query_str = f"""
-            SELECT {NEWS_CONTENT} FROM {NEWS_TABLE} WHERE {NEWS_ID} = ?
-        """
+        query_str = f"SELECT {NEWS_CONTENT} FROM {NEWS_TABLE} WHERE {NEWS_ID} = $1"
         try:
-            row = await self._fetchone(query_str, (news_id,))
-            return row[0] if row else None
+            # Use _fetchone and access the first element
+            record = await self._fetchone(query_str, (news_id,))
+            return record[0] if record else None
         except Exception as e:
             logger.error(f"Error getting news content by ID: {e}")
-            return None
+            return None  # Or re-raise
 
-    async def get_all(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+    # Update return type hint (List[Dict] -> List[asyncpg.Record])
+    async def get_all(self, limit: int = 100, offset: int = 0) -> List[asyncpg.Record]:
         """Gets all news items with pagination."""
+        # Change placeholders to $1, $2
         query_str = f"""
              SELECT {NEWS_ID}, {NEWS_TITLE}, {NEWS_URL}, {NEWS_SOURCE_NAME},
                     {NEWS_CATEGORY_NAME}, {NEWS_SOURCE_ID}, {NEWS_CATEGORY_ID},
                     {NEWS_SUMMARY}, {NEWS_ANALYSIS}, {NEWS_DATE}, {NEWS_CONTENT}
-             FROM {NEWS_TABLE} ORDER BY {NEWS_DATE} DESC, {NEWS_ID} DESC LIMIT ? OFFSET ?
+             FROM {NEWS_TABLE} ORDER BY {NEWS_DATE} DESC, {NEWS_ID} DESC LIMIT $1 OFFSET $2
          """
         try:
-            rows = await self._fetchall(query_str, (limit, offset))
-            return [self._row_to_dict(row) for row in rows]
+            # _fetchall returns List[Record]
+            # Remove list comprehension with _row_to_dict
+            return await self._fetchall(query_str, (limit, offset))
         except Exception as e:
             logger.error(f"Error getting all news: {e}")
-            return []
+            return []  # Or re-raise
 
+    # Update return type hint (List[Dict] -> List[asyncpg.Record])
     async def get_news_with_filters(
         self,
         category_id: Optional[int] = None,
@@ -186,7 +222,7 @@ class NewsRepository(BaseRepository):
         page: int = 1,
         page_size: int = 20,
         search_term: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+    ) -> List[asyncpg.Record]:
         """Gets news items with various filters applied.
 
         The 'analyzed' parameter checks for the presence of content in the analysis field,
@@ -194,161 +230,154 @@ class NewsRepository(BaseRepository):
         """
 
         # Start with base query
-        query_str = f"""
+        query_base = f"""
             SELECT {NEWS_ID}, {NEWS_TITLE}, {NEWS_URL}, {NEWS_SOURCE_NAME},
                    {NEWS_CATEGORY_NAME}, {NEWS_SOURCE_ID}, {NEWS_CATEGORY_ID},
                    {NEWS_SUMMARY}, {NEWS_ANALYSIS}, {NEWS_DATE}, {NEWS_CONTENT}
             FROM {NEWS_TABLE}
-            WHERE 1=1
         """
-
-        # Build parameters list
+        conditions = []
         params = []
+        param_index = 1
 
-        # Add filters
         if category_id is not None:
-            query_str += f" AND {NEWS_CATEGORY_ID} = ?"
+            conditions.append(f"{NEWS_CATEGORY_ID} = ${param_index}")
             params.append(category_id)
+            param_index += 1
 
         if source_id is not None:
-            query_str += f" AND {NEWS_SOURCE_ID} = ?"
+            conditions.append(f"{NEWS_SOURCE_ID} = ${param_index}")
             params.append(source_id)
+            param_index += 1
 
         if analyzed is not None:
             if analyzed:
-                query_str += (
-                    f" AND {NEWS_ANALYSIS} IS NOT NULL AND {NEWS_ANALYSIS} != ''"
+                # Check if analysis is not NULL and not empty string
+                conditions.append(
+                    f"({NEWS_ANALYSIS} IS NOT NULL AND {NEWS_ANALYSIS} != '')"
                 )
             else:
-                query_str += f" AND ({NEWS_ANALYSIS} IS NULL OR {NEWS_ANALYSIS} = '')"
+                # Check if analysis IS NULL or empty string
+                conditions.append(f"({NEWS_ANALYSIS} IS NULL OR {NEWS_ANALYSIS} = '')")
+            # No parameter needed for IS NULL/IS NOT NULL checks
 
         if search_term:
-            # Add search condition for title and content
-            query_str += f" AND ({NEWS_TITLE} LIKE ? OR {NEWS_CONTENT} LIKE ?)"
-            search_param = f"%{search_term}%"
-            params.append(search_param)
-            params.append(search_param)
+            # Use ILIKE for case-insensitive search in PostgreSQL
+            conditions.append(
+                f"({NEWS_TITLE} ILIKE ${param_index} OR {NEWS_SUMMARY} ILIKE ${param_index} OR {NEWS_CONTENT} ILIKE ${param_index})"
+            )
+            params.append(f"%{search_term}%")
+            param_index += 1
 
-        # Add pagination and ordering
-        query_str += f" ORDER BY {NEWS_DATE} DESC, {NEWS_ID} DESC LIMIT ? OFFSET ?"
+        # Build WHERE clause
+        where_clause = ""
+        if conditions:
+            where_clause = "WHERE " + " AND ".join(conditions)
+
+        # Add ordering, limit, offset
         offset = (page - 1) * page_size
-        params.append(page_size)
-        params.append(offset)
+        query_suffix = f"ORDER BY {NEWS_DATE} DESC, {NEWS_ID} DESC LIMIT ${param_index} OFFSET ${param_index + 1}"
+        params.extend([page_size, offset])
+
+        query_str = f"{query_base} {where_clause} {query_suffix}"
 
         try:
-            rows = await self._fetchall(query_str, tuple(params))
-            return [self._row_to_dict(row) for row in rows]
+            # _fetchall returns List[Record]
+            # Remove list comprehension with _row_to_dict
+            return await self._fetchall(query_str, tuple(params))
         except Exception as e:
-            logger.error(f"Error getting news with filters: {e}")
-            return []
+            logger.error(f"Error getting filtered news: {e}")
+            return []  # Or re-raise
 
     async def delete(self, news_id: int) -> bool:
         """Deletes a news item by ID."""
-        query_str = f"DELETE FROM {NEWS_TABLE} WHERE {NEWS_ID} = ?"
+        query_str = f"DELETE FROM {NEWS_TABLE} WHERE {NEWS_ID} = $1"
         try:
-            cursor = await self._execute(query_str, (news_id,), commit=True)
-            deleted = self._get_rows_affected(cursor) > 0
+            # Use _execute
+            status = await self._execute(query_str, (news_id,))
+            deleted = status and status.startswith("DELETE 1")
             if deleted:
-                logger.info(f"Deleted news ID {news_id}.")
-            return deleted
+                logger.info(f"Deleted news item ID {news_id}.")
+            else:
+                logger.warning(
+                    f"Delete command for news ID {news_id} executed but status was '{status}'."
+                )
+                return deleted
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error deleting news item: {e}")
+            return False
         except Exception as e:
-            logger.error(f"Error deleting news: {e}")
+            logger.error(f"Unexpected error deleting news item: {e}")
             return False
 
     async def exists_by_url(self, url: str) -> bool:
         """Checks if a news item exists with the given URL."""
-        query_str = f"SELECT 1 FROM {NEWS_TABLE} WHERE {NEWS_URL} = ? LIMIT 1"
+        # Change placeholder to $1
+        query_str = f"SELECT 1 FROM {NEWS_TABLE} WHERE {NEWS_URL} = $1 LIMIT 1"
         try:
-            row = await self._fetchone(query_str, (url,))
-            return row is not None
+            # Use _fetchone
+            record = await self._fetchone(query_str, (url,))
+            return record is not None
         except Exception as e:
-            logger.error(f"Error checking if news exists by URL: {e}")
-            return False
+            logger.error(f"Error checking news existence by URL: {e}")
+            return False  # Or re-raise
 
     async def get_all_urls(self) -> List[str]:
-        """Gets all URLs from the news table."""
+        """Gets all news URLs."""
         query_str = f"SELECT {NEWS_URL} FROM {NEWS_TABLE}"
         try:
-            rows = await self._fetchall(query_str)
-            return [row[0] for row in rows if row and row[0]]
+            records = await self._fetchall(query_str)
+            return [record[NEWS_URL.lower()] for record in records]
         except Exception as e:
             logger.error(f"Error getting all news URLs: {e}")
             return []
 
     async def clear_all(self) -> bool:
-        """Clears all news items from the table."""
-        query_str = f"DELETE FROM {NEWS_TABLE}"
-        try:
-            await self._execute(query_str, commit=True)
-            logger.info("Cleared all news items.")
-            return True
-        except Exception as e:
-            logger.error(f"Error clearing all news: {e}")
-            return False
+        """Deletes all news items. Use with caution!"""
+        # Use TRUNCATE for efficiency, or DELETE if TRUNCATE permissions are an issue
+        # query_str = f"TRUNCATE TABLE {NEWS_TABLE}" # Faster, but requires TRUNCATE privilege
+        query_str = f"DELETE FROM {NEWS_TABLE}"  # Slower, uses DELETE privilege
 
-    def _row_to_dict(self, row: Tuple) -> Optional[Dict[str, Any]]:
-        """Converts a row tuple to a dictionary."""
-        if not row:
-            return None
-        return {
-            NEWS_ID: row[0],
-            NEWS_TITLE: row[1],
-            NEWS_URL: row[2],
-            NEWS_SOURCE_NAME: row[3],
-            NEWS_CATEGORY_NAME: row[4],
-            NEWS_SOURCE_ID: row[5],
-            NEWS_CATEGORY_ID: row[6],
-            NEWS_SUMMARY: row[7],
-            NEWS_ANALYSIS: row[8],
-            NEWS_DATE: row[9],
-            NEWS_CONTENT: row[10],
-        }
+        try:
+            # Use _execute
+            status = await self._execute(query_str)
+            logger.warning(f"Cleared all news items. Status: {status}")
+            return True  # Success if no exception
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error clearing all news items: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error clearing all news items: {e}")
+            return False
 
     async def update_analysis(self, news_id: int, analysis_text: str) -> bool:
-        """Updates the analysis field for a news item."""
-        query_str = f"UPDATE {NEWS_TABLE} SET {NEWS_ANALYSIS} = ? WHERE {NEWS_ID} = ?"
+        """Updates the analysis text for a specific news item."""
+        # Change placeholders to $1, $2
+        query_str = f"UPDATE {NEWS_TABLE} SET {NEWS_ANALYSIS} = $1 WHERE {NEWS_ID} = $2"
         try:
-            cursor = await self._execute(
-                query_str, (analysis_text, news_id), commit=True
-            )
-            updated = self._get_rows_affected(cursor) > 0
+            # Use _execute
+            status = await self._execute(query_str, (analysis_text, news_id))
+            updated = status and status.startswith("UPDATE 1")
             if updated:
-                logger.info(f"Updated analysis for news ID {news_id}.")
+                logger.info(f"Updated analysis for news item ID {news_id}.")
+            else:
+                logger.warning(
+                    f"Update analysis command for news ID {news_id} executed but status was '{status}'."
+                )
             return updated
-        except Exception as e:
+        except asyncpg.PostgresError as e:
             logger.error(f"Error updating news analysis: {e}")
             return False
-
-    async def get_by_id_as_dict(self, news_id: int) -> Optional[Dict[str, Any]]:
-        """Gets a news item by its ID as a dictionary."""
-        query_str = f"""
-            SELECT {NEWS_ID}, {NEWS_TITLE}, {NEWS_URL}, {NEWS_SOURCE_NAME},
-                   {NEWS_CATEGORY_NAME}, {NEWS_SOURCE_ID}, {NEWS_CATEGORY_ID},
-                   {NEWS_SUMMARY}, {NEWS_ANALYSIS}, {NEWS_DATE}, {NEWS_CONTENT}
-            FROM {NEWS_TABLE} WHERE {NEWS_ID} = ?
-        """
-        try:
-            return await self._fetchone_as_dict(query_str, (news_id,))
         except Exception as e:
-            logger.error(f"Error getting news by ID as dict: {e}")
-            return None
+            logger.error(f"Unexpected error updating news analysis: {e}")
+            return False
 
-    async def get_all_as_dict(
-        self, limit: int = 100, offset: int = 0
-    ) -> List[Dict[str, Any]]:
-        """Gets all news items with pagination as dictionaries."""
-        query_str = f"""
-             SELECT {NEWS_ID}, {NEWS_TITLE}, {NEWS_URL}, {NEWS_SOURCE_NAME},
-                    {NEWS_CATEGORY_NAME}, {NEWS_SOURCE_ID}, {NEWS_CATEGORY_ID},
-                    {NEWS_SUMMARY}, {NEWS_ANALYSIS}, {NEWS_DATE}, {NEWS_CONTENT}
-             FROM {NEWS_TABLE} ORDER BY {NEWS_DATE} DESC, {NEWS_ID} DESC LIMIT ? OFFSET ?
-         """
-        try:
-            return await self._fetch_as_dict(query_str, (limit, offset))
-        except Exception as e:
-            logger.error(f"Error getting all news as dict: {e}")
-            return []
+    # Remove _as_dict methods, base methods return Records
+    # async def get_by_id_as_dict(self, news_id: int) -> Optional[asyncpg.Record]: ...
+    # async def get_all_as_dict(...) -> List[asyncpg.Record]: ...
 
+    # Keep this method if explicit dict conversion is needed for API response structure
+    # but modify it to work with asyncpg.Record input from get_news_with_filters
     async def get_news_with_filters_as_dict(
         self,
         category_id: Optional[int] = None,
@@ -357,74 +386,59 @@ class NewsRepository(BaseRepository):
         page: int = 1,
         page_size: int = 20,
         search_term: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        """Gets news items with various filters applied and returns as dicts.
+    ) -> List[Dict[str, Any]]:  # Return List[Dict] as intended by original method name
+        """Gets news items with filters, returning a list of dictionaries.
 
-        Excludes content field from the results to optimize data transfer.
-        The 'analyzed' parameter checks for the presence of content in the analysis field.
+        Excludes content field from the results.
         """
-
-        # Start with base query
-        query_str = f"""
+        # Reuse the logic from get_news_with_filters but select fewer columns
+        query_base = f"""
             SELECT {NEWS_ID}, {NEWS_TITLE}, {NEWS_URL}, {NEWS_SOURCE_NAME},
                    {NEWS_CATEGORY_NAME}, {NEWS_SOURCE_ID}, {NEWS_CATEGORY_ID},
                    {NEWS_SUMMARY}, {NEWS_ANALYSIS}, {NEWS_DATE}
             FROM {NEWS_TABLE}
-            WHERE 1=1
         """
-
-        # Build parameters list
+        conditions = []
         params = []
+        param_index = 1
 
-        # Add filters
         if category_id is not None:
-            query_str += f" AND {NEWS_CATEGORY_ID} = ?"
+            conditions.append(f"{NEWS_CATEGORY_ID} = ${param_index}")
             params.append(category_id)
-
+            param_index += 1
         if source_id is not None:
-            query_str += f" AND {NEWS_SOURCE_ID} = ?"
+            conditions.append(f"{NEWS_SOURCE_ID} = ${param_index}")
             params.append(source_id)
-
+            param_index += 1
         if analyzed is not None:
             if analyzed:
-                query_str += (
-                    f" AND {NEWS_ANALYSIS} IS NOT NULL AND {NEWS_ANALYSIS} != ''"
+                conditions.append(
+                    f"({NEWS_ANALYSIS} IS NOT NULL AND {NEWS_ANALYSIS} != '')"
                 )
             else:
-                query_str += f" AND ({NEWS_ANALYSIS} IS NULL OR {NEWS_ANALYSIS} = '')"
-
+                conditions.append(f"({NEWS_ANALYSIS} IS NULL OR {NEWS_ANALYSIS} = '')")
         if search_term:
-            # Add search condition for title and content
-            query_str += f" AND ({NEWS_TITLE} LIKE ? OR {NEWS_CONTENT} LIKE ?)"
-            search_param = f"%{search_term}%"
-            params.append(search_param)
-            params.append(search_param)
+            conditions.append(
+                f"({NEWS_TITLE} ILIKE ${param_index} OR {NEWS_SUMMARY} ILIKE ${param_index} OR {NEWS_CONTENT} ILIKE ${param_index})"
+            )
+            params.append(f"%{search_term}%")
+            param_index += 1
 
-        # Add pagination and ordering
-        query_str += f" ORDER BY {NEWS_DATE} DESC, {NEWS_ID} DESC LIMIT ? OFFSET ?"
+        where_clause = ""
+        if conditions:
+            where_clause = "WHERE " + " AND ".join(conditions)
+
         offset = (page - 1) * page_size
-        params.append(page_size)
-        params.append(offset)
+        query_suffix = f"ORDER BY {NEWS_DATE} DESC NULLS LAST, {NEWS_ID} DESC LIMIT ${param_index} OFFSET ${param_index + 1}"  # Added NULLS LAST
+        params.extend([page_size, offset])
+
+        query_str = f"{query_base} {where_clause} {query_suffix}"
 
         try:
-            rows = await self._fetchall(query_str, tuple(params))
-            # Convert rows to dictionaries with column names
-            results = []
-            for row in rows:
-                news_dict = {
-                    "id": row[0],
-                    "title": row[1],
-                    "url": row[2],
-                    "source_name": row[3],
-                    "category_name": row[4],
-                    "source_id": row[5],
-                    "category_id": row[6],
-                    "summary": row[7],
-                    "analysis": row[8],
-                    "date": row[9],
-                }
-                results.append(news_dict)
-            return results
+            # Use _fetchall to get List[Record]
+            records = await self._fetchall(query_str, tuple(params))
+            # Convert list of Records to list of Dicts
+            return [dict(record) for record in records]
         except Exception as e:
             logger.error(f"Error getting news with filters as dict: {e}")
             return []
@@ -432,7 +446,7 @@ class NewsRepository(BaseRepository):
     async def get_analysis_by_id(self, news_id: int) -> Optional[str]:
         """Gets the analysis of a news item by its ID."""
         query_str = f"""
-            SELECT {NEWS_ANALYSIS} FROM {NEWS_TABLE} WHERE {NEWS_ID} = ?
+            SELECT {NEWS_ANALYSIS} FROM {NEWS_TABLE} WHERE {NEWS_ID} = $1
         """
         try:
             row = await self._fetchone(query_str, (news_id,))

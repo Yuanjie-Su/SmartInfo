@@ -135,7 +135,8 @@ const ChatPage: React.FC = () => {
       chat_id: chatId,
       sender: 'user',
       content: inputMessage,
-      timestamp: Date.now()
+      timestamp: new Date().toISOString(), // Use ISO string
+      sequence_number: messages.length + 1 // Temporary sequence number
     };
 
     try {
@@ -166,7 +167,8 @@ const ChatPage: React.FC = () => {
         chat_id: chatId,
         sender: 'assistant',
         content: answer.content,
-        timestamp: Date.now()
+        timestamp: new Date().toISOString(), // Use ISO string
+        sequence_number: messages.length + 2 // Temporary sequence number (after user msg)
       };
       
       setMessages(prev => [...prev, assistantMessageObj]);
@@ -336,9 +338,9 @@ const ChatPage: React.FC = () => {
                               display: 'flex', 
                               justifyContent: 'space-between',
                               alignItems: 'center'
-                            }}>
+                              }}>
                               <Text type="secondary" style={{ fontSize: '0.8rem' }}>
-                                {msg.timestamp ? new Date(msg.timestamp * 1000).toLocaleTimeString() : ''}
+                                {msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString() : ''}
                               </Text>
                               
                               <Button 
@@ -388,4 +390,4 @@ const ChatPage: React.FC = () => {
   );
 };
 
-export default ChatPage; 
+export default ChatPage;

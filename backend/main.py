@@ -58,7 +58,7 @@ logger.info(
 from config import config  # Import the global config instance
 from db.connection import (
     init_db_connection,
-    get_db_connection,
+    get_db_connection_context,
 )
 from db.repositories import SystemConfigRepository  # Needed for config init
 from core.llm import LLMClientPool  # Import from new location
@@ -231,13 +231,12 @@ async def health_check(
     # Check database connection status
     db_status = "unknown"
     try:
-        # Get a DB connection from the pool and test it by executing a simple query
-        conn = await get_db_connection()
-        if conn:
-            async with conn.cursor() as cursor:
-                await cursor.execute("SELECT 1")
-                await cursor.fetchone()
-                db_status = "connected"
+        # Get a DB pool and test it by executing a simple query
+        async with get_db_connection_context() as conn:
+            if conn:
+                # Execute a simple query to check connectivity
+                await conn.fetchval("SELECT 1")
+            db_status = "connected"
     except Exception as e:
         db_status = f"error: {str(e)}"
         logger.warning(f"Health check - DB connection failed: {e}")
@@ -271,7 +270,6 @@ async def health_check(
                 "pool_size": llm_pool_size,
             },
         },
-        "timestamp": config.utc_now().isoformat(),
     }
 
 

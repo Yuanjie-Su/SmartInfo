@@ -372,7 +372,7 @@ const Settings: React.FC = () => {
       title: '创建时间',
       dataIndex: 'created_date',
       key: 'created_date',
-      render: (date?: number) => date ? new Date(date * 1000).toLocaleString() : '-',
+      render: (date?: string) => date ? new Date(date).toLocaleString() : '-', // Use ISO string directly
     },
     {
       title: '说明',
@@ -792,4 +792,4 @@ const Settings: React.FC = () => {
   );
 };
 
-export default Settings; 
+export default Settings;

@@ -5,7 +5,7 @@
 """
 Pydantic models for API key related data.
 """
-
+from datetime import datetime
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional
 
@@ -36,11 +36,11 @@ class ApiKey(ApiKeyBase):
     """Schema for representing an API key, including database ID and timestamps."""
 
     id: int = Field(..., description="Unique identifier for the API key")
-    created_date: Optional[int] = Field(
-        None, description="Creation timestamp (Unix epoch integer)"
+    created_date: Optional[datetime] = Field(
+        None, description="Creation timestamp (ISO 8601 format)"
     )
-    modified_date: Optional[int] = Field(
-        None, description="Last modification timestamp (Unix epoch integer)"
+    modified_date: Optional[datetime] = Field(
+        None, description="Last modification timestamp (ISO 8601 format)"
     )
 
     model_config = ConfigDict(

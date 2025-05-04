@@ -10,10 +10,11 @@ import aiosqlite
 import logging
 from fastapi import Depends, HTTPException, status
 from typing import Optional
+import asyncpg  # Add asyncpg
 
 # Import components using absolute backend package path
 from config import config
-from db.connection import get_db_connection
+from db.connection import get_db_connection_context
 from db.repositories import (
     ApiKeyRepository,
     ChatRepository,
@@ -65,13 +66,14 @@ def get_ws_manager():
     return ws_manager
 
 
-async def get_db_connection_dependency() -> aiosqlite.Connection:
+async def get_db_connection_context_dependency():
     """
-    Dependency function that provides the application's SQLite database connection.
+    Dependency function that provides the database connection context manager.
     Relies on the connection manager initialized in main.py.
     """
     try:
-        return await get_db_connection()
+        # get_db_connection_context is already an async context manager
+        return get_db_connection_context()
     except RuntimeError as e:
         # This error occurs if the DB manager wasn't initialized (lifespan issue)
         logger.critical(f"Database connection dependency error: {e}", exc_info=True)

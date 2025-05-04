@@ -8,6 +8,7 @@ Provides data access operations for system configuration settings
 
 import logging
 from typing import List, Optional, Tuple, Dict, Any
+import asyncpg
 
 from db.schema_constants import (
     SYSTEM_CONFIG_TABLE,
@@ -24,10 +25,10 @@ class SystemConfigRepository(BaseRepository):
     """Repository for system configuration settings."""
 
     async def set(
-        self, config_key: str, config_value: str, description: str = None
+        self, config_key: str, config_value: str, description: Optional[str] = None
     ) -> bool:
         """
-        Sets a configuration value. Creates or updates as needed.
+        Sets a configuration value. Creates or updates as needed using ON CONFLICT.
 
         Args:
             config_key: The unique key for the configuration item
@@ -37,50 +38,45 @@ class SystemConfigRepository(BaseRepository):
         Returns:
             True if successful, False otherwise
         """
-        # Check if key exists
-        existing = await self.get(config_key)
+        # Change placeholders to $n, use INSERT ... ON CONFLICT DO UPDATE for upsert
+        query_str = f"""
+            INSERT INTO {SYSTEM_CONFIG_TABLE} ({SYSTEM_CONFIG_KEY}, {SYSTEM_CONFIG_VALUE}, {SYSTEM_CONFIG_DESCRIPTION})
+            VALUES ($1, $2, $3)
+            ON CONFLICT ({SYSTEM_CONFIG_KEY}) DO UPDATE SET
+                {SYSTEM_CONFIG_VALUE} = EXCLUDED.{SYSTEM_CONFIG_VALUE},
+                {SYSTEM_CONFIG_DESCRIPTION} = EXCLUDED.{SYSTEM_CONFIG_DESCRIPTION}
+        """
+        params = (config_key, config_value, description)
 
-        if existing:
-            # Update existing record
-            query_str = f"""
-                UPDATE {SYSTEM_CONFIG_TABLE} 
-                SET {SYSTEM_CONFIG_VALUE} = ?, {SYSTEM_CONFIG_DESCRIPTION} = ?
-                WHERE {SYSTEM_CONFIG_KEY} = ?
-            """
-            try:
-                cursor = await self._execute(
-                    query_str, (config_value, description, config_key), commit=True
+        try:
+            # Use _execute, success is determined by no exception
+            status = await self._execute(query_str, params)
+            # Status will be "INSERT 0 1" or "UPDATE 1" or potentially "INSERT 0 0" if row exists and values are identical
+            success = status is not None and (
+                status.startswith("INSERT") or status.startswith("UPDATE")
+            )
+            if success:
+                logger.info(
+                    f"Set config key '{config_key}'. Status: {status}"  # Value not logged for potential sensitivity
                 )
-                updated = self._get_rows_affected(cursor) > 0
-                if updated:
-                    logger.info(
-                        f"Updated config key {config_key} to value '{config_value}'."
-                    )
-                return updated
-            except Exception as e:
-                logger.error(f"Error updating system config: {e}")
-                return False
-        else:
-            # Insert new record
-            query_str = f"""
-                INSERT INTO {SYSTEM_CONFIG_TABLE} ({SYSTEM_CONFIG_KEY}, {SYSTEM_CONFIG_VALUE}, {SYSTEM_CONFIG_DESCRIPTION})
-                VALUES (?, ?, ?)
-            """
-            try:
-                cursor = await self._execute(
-                    query_str, (config_key, config_value, description), commit=True
+            else:
+                # This might happen if the command didn't change anything or failed silently (less likely)
+                logger.warning(
+                    f"Set command for config key '{config_key}' executed but status was '{status}'."
                 )
-                inserted = self._get_rows_affected(cursor) > 0
-                if inserted:
-                    logger.info(
-                        f"Added new config key {config_key} with value '{config_value}'."
-                    )
-                return inserted
-            except Exception as e:
-                logger.error(f"Error adding system config: {e}")
-                return False
+            # Return True if execute didn't raise an error, as ON CONFLICT handles upsert logic
+            return True
 
-    async def get(self, config_key: str) -> Optional[Tuple[str, str, str]]:
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error setting system config key '{config_key}': {e}")
+            return False
+        except Exception as e:
+            logger.error(
+                f"Unexpected error setting system config key '{config_key}': {e}"
+            )
+            return False
+
+    async def get(self, config_key: str) -> Optional[asyncpg.Record]:
         """
         Gets a configuration item by key.
 
@@ -88,16 +84,18 @@ class SystemConfigRepository(BaseRepository):
             config_key: The key to look up
 
         Returns:
-            Tuple of (config_key, config_value, description) or None if not found
+            asyncpg.Record of (config_key, config_value, description) or None if not found
         """
+        # Change placeholder to $1
         query_str = f"""
             SELECT {SYSTEM_CONFIG_KEY}, {SYSTEM_CONFIG_VALUE}, {SYSTEM_CONFIG_DESCRIPTION}
-            FROM {SYSTEM_CONFIG_TABLE} WHERE {SYSTEM_CONFIG_KEY} = ?
+            FROM {SYSTEM_CONFIG_TABLE} WHERE {SYSTEM_CONFIG_KEY} = $1
         """
         try:
+            # Use _fetchone directly
             return await self._fetchone(query_str, (config_key,))
         except Exception as e:
-            logger.error(f"Error getting system config by key: {e}")
+            logger.error(f"Error getting system config by key '{config_key}': {e}")
             return None
 
     async def get_all(self) -> Dict[str, str]:
@@ -109,25 +107,31 @@ class SystemConfigRepository(BaseRepository):
         """
         query_str = f"SELECT {SYSTEM_CONFIG_KEY}, {SYSTEM_CONFIG_VALUE} FROM {SYSTEM_CONFIG_TABLE}"
         try:
-            rows = await self._fetchall(query_str)
-            return {row[0]: row[1] for row in rows}
+            # Use _fetchall directly
+            records = await self._fetchall(query_str)
+            # Convert list of Records to dict
+            return {
+                record[SYSTEM_CONFIG_KEY.lower()]: record[SYSTEM_CONFIG_VALUE.lower()]
+                for record in records
+            }
         except Exception as e:
             logger.error(f"Error getting all system configs: {e}")
             return {}
 
-    async def get_all_with_details(self) -> List[Dict[str, str]]:
+    async def get_all_with_details(self) -> List[asyncpg.Record]:
         """
         Gets all configuration items with full details.
 
         Returns:
-            List of dictionaries with config_key, config_value, and description
+            List of asyncpg.Record objects with config_key, config_value, and description
         """
         query_str = f"""
             SELECT {SYSTEM_CONFIG_KEY}, {SYSTEM_CONFIG_VALUE}, {SYSTEM_CONFIG_DESCRIPTION}
             FROM {SYSTEM_CONFIG_TABLE} ORDER BY {SYSTEM_CONFIG_KEY}
         """
         try:
-            return await self._fetch_as_dict(query_str)
+            # Use _fetchall directly (which calls base _fetchall)
+            return await self._fetchall(query_str)
         except Exception as e:
             logger.error(f"Error getting all system configs with details: {e}")
             return []
@@ -142,15 +146,24 @@ class SystemConfigRepository(BaseRepository):
         Returns:
             True if deleted, False otherwise
         """
-        query_str = f"DELETE FROM {SYSTEM_CONFIG_TABLE} WHERE {SYSTEM_CONFIG_KEY} = ?"
+        # Change placeholder to $1
+        query_str = f"DELETE FROM {SYSTEM_CONFIG_TABLE} WHERE {SYSTEM_CONFIG_KEY} = $1"
         try:
-            cursor = await self._execute(query_str, (config_key,), commit=True)
-            deleted = self._get_rows_affected(cursor) > 0
+            # Use _execute and check status
+            status = await self._execute(query_str, (config_key,))
+            deleted = status is not None and status.startswith("DELETE 1")
             if deleted:
                 logger.info(f"Deleted config key {config_key}.")
+            else:
+                logger.warning(
+                    f"Delete command for config key {config_key} executed but status was '{status}'."
+                )
             return deleted
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error deleting system config '{config_key}': {e}")
+            return False
         except Exception as e:
-            logger.error(f"Error deleting system config: {e}")
+            logger.error(f"Unexpected error deleting system config '{config_key}': {e}")
             return False
 
     async def clear_all(self) -> bool:
@@ -162,12 +175,15 @@ class SystemConfigRepository(BaseRepository):
         """
         query_str = f"DELETE FROM {SYSTEM_CONFIG_TABLE}"
         try:
-            cursor = await self._execute(query_str, commit=True)
-            rows_affected = self._get_rows_affected(cursor)
+            # Use _execute, success is no exception
+            status = await self._execute(query_str)
             logger.warning(
-                f"Cleared all system configuration settings ({rows_affected} items)."
+                f"Cleared all system configuration settings. Status: {status}."
             )
             return True
-        except Exception as e:
+        except asyncpg.PostgresError as e:
             logger.error(f"Error clearing all system configs: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error clearing all system configs: {e}")
             return False

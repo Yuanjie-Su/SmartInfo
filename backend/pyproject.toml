@@ -32,26 +32,23 @@ dependencies = [
     "pytest-cov (>=6.1.1,<7.0.0)",
     "tiktoken (>=0.9.0,<0.10.0)",
     "tenacity (>=9.1.2,<10.0.0)",
-    "aiosqlite (>=0.21.0,<0.22.0)",
+    "asyncpg (>=0.29.0,<0.30.0)", # Add asyncpg
     "selenium (>=4.31.0,<5.0.0)",
     "webdriver-manager (>=4.0.2,<5.0.0)",
     "celery[redis] (>=5.5.2,<6.0.0)",
     "trafilatura (>=2.0.0,<3.0.0) ; python_version >= \"3.12\" and python_version < \"4\""
 ]
 
-# Add this section to explicitly define package locations
 [tool.poetry]
 packages = [
     { include = "api" },
+    { include = "background" }, # Include background which contains tasks, celery_app, celery_worker
     { include = "core" },
     { include = "db" },
     { include = "models" },
     { include = "services" },
-    { include = "tasks" },
     { include = "utils" },
     # Include top-level .py files if they are part of the intended package
-    { include = "celery_app.py" },
-    { include = "celery_worker.py" },
     { include = "config.py" },
     { include = "main.py" },
 ]

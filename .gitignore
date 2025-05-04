@@ -67,6 +67,6 @@ htmlcov/
 pytest.ini
 
 # Test data
-tests/
 test*.py
 test_*.py
+tests/

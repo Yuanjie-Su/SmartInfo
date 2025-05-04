@@ -10,7 +10,11 @@ Application Configuration Module
 
 import logging
 import os
+import dotenv
+import sys
 from typing import Any, Optional, Dict, Type, TYPE_CHECKING
+
+dotenv.load_dotenv()
 
 # Configure module-level logger
 logger = logging.getLogger(__name__)
@@ -20,8 +24,9 @@ if TYPE_CHECKING:
     from db.repositories.system_config_repository import SystemConfigRepository
 
 # --- Constants ---
-DEFAULT_DATA_DIR = os.path.join(os.path.expanduser("~"), "SmartInfo", "data")
-DEFAULT_SQLITE_DB_NAME = "smartinfo.db"
+# Remove SQLite constants
+# DEFAULT_DATA_DIR = os.path.join(os.path.expanduser("~"), "SmartInfo", "data")
+# DEFAULT_SQLITE_DB_NAME = "smartinfo.db"
 
 
 class AppConfig:
@@ -43,33 +48,35 @@ class AppConfig:
 
     def __init__(self):
         """Initialize configuration."""
-        self._db_config: Dict[str, Any] = (
-            {}
-        )  # In-memory store for persistent settings loaded from DB
-        self._system_config_repo: Optional["SystemConfigRepository"] = (
-            None  # DB repository reference
+        self._db_config: Dict[str, Any] = {}
+        self._system_config_repo: Optional["SystemConfigRepository"] = None
+
+        # --- Load Database Configuration from Environment Variables ---
+        self._db_user = os.getenv("DB_USER")
+        self._db_password = os.getenv("DB_PASSWORD")
+        self._db_name = os.getenv("DB_NAME")
+        self._db_host = os.getenv("DB_HOST", "localhost")
+        self._db_port = os.getenv("DB_PORT", "5432")  # Default PostgreSQL port
+
+        # --- Validate Required Database Configuration ---
+        required_db_vars = {
+            "DB_USER": self._db_user,
+            "DB_PASSWORD": self._db_password,
+            "DB_NAME": self._db_name,
+        }
+        missing_vars = [key for key, value in required_db_vars.items() if not value]
+
+        if missing_vars:
+            error_message = (
+                f"Missing required database environment variables: {', '.join(missing_vars)}. "
+                "Please set them in your .env file or environment."
+            )
+            logger.critical(error_message)
+            sys.exit(1)
+
+        logger.info(
+            f"Database connection configured for: postgresql://{self._db_user}:***@{self._db_host}:{self._db_port}/{self._db_name}"
         )
-
-        # Get data directory from environment variable or use default
-        self._data_dir = os.environ.get("SMARTINFO_DATA_DIR", DEFAULT_DATA_DIR)
-
-        # Ensure the data directory exists
-        self._ensure_data_dir()
-
-        # Set database path by combining data directory and database filename
-        self._db_path = os.path.join(self._data_dir, DEFAULT_SQLITE_DB_NAME)
-
-        logger.info(f"Data directory configured to: {self._data_dir}")
-        logger.info(f"Database path configured to: {self._db_path}")
-
-    def _ensure_data_dir(self) -> None:
-        """Ensure the data directory exists"""
-        if not os.path.exists(self._data_dir):
-            try:
-                os.makedirs(self._data_dir)
-                logger.info(f"Created data directory: {self._data_dir}")
-            except OSError as e:
-                logger.error(f"Failed to create data directory {self._data_dir}: {e}")
 
     async def set_db_repo(self, system_config_repo: "SystemConfigRepository"):
         """
@@ -208,11 +215,33 @@ class AppConfig:
     def get(self, key: str, default: Any = None) -> Any:
         """
         Get a configuration value, checking sources in priority order:
+        0. Direct DB connection attributes (if applicable)
         1. Environment Variables
         2. Database (in-memory cache _db_config)
         3. Default value from DEFAULT_PERSISTENT_CONFIG (if key exists there)
         4. Provided 'default' argument
         """
+        # 0. Direct DB connection attributes (Highest priority for these specific keys)
+        db_connection_keys = {
+            "DB_USER": self._db_user,
+            "DB_PASSWORD": self._db_password,
+            "DB_NAME": self._db_name,
+            "DB_HOST": self._db_host,
+            "DB_PORT": self._db_port,
+        }
+        if key in db_connection_keys:
+            logger.debug(f"Config: Returning direct attribute for '{key}'.")
+            # Attempt to return correct type for port
+            if key == "DB_PORT":
+                try:
+                    return int(db_connection_keys[key])
+                except (ValueError, TypeError):
+                    logger.warning(
+                        f"Could not convert DB_PORT '{db_connection_keys[key]}' to int. Returning as string."
+                    )
+                    return db_connection_keys[key]  # Fallback to string
+            return db_connection_keys[key]
+
         # 1. Environment Variables (Highest Priority)
         env_value = os.environ.get(key)
         if env_value is not None:
@@ -223,13 +252,33 @@ class AppConfig:
                 try:
                     if expected_type == bool:
                         return env_value.lower() in ("true", "1", "yes")
+                    # Special handling for port from env var if not already handled above
+                    if key == "DB_PORT" and expected_type == int:
+                        try:
+                            return int(env_value)
+                        except (ValueError, TypeError):
+                            logger.warning(
+                                f"Could not convert env var DB_PORT '{env_value}' to int. Using string."
+                            )
+                            return env_value  # Fallback to string
                     return expected_type(env_value)
                 except (ValueError, TypeError):
                     logger.warning(
                         f"Could not convert env var '{key}' value '{env_value}' to {expected_type}. Using string."
                     )
                     return env_value
-            return env_value  # Return as string if not a known persistent type
+            # Special handling for port from env var if not in persistent config
+            elif key == "DB_PORT":
+                try:
+                    return int(env_value)
+                except (ValueError, TypeError):
+                    logger.warning(
+                        f"Could not convert env var DB_PORT '{env_value}' to int. Using string."
+                    )
+                    return env_value  # Fallback to string
+            return (
+                env_value  # Return as string if not a known persistent type or DB_PORT
+            )
 
         # 2. Database (In-memory Cache)
         if key in self._db_config:
@@ -324,15 +373,32 @@ class AppConfig:
             )
             return False
 
+    # --- Properties for Database Connection ---
     @property
-    def data_dir(self) -> str:
-        """Get the data storage directory path"""
-        return self._data_dir
+    def db_user(self) -> Optional[str]:
+        return self._db_user
 
     @property
-    def db_path(self) -> str:
-        """Get the full path of the SQLite database"""
-        return self._db_path
+    def db_password(self) -> Optional[str]:
+        return self._db_password
+
+    @property
+    def db_name(self) -> Optional[str]:
+        return self._db_name
+
+    @property
+    def db_host(self) -> str:
+        return self._db_host
+
+    @property
+    def db_port(self) -> int:
+        try:
+            return int(self._db_port)
+        except (ValueError, TypeError):
+            logger.warning(
+                f"DB_PORT '{self._db_port}' is not a valid integer. Defaulting to 5432."
+            )
+            return 5432  # Return default int port if conversion fails
 
 
 # Create a single, globally accessible instance of AppConfig

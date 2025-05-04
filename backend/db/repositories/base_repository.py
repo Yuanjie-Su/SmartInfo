@@ -3,185 +3,166 @@
 
 """
 Base Repository Module
-Provides a common base for database repository classes using aiosqlite
+Provides a common base for database repository classes using asyncpg
 """
 
 import logging
-import aiosqlite
+import asyncpg
 from typing import Any, List, Tuple, Optional, Dict, Union
+from contextlib import asynccontextmanager
 
-from db.connection import get_db_connection
+from db.connection import get_db_connection_context
 
 logger = logging.getLogger(__name__)
 
 
 class BaseRepository:
-    """Base repository for database operations using aiosqlite."""
+    """Base repository for database operations using asyncpg."""
 
-    # def __init__(
-    #     self, connection: Optional[aiosqlite.Connection] = None
-    # ):  # Accept optional connection
-    #     """Initialize the repository with a database connection."""
-    #     self._connection = connection  # Use provided connection if available
-
-    async def _get_connection(self) -> aiosqlite.Connection:
-        """Get a database connection."""
-        return await get_db_connection()
-
-    async def _execute(
-        self, query: str, params: Tuple = (), commit: bool = False
-    ) -> Optional[aiosqlite.Cursor]:
+    def __init__(self, connection: Optional[asyncpg.Connection] = None):
         """
-        Execute a query and optionally commit the transaction.
+        Initializes the repository with an optional database connection override.
+        This is primarily for testing purposes.
+        :param connection: asyncpg.Connection (for overriding the default context manager)
+        """
+        # Store the connection override directly
+        self._connection_override = connection
+
+    def _get_connection_context(self):  # Removed async
+        """
+        Get the database connection context manager.
+        Uses the override if provided, otherwise uses the default from db.connection.
+        """
+        if self._connection_override:
+            # If an override connection is provided, return a simple context manager for it
+            @asynccontextmanager
+            async def override_context_manager():
+                yield self._connection_override
+
+            return override_context_manager()
+        else:
+            # Otherwise, use the standard context manager from the connection module
+            return (
+                get_db_connection_context()
+            )  # Call the function to get the context manager instance
+
+    async def _execute(self, query: str, params: Tuple = ()) -> Optional[str]:
+        """
+        Execute a query (INSERT, UPDATE, DELETE).
 
         Args:
-            query: SQL query string
+            query: SQL query string (using $1, $2 placeholders)
             params: Parameters for the query
-            commit: Whether to commit the transaction after execution
 
         Returns:
-            Cursor object or None if execution failed
+            Status string from asyncpg on success.
+            Raises exceptions on database errors.
         """
-        conn = None
-        cursor = None
         try:
-            conn = await self._get_connection()
-            cursor = await conn.cursor()
-            await cursor.execute(query, params)
-            if commit:
-                await conn.commit()
-
-            return cursor
+            async with self._get_connection_context() as conn:  # Removed await
+                status_string = await conn.execute(query, *params)
+                return status_string
+        except asyncpg.PostgresError as e:
+            logger.error(
+                f"Error executing query: {query} with params {params}. Error: {e}"
+            )
+            raise
         except Exception as e:
-            logger.error(f"Error executing query: {e}")
-            if commit and conn:
-                logger.warning("Rolling back transaction")
-                await conn.rollback()
-            return None
+            logger.error(f"Unexpected error during query execution: {e}")
+            raise
 
-    async def _executemany(
-        self, query: str, params_list: List[Tuple], commit: bool = False
-    ) -> int:
+    async def _executemany(self, query: str, params_list: List[Tuple]) -> bool:
         """
         Execute a batch query with multiple parameter sets.
 
         Args:
-            query: SQL query string
+            query: SQL query string (using $1, $2 placeholders)
             params_list: List of parameter tuples for the query
-            commit: Whether to commit the transaction after execution
 
         Returns:
-            Number of affected rows or 0 if execution failed
+            True if execution was successful (no exceptions).
+            Raises exceptions on database errors.
         """
-        conn = None
-        cursor = None
         try:
-            conn = await self._get_connection()
-            cursor = await conn.cursor()
-            await cursor.executemany(query, params_list)
-
-            if commit:
-                await conn.commit()
-
-            return cursor.rowcount
+            async with self._get_connection_context() as conn:  # Removed await
+                await conn.executemany(query, params_list)
+                return True
+        except asyncpg.PostgresError as e:
+            logger.error(f"Error executing batch query: {query}. Error: {e}")
+            raise
         except Exception as e:
-            logger.error(f"Error executing batch query: {e}")
-            if commit and conn:
-                logger.warning("Rolling back transaction")
-                await conn.rollback()
-            return 0
+            logger.error(f"Unexpected error during batch query execution: {e}")
+            raise
 
-    async def _fetchone(self, query: str, params: Tuple = ()) -> Optional[Tuple]:
+    async def _fetchval(self, query: str, params: Tuple = ()) -> Optional[Any]:
         """
-        Execute a query and fetch one result.
+        Execute a query and fetch a single value.
 
         Args:
-            query: SQL query string
+            query: SQL query string (using $1, $2 placeholders)
+            params: Parameters for the query
+        Returns:
+            Single value from the result or None if no results.
+            Raises exceptions on database errors.
+        """
+        try:
+            async with self._get_connection_context() as conn:  # Removed await
+                return await conn.fetchval(query, *params)
+        except asyncpg.PostgresError as e:
+            logger.error(
+                f"Error fetching value: {query} with params {params}. Error: {e}"
+            )
+            raise
+        except Exception as e:
+            logger.error(f"Unexpected error fetching value: {e}")
+            raise
+
+    async def _fetchone(
+        self, query: str, params: Tuple = ()
+    ) -> Optional[asyncpg.Record]:
+        """
+        Execute a query and fetch one result as an asyncpg.Record.
+
+        Args:
+            query: SQL query string (using $1, $2 placeholders)
             params: Parameters for the query
 
         Returns:
-            Single row as a tuple or None if no results or execution failed
+            Single row as an asyncpg.Record or None if no results.
+            Raises exceptions on database errors.
         """
         try:
-            cursor = await self._execute(query, params)
-            if cursor:
-                return await cursor.fetchone()
-            return None
+            async with self._get_connection_context() as conn:  # Removed await
+                return await conn.fetchrow(query, *params)
+        except asyncpg.PostgresError as e:
+            logger.error(
+                f"Error fetching one row: {query} with params {params}. Error: {e}"
+            )
+            raise
         except Exception as e:
-            logger.error(f"Error fetching one row: {e}")
-            return None
+            logger.error(f"Unexpected error fetching one row: {e}")
+            raise
 
-    async def _fetchall(self, query: str, params: Tuple = ()) -> List[Tuple]:
+    async def _fetchall(self, query: str, params: Tuple = ()) -> List[asyncpg.Record]:
         """
-        Execute a query and fetch all results.
+        Execute a query and fetch all results as a list of asyncpg.Record objects.
 
         Args:
-            query: SQL query string
+            query: SQL query string (using $1, $2 placeholders)
             params: Parameters for the query
 
         Returns:
-            List of rows as tuples or empty list if no results or execution failed
+            List of rows as asyncpg.Record objects or empty list if no results.
+            Raises exceptions on database errors.
         """
         try:
-            cursor = await self._execute(query, params)
-            if cursor:
-                return await cursor.fetchall()
-            return []
+            async with self._get_connection_context() as conn:  # Removed await
+                return await conn.fetch(query, *params)
+        except asyncpg.PostgresError as e:
+            logger.error(
+                f"Error fetching all rows: {query} with params {params}. Error: {e}"
+            )
+            raise
         except Exception as e:
-            logger.error(f"Error fetching all rows: {e}")
-            return []
-
-    def _get_rows_affected(self, cursor: aiosqlite.Cursor) -> int:
-        """
-        Get the number of rows affected by the last query.
-
-        Args:
-            cursor: The cursor that executed the query
-
-        Returns:
-            Number of rows affected
-        """
-        if cursor:
-            return cursor.rowcount
-        return 0
-
-    def _get_last_insert_id(self, cursor: aiosqlite.Cursor) -> Optional[int]:
-        """
-        Get the ID of the last inserted row.
-
-        Args:
-            cursor: The cursor that executed the query
-
-        Returns:
-            Last insert ID or None if not available
-        """
-        if cursor:
-            return cursor.lastrowid
-        return None
-
-    def _dict_factory(self, cursor: aiosqlite.Cursor, row: Tuple) -> Dict[str, Any]:
-        """Convert a row tuple to a dictionary mapping column names to values."""
-        return {col[0]: row[idx] for idx, col in enumerate(cursor.description)}
-
-    async def _fetch_as_dict(
-        self, query_str: str, params: Tuple = ()
-    ) -> List[Dict[str, Any]]:
-        """Execute a query and fetch all rows as dictionaries."""
-        cursor = await self._execute(query_str, params)
-        if cursor:
-            # aiosqlite不支持直接设置row_factory，需要手动转换
-            rows = await cursor.fetchall()
-            description = cursor.description
-            return [
-                {description[i][0]: value for i, value in enumerate(row)}
-                for row in rows
-            ]
-        return []
-
-    async def _fetchone_as_dict(
-        self, query_str: str, params: Tuple = ()
-    ) -> Optional[Dict[str, Any]]:
-        """Execute a query and fetch one row as dictionary."""
-        results = await self._fetch_as_dict(query_str, params)
-        # print(f"results: {results}") # Removed print statement
-        return results[0] if results else None
+            logger.error(f"Unexpected error fetching all rows: {e}")
+            raise

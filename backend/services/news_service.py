@@ -74,13 +74,15 @@ class NewsService:
     # --- News Item Methods ---
     async def get_news_by_id(self, news_id: int) -> Optional[Dict[str, Any]]:
         """Get a news item by ID"""
-        return await self._news_repo.get_by_id_as_dict(news_id)
+        record = await self._news_repo.get_by_id(news_id)
+        return dict(record) if record else None
 
     async def get_all_news(
         self, limit: int = 100, offset: int = 0
     ) -> List[Dict[str, Any]]:
         """Get all news items with pagination"""
-        return await self._news_repo.get_all_as_dict(limit, offset)
+        records = await self._news_repo.get_all(limit, offset)
+        return [dict(record) for record in records]
 
     async def get_news_with_filters(
         self,
@@ -92,7 +94,7 @@ class NewsService:
         search_term: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """Get news items with filters"""
-        return await self._news_repo.get_news_with_filters_as_dict(
+        records = await self._news_repo.get_news_with_filters(
             category_id=category_id,
             source_id=source_id,
             analyzed=has_analysis,
@@ -100,6 +102,7 @@ class NewsService:
             page_size=page_size,
             search_term=search_term,
         )
+        return [dict(record) for record in records]
 
     async def update_news(
         self, news_id: int, news_item: Dict[str, Any]
@@ -119,19 +122,22 @@ class NewsService:
     # --- Category Methods ---
     async def get_all_categories(self) -> List[Dict[str, Any]]:
         """Get all categories"""
-        return await self._category_repo._fetch_as_dict(
+        records = await self._category_repo._fetchall(
             """
             SELECT id, name FROM news_category
             """
         )
+        return [dict(record) for record in records]
 
     async def get_all_categories_with_counts(self) -> List[Dict[str, Any]]:
         """Get all categories with news item counts"""
-        return await self._category_repo.get_with_source_count_as_dict()
+        records = await self._category_repo.get_with_source_count()
+        return [dict(record) for record in records]
 
     async def get_category_by_id(self, category_id: int) -> Optional[Dict[str, Any]]:
         """Get a category by ID"""
-        return await self._category_repo.get_by_id_as_dict(category_id)
+        record = await self._category_repo.get_by_id(category_id)
+        return dict(record) if record else None
 
     async def add_category(self, name: str) -> Optional[int]:
         """Add a new category."""
@@ -183,17 +189,20 @@ class NewsService:
     # --- Source Methods ---
     async def get_all_sources(self) -> List[Dict[str, Any]]:
         """Get all news sources with category information"""
-        return await self._source_repo.get_all_as_dict()
+        records = await self._source_repo.get_all()
+        return [dict(record) for record in records]
 
     async def get_sources_by_category_id(
         self, category_id: int
     ) -> List[Dict[str, Any]]:
         """Get all news sources for a specific category"""
-        return await self._source_repo.get_by_category_as_dict(category_id)
+        records = await self._source_repo.get_by_category(category_id)
+        return [dict(record) for record in records]
 
     async def get_source_by_id(self, source_id: int) -> Optional[Dict[str, Any]]:
         """Get a news source by ID with category information"""
-        return await self._source_repo.get_by_id_as_dict(source_id)
+        record = await self._source_repo.get_by_id(source_id)
+        return dict(record) if record else None
 
     async def add_source(
         self, name: str, url: str, category_name: str

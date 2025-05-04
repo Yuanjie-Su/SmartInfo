@@ -15,6 +15,16 @@ SYSTEM_CONFIG_TABLE = "system_config"
 CHATS_TABLE = "chats"
 MESSAGES_TABLE = "messages"
 
+# News category table column names
+NEWS_CATEGORY_ID = "id"
+NEWS_CATEGORY_NAME = "name"
+
+# News sources table column names
+NEWS_SOURCE_ID = "id"
+NEWS_SOURCE_NAME = "name"
+NEWS_SOURCE_URL = "url"
+NEWS_SOURCE_CATEGORY_ID = "category_id"
+
 # Chat table column names
 CHAT_ID = "id"
 CHAT_TITLE = "title"

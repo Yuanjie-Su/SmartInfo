@@ -2,7 +2,7 @@
 
 from api.dependencies.dependencies import (
     # Connection
-    get_db_connection_dependency,
+    get_db_connection_context_dependency,
     # LLM Pool
     set_global_llm_pool,
     get_llm_pool_dependency,

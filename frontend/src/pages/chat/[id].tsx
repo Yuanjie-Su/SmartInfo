@@ -171,7 +171,7 @@ const ChatPage: React.FC = () => {
                   alignItems: 'center'
                 }}>
                   <Text type="secondary" style={{ fontSize: '0.8rem' }}>
-                    {msg.timestamp ? new Date(msg.timestamp * 1000).toLocaleTimeString() : ''}
+                    {msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString() : ''}
                   </Text>
                   
                   <Space>
@@ -265,4 +265,4 @@ const ChatPage: React.FC = () => {
   );
 };
 
-export default ChatPage; 
+export default ChatPage;

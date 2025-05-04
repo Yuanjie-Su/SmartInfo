@@ -9,6 +9,8 @@ Handles database operations for chat sessions
 import logging
 import time
 from typing import Dict, List, Optional, Tuple, Any
+import asyncpg
+from datetime import datetime, timezone
 
 from db.repositories.base_repository import BaseRepository
 from db.schema_constants import (
@@ -36,29 +38,36 @@ class ChatRepository(BaseRepository):
             int: The ID of the newly created chat or None if creation failed
         """
         try:
-            current_time = int(time.time())
+            current_time = datetime.now(timezone.utc)
 
             query_str = f"""
                 INSERT INTO {CHATS_TABLE} (
                     {CHAT_TITLE}, {CHAT_CREATED_AT}, {CHAT_UPDATED_AT}
-                ) VALUES (?, ?, ?)
+                ) VALUES ($1, $2, $3)
+                RETURNING {CHAT_ID}
             """
+            params = (title, current_time, current_time)
 
-            cursor = await self._execute(
-                query_str, (title, current_time, current_time), commit=True
-            )
-            chat_id = self._get_last_insert_id(cursor)
+            # Use _fetchone for RETURNING id
+            record = await self._fetchone(query_str, params)
+            chat_id = record[0] if record else None
 
-            if chat_id:
+            if chat_id is not None:
                 logger.info(f"Created chat with ID {chat_id} and title '{title}'")
-                return chat_id
-            return None
+            else:
+                logger.warning(
+                    f"Failed to create chat with title '{title}', no ID returned."
+                )
+            return chat_id
 
-        except Exception as e:
+        except asyncpg.PostgresError as e:
             logger.error(f"Failed to create chat: {str(e)}")
             return None
+        except Exception as e:
+            logger.error(f"Unexpected error creating chat: {str(e)}")
+            return None
 
-    async def update(self, chat_id: str, title: Optional[str] = None) -> bool:
+    async def update(self, chat_id: int, title: Optional[str] = None) -> bool:
         """
         Update an existing chat.
 
@@ -70,48 +79,52 @@ class ChatRepository(BaseRepository):
             bool: True if update was successful, False otherwise
         """
         try:
-            # Get current chat data to ensure we have a newer timestamp
-            current_chat = await self.get_by_id(chat_id)
-            if not current_chat:
-                logger.warning(f"Chat with ID {chat_id} not found for update")
-                return False
+            updates = {}
+            params = []
+            param_index = 1
 
-            data = {}
             if title is not None:
-                data[CHAT_TITLE] = title
+                updates[CHAT_TITLE] = f"${param_index}"
+                params.append(title)
+                param_index += 1
 
-            # Ensure updated_at is always newer than current
-            current_time = int(time.time())
-            data[CHAT_UPDATED_AT] = current_time
+            current_time = datetime.now(timezone.utc)
+            updates[CHAT_UPDATED_AT] = f"${param_index}"
+            params.append(current_time)
+            param_index += 1
 
-            if not data:
+            if not updates:
                 logger.warning("No update data provided for chat update")
                 return False
 
-            # Build update query dynamically
-            set_clauses = [f"{field} = ?" for field in data.keys()]
-            set_clause_str = ", ".join(set_clauses)
+            set_clause_str = ", ".join(
+                f"{field} = {placeholder}" for field, placeholder in updates.items()
+            )
             query_str = f"""
-                UPDATE {CHATS_TABLE} 
+                UPDATE {CHATS_TABLE}
                 SET {set_clause_str}
-                WHERE {CHAT_ID} = ?
+                WHERE {CHAT_ID} = ${param_index}
             """
+            params.append(chat_id)
 
-            # Execute update with all values plus the ID for WHERE clause
-            values = list(data.values())
-            values.append(chat_id)
-            cursor = await self._execute(query_str, tuple(values), commit=True)
-
-            updated = self._get_rows_affected(cursor) > 0
+            status = await self._execute(query_str, tuple(params))
+            updated = status is not None and status.startswith("UPDATE 1")
             if updated:
                 logger.info(f"Updated chat with ID {chat_id}")
+            else:
+                logger.warning(
+                    f"Update command for chat ID {chat_id} executed but status was '{status}'."
+                )
             return updated
 
-        except Exception as e:
+        except asyncpg.PostgresError as e:
             logger.error(f"Failed to update chat {chat_id}: {str(e)}")
             return False
+        except Exception as e:
+            logger.error(f"Unexpected error updating chat {chat_id}: {str(e)}")
+            return False
 
-    async def delete(self, chat_id: str) -> bool:
+    async def delete(self, chat_id: int) -> bool:
         """
         Delete a chat by its ID.
 
@@ -122,20 +135,27 @@ class ChatRepository(BaseRepository):
             bool: True if deletion was successful, False otherwise
         """
         try:
-            query_str = f"DELETE FROM {CHATS_TABLE} WHERE {CHAT_ID} = ?"
+            query_str = f"DELETE FROM {CHATS_TABLE} WHERE {CHAT_ID} = $1"
 
-            cursor = await self._execute(query_str, (chat_id,), commit=True)
-            deleted = self._get_rows_affected(cursor) > 0
+            status = await self._execute(query_str, (chat_id,))
+            deleted = status is not None and status.startswith("DELETE 1")
 
             if deleted:
                 logger.info(f"Deleted chat with ID {chat_id}")
+            else:
+                logger.warning(
+                    f"Delete command for chat ID {chat_id} executed but status was '{status}'."
+                )
             return deleted
 
-        except Exception as e:
+        except asyncpg.PostgresError as e:
             logger.error(f"Failed to delete chat {chat_id}: {str(e)}")
             return False
+        except Exception as e:
+            logger.error(f"Unexpected error deleting chat {chat_id}: {str(e)}")
+            return False
 
-    async def get_by_id(self, chat_id: str) -> Optional[Dict[str, Any]]:
+    async def get_by_id(self, chat_id: int) -> Optional[asyncpg.Record]:
         """
         Get a chat by its ID.
 
@@ -143,21 +163,20 @@ class ChatRepository(BaseRepository):
             chat_id: The ID of the chat to retrieve
 
         Returns:
-            Optional[Dict[str, Any]]: A dictionary containing the chat information or None if not found
+            Optional[asyncpg.Record]: An asyncpg.Record containing the chat information or None if not found
         """
         try:
             query_str = f"""
                 SELECT {CHAT_ID}, {CHAT_TITLE}, {CHAT_CREATED_AT}, {CHAT_UPDATED_AT}
-                FROM {CHATS_TABLE} WHERE {CHAT_ID} = ?
+                FROM {CHATS_TABLE} WHERE {CHAT_ID} = $1
             """
-
-            return await self._fetchone_as_dict(query_str, (chat_id,))
+            return await self._fetchone(query_str, (chat_id,))
 
         except Exception as e:
             logger.error(f"Failed to get chat {chat_id}: {str(e)}")
             return None
 
-    async def get_all(self, limit: int = 100, offset: int = 0) -> List[Dict[str, Any]]:
+    async def get_all(self, limit: int = 100, offset: int = 0) -> List[asyncpg.Record]:
         """
         Get all chats with pagination.
 
@@ -166,17 +185,16 @@ class ChatRepository(BaseRepository):
             offset: Number of chats to skip (default: 0)
 
         Returns:
-            List[Dict[str, Any]]: A list of dictionaries containing chat information
+            List[asyncpg.Record]: A list of asyncpg.Record objects containing chat information
         """
         try:
             query_str = f"""
                 SELECT {CHAT_ID}, {CHAT_TITLE}, {CHAT_CREATED_AT}, {CHAT_UPDATED_AT}
                 FROM {CHATS_TABLE}
                 ORDER BY {CHAT_UPDATED_AT} DESC
-                LIMIT ? OFFSET ?
+                LIMIT $1 OFFSET $2
             """
-
-            return await self._fetch_as_dict(query_str, (limit, offset))
+            return await self._fetchall(query_str, (limit, offset))
 
         except Exception as e:
             logger.error(f"Failed to get chats: {str(e)}")
@@ -191,27 +209,11 @@ class ChatRepository(BaseRepository):
         """
         try:
             query_str = f"SELECT COUNT(*) FROM {CHATS_TABLE}"
-
-            row = await self._fetchone(query_str)
-            return row[0] if row else 0
+            # Use _fetchone
+            record = await self._fetchone(query_str)
+            count = record[0] if record else 0
+            return count if count is not None else 0
 
         except Exception as e:
             logger.error(f"Failed to get chat count: {str(e)}")
             return 0
-
-    def _row_to_dict(self, row) -> Dict[str, Any]:
-        """
-        Convert a database row to a dictionary.
-
-        Args:
-            row: Database row as tuple
-
-        Returns:
-            Dict[str, Any]: Dictionary with chat data
-        """
-        return {
-            CHAT_ID: row[0],
-            CHAT_TITLE: row[1],
-            CHAT_CREATED_AT: row[2],
-            CHAT_UPDATED_AT: row[3],
-        }

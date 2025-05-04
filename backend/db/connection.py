@@ -11,13 +11,83 @@ methods to initialize the database, create tables, and clean up resources.
 
 import os
 import logging
-import aiosqlite
+import asyncpg
 import atexit
 from threading import Lock
 from typing import Optional
 
 # Import using backend package path
-from config import config
+from config import config  # Import the config instance
+from db.schema_constants import (
+    # Table names
+    NEWS_CATEGORY_TABLE,
+    NEWS_SOURCES_TABLE,
+    NEWS_TABLE,
+    API_CONFIG_TABLE,
+    SYSTEM_CONFIG_TABLE,
+    CHATS_TABLE,
+    MESSAGES_TABLE,
+    # News category columns
+    # News source columns
+    # News columns
+    NEWS_ID,
+    NEWS_TITLE,
+    NEWS_URL,
+    NEWS_SOURCE_NAME,
+    NEWS_CATEGORY_NAME,
+    NEWS_SOURCE_ID,
+    NEWS_CATEGORY_ID,
+    NEWS_SUMMARY,
+    NEWS_ANALYSIS,
+    NEWS_DATE,
+    NEWS_CONTENT,
+    # API config columns
+    API_CONFIG_ID,
+    API_CONFIG_MODEL,
+    API_CONFIG_BASE_URL,
+    API_CONFIG_API_KEY,
+    API_CONFIG_CONTEXT,
+    API_CONFIG_MAX_OUTPUT_TOKENS,
+    API_CONFIG_DESCRIPTION,
+    API_CONFIG_CREATED_DATE,
+    API_CONFIG_MODIFIED_DATE,
+    # System config columns
+    SYSTEM_CONFIG_KEY,
+    SYSTEM_CONFIG_VALUE,
+    SYSTEM_CONFIG_DESCRIPTION,
+    # Chat columns
+    CHAT_ID,
+    CHAT_TITLE,
+    CHAT_CREATED_AT,
+    CHAT_UPDATED_AT,
+    # Message columns
+    MESSAGE_ID,
+    MESSAGE_CHAT_ID,
+    MESSAGE_SENDER,
+    MESSAGE_CONTENT,
+    MESSAGE_TIMESTAMP,
+    MESSAGE_SEQUENCE_NUMBER,
+)
+
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+"""
+This module provides a connection manager for the database.
+It handles database connection initialization and cleanup, supporting
+both connection pool and single connection modes.
+"""
+
+import os
+import logging
+import asyncpg
+import atexit
+from threading import Lock
+from typing import Optional, Union, AsyncIterator, TYPE_CHECKING
+from contextlib import asynccontextmanager, AbstractAsyncContextManager
+
+# Import using backend package path
+from config import config  # Import the config instance
 from db.schema_constants import (
     # Table names
     NEWS_CATEGORY_TABLE,
@@ -73,8 +143,10 @@ logger = logging.getLogger(__name__)
 
 
 class DatabaseConnectionManager:
-    _instance = None
+    _instance: Optional["DatabaseConnectionManager"] = None
     _lock = Lock()
+    _db_resource: Optional[Union[asyncpg.Pool, asyncpg.Connection]] = None
+    _connection_mode: Optional[str] = None
 
     def __new__(cls):
         if cls._instance is None:
@@ -82,54 +154,81 @@ class DatabaseConnectionManager:
                 if cls._instance is None:
                     logger.info("Creating new DatabaseConnectionManager instance.")
                     cls._instance = super(DatabaseConnectionManager, cls).__new__(cls)
-                    try:
-                        cls._instance._db_path = config.db_path
-                    except RuntimeError as e:
-                        logger.critical(
-                            f"Configuration not initialized before DB connection: {e}"
-                        )
-                        raise RuntimeError(
-                            "Cannot create DB connection: Config not ready."
-                        ) from e
-                    except AttributeError as e:
-                        logger.critical(
-                            f"AppConfig missing expected path attributes: {e}"
-                        )
-                        raise RuntimeError(
-                            "Cannot create DB connection: Config paths missing."
-                        ) from e
-
-                    cls._instance._connection = None
-                    # 不要立即同步初始化连接，在异步上下文中再初始化
-                    # 注册关闭函数到atexit
-                    atexit.register(cls._instance._cleanup_sync)
+                    cls._instance._db_resource = None
+                    cls._instance._connection_mode = None
         return cls._instance
 
-    async def _initialize(self):
-        """Initialize database connection and table structures"""
-        if self._connection is not None:
+    async def _initialize(self, db_connection_mode: str = "pool"):
+        """Initialize database connection resource (pool or single connection)."""
+        if self._db_resource is not None:
+            logger.warning("Database resource already initialized.")
             return
 
+        self._connection_mode = db_connection_mode
+        logger.info(f"Database connection mode: {self._connection_mode}")
+
         try:
-            logger.info(f"Initializing database connection to: {self._db_path}")
+            # Get connection details from config properties
+            db_user = config.db_user
+            db_password = config.db_password
+            db_name = config.db_name
+            db_host = config.db_host
+            db_port = config.db_port  # Already an int from property
 
-            # Create directory if it doesn't exist
-            os.makedirs(os.path.dirname(self._db_path), exist_ok=True)
+            # Validation is now done in config.__init__, but double-check here just in case
+            if not all([db_user, db_password, db_name]):
+                # This should theoretically not be reached if config validation works
+                raise ValueError(
+                    "Missing required database configuration. Check config initialization."
+                )
 
-            # Connect to SQLite database using aiosqlite
-            self._connection = await aiosqlite.connect(self._db_path)
+            if self._connection_mode == "pool":
+                logger.info(
+                    f"Initializing database connection pool to: postgresql://{db_user}:***@{db_host}:{db_port}/{db_name}"
+                )
+                self._db_resource = await asyncpg.create_pool(
+                    user=db_user,
+                    password=db_password,
+                    database=db_name,
+                    host=db_host,
+                    port=db_port,
+                    # Consider adding min_size, max_size for pool configuration
+                    # min_size=1,
+                    # max_size=10
+                )
+                # Create tables using a connection from the pool
+                await self._create_tables(self._db_resource)
+                logger.info("Database connection pool initialized successfully.")
 
-            # Enable foreign keys
-            await self._connection.execute("PRAGMA foreign_keys = ON")
+            elif self._connection_mode == "single":
+                logger.info(
+                    f"Initializing single database connection to: postgresql://{db_user}:***@{db_host}:{db_port}/{db_name}"
+                )
+                self._db_resource = await asyncpg.connect(
+                    user=db_user,
+                    password=db_password,
+                    database=db_name,
+                    host=db_host,
+                    port=db_port,
+                )
+                # Create tables using the single connection
+                await self._create_tables(self._db_resource)
+                logger.info("Single database connection initialized successfully.")
 
-            # Set WAL mode for better concurrency
-            await self._connection.execute("PRAGMA journal_mode=WAL")
+            else:
+                raise ValueError(
+                    f"Invalid DB_CONNECTION_MODE: {self._connection_mode}. Must be 'pool' or 'single'."
+                )
 
-            # Create tables
-            await self._create_tables()
-
-            logger.info("Database connection initialized successfully.")
-
+        except ValueError as ve:  # Catch specific config errors
+            logger.critical(f"Database configuration error: {ve}")
+            # Re-raise or handle appropriately, maybe sys.exit here too?
+            # For now, just log and raise to prevent startup
+            raise
+        except asyncpg.PostgresError as pe:
+            logger.error(f"PostgreSQL connection error: {pe}", exc_info=True)
+            await self._cleanup()
+            raise
         except Exception as e:
             logger.error(
                 f"Database connection initialization failed: {str(e)}", exc_info=True
@@ -137,212 +236,201 @@ class DatabaseConnectionManager:
             await self._cleanup()  # Clean up resources
             raise
 
-    async def _execute_schema_query(self, query_str: str) -> bool:
-        """Helper to execute a single schema DDL query."""
-        if not self._connection:
-            logger.error("Cannot execute schema query, database is not connected.")
-            return False
-
-        try:
-            async with self._connection.cursor() as cursor:
-                await cursor.execute(query_str)
-                await self._connection.commit()
-                return True
-        except aiosqlite.Error as e:
-            # Ignore "table already exists" or "index already exists" errors
-            if "already exists" not in str(e).lower():
-                logger.error(f"Schema query failed: {query_str}\nError: {str(e)}")
-                return False
-            else:
-                logger.debug(
-                    f"Schema object already exists (ignored): {query_str.split(' ')[2]}"
-                )
-                return True
-
-    async def _create_tables(self):
-        """Create database tables (if they do not exist)"""
-        if not self._connection:
-            logger.error(
-                "Cannot create tables, database connection is not initialized."
-            )
+    async def _create_tables(
+        self, conn_or_pool: Union[asyncpg.Pool, asyncpg.Connection]
+    ):
+        """Create database tables using PostgreSQL syntax if they do not exist."""
+        if conn_or_pool is None:
+            logger.error("Cannot create tables, database resource is not initialized.")
             return
 
         logger.info("Verifying/Creating database tables...")
 
-        # Execute each schema modification independently
+        async def execute_schema(conn):
+            # Use a transaction for schema creation
+            async with conn.transaction():
+                try:
+                    # News Category Table (PostgreSQL syntax)
+                    await conn.execute(
+                        f"""
+                        CREATE TABLE IF NOT EXISTS {NEWS_CATEGORY_TABLE} (
+                            {NEWS_ID} SERIAL PRIMARY KEY,
+                            name TEXT NOT NULL UNIQUE
+                        )
+                    """
+                    )
+                    logger.debug(f"Table {NEWS_CATEGORY_TABLE} checked/created.")
 
-        # News Category Table
-        await self._execute_schema_query(
-            f"""
-            CREATE TABLE IF NOT EXISTS {NEWS_CATEGORY_TABLE} (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, 
-                name TEXT NOT NULL UNIQUE
-            )
-        """
-        )
+                    # News Sources Table (PostgreSQL syntax)
+                    await conn.execute(
+                        f"""
+                        CREATE TABLE IF NOT EXISTS {NEWS_SOURCES_TABLE} (
+                            {NEWS_ID} SERIAL PRIMARY KEY,
+                            name TEXT NOT NULL,
+                            url TEXT NOT NULL UNIQUE,
+                            category_id INTEGER NOT NULL,
+                            FOREIGN KEY (category_id) REFERENCES {NEWS_CATEGORY_TABLE}({NEWS_ID}) ON DELETE CASCADE
+                        )
+                    """
+                    )
+                    logger.debug(f"Table {NEWS_SOURCES_TABLE} checked/created.")
 
-        # News Sources Table
-        await self._execute_schema_query(
-            f"""
-            CREATE TABLE IF NOT EXISTS {NEWS_SOURCES_TABLE} (
-                id INTEGER PRIMARY KEY AUTOINCREMENT, 
-                name TEXT NOT NULL, 
-                url TEXT NOT NULL UNIQUE,
-                category_id INTEGER NOT NULL, 
-                FOREIGN KEY (category_id) REFERENCES {NEWS_CATEGORY_TABLE}(id) ON DELETE CASCADE
-            )
-        """
-        )
+                    await conn.execute(
+                        f"""
+                        CREATE INDEX IF NOT EXISTS idx_news_sources_url ON {NEWS_SOURCES_TABLE} (url)
+                    """
+                    )
+                    logger.debug(f"Index idx_news_sources_url checked/created.")
 
-        await self._execute_schema_query(
-            f"""
-            CREATE INDEX IF NOT EXISTS idx_news_sources_url ON {NEWS_SOURCES_TABLE} (url)
-        """
-        )
+                    # News Table (PostgreSQL syntax)
+                    await conn.execute(
+                        f"""
+                        CREATE TABLE IF NOT EXISTS {NEWS_TABLE} (
+                            {NEWS_ID} BIGSERIAL PRIMARY KEY,
+                            {NEWS_TITLE} TEXT NOT NULL,
+                            {NEWS_URL} TEXT NOT NULL UNIQUE,
+                            {NEWS_SOURCE_NAME} TEXT,
+                            {NEWS_CATEGORY_NAME} TEXT,
+                            {NEWS_SOURCE_ID} INTEGER,
+                            {NEWS_CATEGORY_ID} INTEGER,
+                            {NEWS_SUMMARY} TEXT,
+                            {NEWS_ANALYSIS} TEXT,
+                            {NEWS_DATE} TIMESTAMP WITH TIME ZONE,
+                            {NEWS_CONTENT} TEXT,
+                            FOREIGN KEY ({NEWS_SOURCE_ID}) REFERENCES {NEWS_SOURCES_TABLE}({NEWS_ID}) ON DELETE SET NULL,
+                            FOREIGN KEY ({NEWS_CATEGORY_ID}) REFERENCES {NEWS_CATEGORY_TABLE}({NEWS_ID}) ON DELETE SET NULL
+                        )
+                    """
+                    )
+                    logger.debug(f"Table {NEWS_TABLE} checked/created.")
 
-        await self._execute_schema_query(
-            f"""
-            CREATE INDEX IF NOT EXISTS idx_news_sources_category_id ON {NEWS_SOURCES_TABLE} (category_id)
-        """
-        )
+                    await conn.execute(
+                        f"""
+                        CREATE INDEX IF NOT EXISTS idx_news_url ON {NEWS_TABLE} ({NEWS_URL})
+                    """
+                    )
+                    logger.debug(f"Index idx_news_url checked/created.")
+                    await conn.execute(
+                        f"""
+                        CREATE INDEX IF NOT EXISTS idx_news_date ON {NEWS_TABLE} ({NEWS_DATE} DESC)
+                    """
+                    )
+                    logger.debug(f"Index idx_news_date checked/created.")
+                    await conn.execute(
+                        f"""
+                        CREATE INDEX IF NOT EXISTS idx_news_category_id ON {NEWS_TABLE} ({NEWS_CATEGORY_ID})
+                    """
+                    )
+                    logger.debug(f"Index idx_news_category_id checked/created.")
+                    await conn.execute(
+                        f"""
+                        CREATE INDEX IF NOT EXISTS idx_news_source_id ON {NEWS_TABLE} ({NEWS_SOURCE_ID})
+                    """
+                    )
+                    logger.debug(f"Index idx_news_source_id checked/created.")
 
-        # News Table
-        await self._execute_schema_query(
-            f"""
-            CREATE TABLE IF NOT EXISTS {NEWS_TABLE} (
-                {NEWS_ID} INTEGER PRIMARY KEY AUTOINCREMENT,
-                {NEWS_TITLE} TEXT NOT NULL,
-                {NEWS_URL} TEXT NOT NULL UNIQUE,
-                {NEWS_SOURCE_NAME} TEXT NOT NULL,
-                {NEWS_CATEGORY_NAME} TEXT NOT NULL,
-                {NEWS_SOURCE_ID} INTEGER,
-                {NEWS_CATEGORY_ID} INTEGER,
-                {NEWS_SUMMARY} TEXT,
-                {NEWS_ANALYSIS} TEXT,
-                {NEWS_DATE} TEXT,
-                {NEWS_CONTENT} TEXT,
-                FOREIGN KEY ({NEWS_SOURCE_ID}) REFERENCES {NEWS_SOURCES_TABLE}(id) ON DELETE SET NULL,
-                FOREIGN KEY ({NEWS_CATEGORY_ID}) REFERENCES {NEWS_CATEGORY_TABLE}(id) ON DELETE SET NULL
-            )
-        """
-        )
+                    # API Config Table (PostgreSQL syntax)
+                    await conn.execute(
+                        f"""
+                        CREATE TABLE IF NOT EXISTS {API_CONFIG_TABLE} (
+                            {API_CONFIG_ID} SERIAL PRIMARY KEY,
+                            {API_CONFIG_MODEL} TEXT NOT NULL,
+                            {API_CONFIG_BASE_URL} TEXT NOT NULL,
+                            {API_CONFIG_API_KEY} TEXT NOT NULL,
+                            {API_CONFIG_CONTEXT} INTEGER,
+                            {API_CONFIG_MAX_OUTPUT_TOKENS} INTEGER,
+                            {API_CONFIG_DESCRIPTION} TEXT,
+                            {API_CONFIG_CREATED_DATE} TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                            {API_CONFIG_MODIFIED_DATE} TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                        )
+                    """
+                    )
+                    logger.debug(f"Table {API_CONFIG_TABLE} checked/created.")
 
-        await self._execute_schema_query(
-            f"""
-            CREATE INDEX IF NOT EXISTS idx_news_url ON {NEWS_TABLE} ({NEWS_URL})
-        """
-        )
+                    # System Config Table (PostgreSQL syntax)
+                    await conn.execute(
+                        f"""
+                        CREATE TABLE IF NOT EXISTS {SYSTEM_CONFIG_TABLE} (
+                            {SYSTEM_CONFIG_KEY} TEXT PRIMARY KEY,
+                            {SYSTEM_CONFIG_VALUE} TEXT,
+                            {SYSTEM_CONFIG_DESCRIPTION} TEXT
+                        )
+                    """
+                    )
+                    logger.debug(f"Table {SYSTEM_CONFIG_TABLE} checked/created.")
 
-        await self._execute_schema_query(
-            f"""
-            CREATE INDEX IF NOT EXISTS idx_news_date ON {NEWS_TABLE} ({NEWS_DATE})
-        """
-        )
+                    # Chats Table (PostgreSQL syntax)
+                    await conn.execute(
+                        f"""
+                        CREATE TABLE IF NOT EXISTS {CHATS_TABLE} (
+                            {CHAT_ID} BIGSERIAL PRIMARY KEY,
+                            {CHAT_TITLE} TEXT NOT NULL,
+                            {CHAT_CREATED_AT} TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                            {CHAT_UPDATED_AT} TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                        )
+                    """
+                    )
+                    logger.debug(f"Table {CHATS_TABLE} checked/created.")
 
-        # API Configuration Table
-        await self._execute_schema_query(
-            f"""
-            CREATE TABLE IF NOT EXISTS {API_CONFIG_TABLE} (
-                {API_CONFIG_ID} INTEGER PRIMARY KEY AUTOINCREMENT,
-                {API_CONFIG_MODEL} TEXT NOT NULL,
-                {API_CONFIG_BASE_URL} TEXT NOT NULL,
-                {API_CONFIG_API_KEY} TEXT NOT NULL,
-                {API_CONFIG_CONTEXT} INTEGER NOT NULL,
-                {API_CONFIG_MAX_OUTPUT_TOKENS} INTEGER NOT NULL,
-                {API_CONFIG_DESCRIPTION} TEXT,
-                {API_CONFIG_CREATED_DATE} INTEGER NOT NULL,
-                {API_CONFIG_MODIFIED_DATE} INTEGER NOT NULL
-            )
-        """
-        )
+                    # Messages Table (PostgreSQL syntax)
+                    await conn.execute(
+                        f"""
+                        CREATE TABLE IF NOT EXISTS {MESSAGES_TABLE} (
+                            {MESSAGE_ID} BIGSERIAL PRIMARY KEY,
+                            {MESSAGE_CHAT_ID} BIGINT NOT NULL,
+                            {MESSAGE_SENDER} TEXT NOT NULL,
+                            {MESSAGE_CONTENT} TEXT,
+                            {MESSAGE_TIMESTAMP} TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                            {MESSAGE_SEQUENCE_NUMBER} INTEGER,
+                            FOREIGN KEY ({MESSAGE_CHAT_ID}) REFERENCES {CHATS_TABLE}({CHAT_ID}) ON DELETE CASCADE
+                        )
+                    """
+                    )
+                    logger.debug(f"Table {MESSAGES_TABLE} checked/created.")
 
-        # System Config Table
-        await self._execute_schema_query(
-            f"""
-            CREATE TABLE IF NOT EXISTS {SYSTEM_CONFIG_TABLE} (
-                {SYSTEM_CONFIG_KEY} TEXT PRIMARY KEY NOT NULL,
-                {SYSTEM_CONFIG_VALUE} TEXT NOT NULL,
-                {SYSTEM_CONFIG_DESCRIPTION} TEXT
-            )
-        """
-        )
+                    await conn.execute(
+                        f"""
+                        CREATE INDEX IF NOT EXISTS idx_messages_chat_id_sequence ON {MESSAGES_TABLE} ({MESSAGE_CHAT_ID}, {MESSAGE_SEQUENCE_NUMBER})
+                    """
+                    )
+                    logger.debug(
+                        f"Index idx_messages_chat_id_sequence checked/created."
+                    )
 
-        # Chats Table
-        await self._execute_schema_query(
-            f"""
-            CREATE TABLE IF NOT EXISTS {CHATS_TABLE} (
-                {CHAT_ID} INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-                {CHAT_TITLE} TEXT NOT NULL,
-                {CHAT_CREATED_AT} INTEGER NOT NULL,
-                {CHAT_UPDATED_AT} INTEGER
-            )
-        """
-        )
+                    logger.info("Database schema verification/creation complete.")
 
-        await self._execute_schema_query(
-            f"""
-            CREATE INDEX IF NOT EXISTS idx_chats_created_at ON {CHATS_TABLE} ({CHAT_CREATED_AT})
-        """
-        )
+                except asyncpg.PostgresError as e:
+                    logger.error(f"Schema creation failed: {str(e)}", exc_info=True)
+                    raise
 
-        await self._execute_schema_query(
-            f"""
-            CREATE INDEX IF NOT EXISTS idx_chats_updated_at ON {CHATS_TABLE} ({CHAT_UPDATED_AT})
-        """
-        )
-
-        # Messages Table
-        await self._execute_schema_query(
-            f"""
-            CREATE TABLE IF NOT EXISTS {MESSAGES_TABLE} (
-                {MESSAGE_ID} INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-                {MESSAGE_CHAT_ID} INTEGER NOT NULL,
-                {MESSAGE_SENDER} TEXT NOT NULL,
-                {MESSAGE_CONTENT} TEXT NOT NULL,
-                {MESSAGE_TIMESTAMP} INTEGER NOT NULL,
-                {MESSAGE_SEQUENCE_NUMBER} INTEGER NOT NULL,
-                FOREIGN KEY ({MESSAGE_CHAT_ID}) REFERENCES {CHATS_TABLE}(id) ON DELETE CASCADE
-            )
-        """
-        )
-
-        await self._execute_schema_query(
-            f"""
-            CREATE INDEX IF NOT EXISTS idx_messages_chat_id ON {MESSAGES_TABLE} ({MESSAGE_CHAT_ID})
-        """
-        )
-
-        await self._execute_schema_query(
-            f"""
-            CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON {MESSAGES_TABLE} ({MESSAGE_TIMESTAMP})
-        """
-        )
-
-        await self._execute_schema_query(
-            f"""
-            CREATE INDEX IF NOT EXISTS idx_messages_chat_id_seq ON {MESSAGES_TABLE} ({MESSAGE_CHAT_ID}, {MESSAGE_SEQUENCE_NUMBER})
-        """
-        )
-
-        logger.info("Database tables checked/created successfully.")
+        if isinstance(conn_or_pool, asyncpg.Pool):
+            async with conn_or_pool.acquire() as conn:
+                await execute_schema(conn)
+        else:
+            await execute_schema(conn_or_pool)
 
     async def _cleanup(self):
-        """Clean up database resources"""
-        if self._connection:
-            logger.info("Closing database connection...")
+        """Close the database connection resource (pool or single connection)."""
+        if self._db_resource:
+            logger.info(f"Closing database resource ({self._connection_mode} mode)...")
             try:
-                await self._connection.close()
-                self._connection = None
-                logger.info("Database connection closed.")
+                if self._connection_mode == "pool":
+                    await self._db_resource.close()
+                    logger.info("Database connection pool closed.")
+                elif self._connection_mode == "single":
+                    await self._db_resource.close()
+                    logger.info("Single database connection closed.")
+                self._db_resource = None
+                self._connection_mode = None
             except Exception as e:
-                logger.error(f"Error closing database connection: {e}")
+                logger.error(f"Error closing database resource: {e}")
 
     def _cleanup_sync(self):
-        """同步版本的cleanup，用于atexit注册"""
+        """Synchronous cleanup for atexit registration."""
         import asyncio
 
         try:
-            # 创建一个新的事件循环来运行异步清理方法
+            # Create a new event loop to run the async cleanup method
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             loop.run_until_complete(self._cleanup())
@@ -350,24 +438,49 @@ class DatabaseConnectionManager:
         except Exception as e:
             logger.error(f"Error in _cleanup_sync: {e}")
 
-    async def get_connection(self) -> aiosqlite.Connection:
-        """Get a connection to the database."""
-        if self._connection is None:
+    @asynccontextmanager
+    async def get_db_connection_context(self) -> AsyncIterator[asyncpg.Connection]:
+        """
+        Provides an async context manager for database connections.
+        Acquires a connection from the pool in 'pool' mode, or yields the single
+        connection in 'single' mode.
+        """
+        if self._db_resource is None:
             await self._initialize()
-        return self._connection
+
+        if self._connection_mode == "pool":
+            # Ensure _db_resource is a pool in pool mode
+            assert isinstance(
+                self._db_resource, asyncpg.Pool
+            ), "Database resource is not a pool in 'pool' mode"
+            async with self._db_resource.acquire() as conn:
+                yield conn
+        elif self._connection_mode == "single":
+            # Ensure _db_resource is a connection in single mode
+            assert isinstance(
+                self._db_resource, asyncpg.Connection
+            ), "Database resource is not a connection in 'single' mode"
+            yield self._db_resource
+        else:
+            # This case should ideally not be reached if _initialize is called first
+            raise RuntimeError(
+                f"Database connection manager not initialized or invalid mode: {self._connection_mode}"
+            )
 
 
 # --- Helper Functions for Dependency Injection ---
 
-_db_connection_manager = None
+_db_connection_manager: Optional[DatabaseConnectionManager] = None
 
 
-async def init_db_connection() -> DatabaseConnectionManager:
+async def init_db_connection(
+    db_connection_mode: str = "pool",
+) -> DatabaseConnectionManager:
     """Initialize the database connection manager."""
     global _db_connection_manager
     if _db_connection_manager is None:
         _db_connection_manager = DatabaseConnectionManager()
-        await _db_connection_manager._initialize()
+        await _db_connection_manager._initialize(db_connection_mode)
     return _db_connection_manager
 
 
@@ -375,12 +488,20 @@ def get_db_connection_manager() -> DatabaseConnectionManager:
     """Get the database connection manager instance."""
     global _db_connection_manager
     if _db_connection_manager is None:
+        # This case might happen if get_db_connection_manager is called before init_db_connection
+        # In a typical FastAPI app startup, init_db_connection should be called first.
+        # However, for robustness or testing, we might initialize lazily here,
+        # though the async nature of _initialize makes this tricky outside of an async context.
+        # For now, assume init_db_connection is called on startup.
+        # If called before init, it will return an uninitialized manager.
+        # The get_db_connection_context() method will handle initialization on first use.
         _db_connection_manager = DatabaseConnectionManager()
     return _db_connection_manager
 
 
-async def get_db_connection() -> aiosqlite.Connection:
-    """Get a connection to the database.
-    This is the primary function used for dependency injection."""
+# Expose the new context manager function for dependency injection
+def get_db_connection_context() -> AbstractAsyncContextManager[asyncpg.Connection]:
+    """Dependency injection helper to get a database connection context manager."""
     manager = get_db_connection_manager()
-    return await manager.get_connection()
+    # Return the context manager instance provided by the manager
+    return manager.get_db_connection_context()

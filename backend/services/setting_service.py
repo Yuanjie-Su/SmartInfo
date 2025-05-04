@@ -35,12 +35,13 @@ class SettingService:
 
     async def get_api_key_by_id(self, api_id: int) -> Optional[ApiKey]:
         """Get an ApiKey object by ID"""
-        # Use the new repository method that returns a dictionary
-        api_key_dict = await self._api_key_repo.get_by_id_as_dict(api_id)
-        if not api_key_dict:
+        # 使用返回Record的方法
+        api_key_record = await self._api_key_repo.get_by_id(api_id)
+        if not api_key_record:
             return None
 
-        # Convert dictionary to ApiKey
+        # 将Record转换为字典，然后创建ApiKey对象
+        api_key_dict = dict(api_key_record)
         return ApiKey(**api_key_dict)
 
     async def get_all_api_keys(self) -> List[ApiKey]:
@@ -205,9 +206,9 @@ class SettingService:
         Raises:
             HTTPException: If the API key is not found
         """
-        # Retrieve the API key by ID using the dictionary method
-        api_key_dict = await self._api_key_repo.get_by_id_as_dict(api_key_id)
-        if not api_key_dict:
+        # 使用返回Record的方法
+        api_key_record = await self._api_key_repo.get_by_id(api_key_id)
+        if not api_key_record:
             # We'll let the router convert this to a 404 HTTP response
             from fastapi import HTTPException, status
 
@@ -215,6 +216,9 @@ class SettingService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"API key with ID '{api_key_id}' not found.",
             )
+
+        # 将Record转换为字典
+        api_key_dict = dict(api_key_record)
 
         # Extract relevant information from the dictionary
         model = api_key_dict["model"]

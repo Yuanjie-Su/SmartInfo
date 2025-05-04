@@ -164,12 +164,13 @@ async def _process_source_url_async(
         await progress_callback("preparing", 10, "准备抓取数据...")
 
         # Get source details (use the passed repo instance)
-        source_details = await source_repo.get_by_id_as_dict(source_id)
-        if not source_details:
+        source_record = await source_repo.get_by_id(source_id)
+        if not source_record:
             await progress_callback("error", 0, f"无法获取源 ID {source_id} 的详细信息")
             # No need to raise Reject here, just return error status
             return {"status": "error", "message": f"Source ID {source_id} not found"}
 
+        source_details = dict(source_record)
         category_id = source_details.get("category_id")
         category_name = source_details.get("category_name")
 
