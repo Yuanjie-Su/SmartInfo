@@ -11,6 +11,7 @@ import asyncpg
 
 from db.schema_constants import (
     NEWS_CATEGORY_TABLE,
+    NEWS_SOURCE_ID,
     NEWS_SOURCES_TABLE,
     NEWS_CATEGORY_ID,
     NEWS_CATEGORY_NAME,
@@ -108,7 +109,7 @@ class NewsCategoryRepository(BaseRepository):
     async def get_with_source_count(self) -> List[asyncpg.Record]:
         """Gets all categories with count of sources for each category."""
         query_str = f"""
-            SELECT c.{NEWS_CATEGORY_ID}, c.{NEWS_CATEGORY_NAME}, COUNT(s.id) as source_count
+            SELECT c.{NEWS_CATEGORY_ID}, c.{NEWS_CATEGORY_NAME}, COUNT(s.{NEWS_SOURCE_ID}) as source_count
             FROM {NEWS_CATEGORY_TABLE} c
             LEFT JOIN {NEWS_SOURCES_TABLE} s ON c.{NEWS_CATEGORY_ID} = s.{NEWS_SOURCE_CATEGORY_ID}
             GROUP BY c.{NEWS_CATEGORY_ID}, c.{NEWS_CATEGORY_NAME}

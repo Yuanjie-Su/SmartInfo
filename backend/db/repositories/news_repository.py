@@ -101,15 +101,22 @@ class NewsRepository(BaseRepository):
 
         params_list = []
         skipped_count = 0
-        urls_in_batch = set()
+        # Fetch all URLs and convert to a set for efficient lookup (O(1) average)
+        urls_in_db_list = await self.get_all_urls()
+        urls_in_db_set = set(urls_in_db_list)
+
+        processed_urls_in_batch = set()  # Keep track of URLs processed in this batch
 
         for item in items:
             url = item.get("url")
             if not item.get("title") or not url:
+                logger.warning(f"Skipping news item due to missing title or url: {url}")
                 skipped_count += 1
                 continue
-            # Avoid processing duplicates within the same batch
-            if url in urls_in_batch:
+
+            # Check if URL already exists in DB or was already processed in this batch
+            if url in urls_in_db_set or url in processed_urls_in_batch:
+                logger.debug(f"Skipping duplicate URL in batch or DB: {url}")
                 skipped_count += 1
                 continue
 
@@ -122,13 +129,14 @@ class NewsRepository(BaseRepository):
                 item.get("category_id"),
                 item.get("summary", ""),
                 item.get("analysis", ""),
-                item.get("date"),  # 直接使用date值，不进行转换
+                item.get("date"),  # Directly use the date value
                 item.get("content", ""),
             )
             params_list.append(params)
-            urls_in_batch.add(url)
+            processed_urls_in_batch.add(url)  # Mark URL as processed for this batch
 
         if not params_list:
+            logger.info("No valid new items found in the batch to add.")
             return 0, skipped_count
 
         # Change placeholders to $n, use ON CONFLICT DO NOTHING
@@ -145,18 +153,24 @@ class NewsRepository(BaseRepository):
         try:
             # Use _executemany
             # Success means the command executed without raising a DB error
-            await self._executemany(query_str, params_list)
-            # We can report the number attempted as success, conflicts are ignored by DB
-            success_count = len(params_list)
-            logger.info(
-                f"Batch add news attempted for {success_count} items, {skipped_count} skipped beforehand. Conflicts ignored."
-            )
+            # Note: _executemany doesn't return the number of affected rows directly in asyncpg
+            # like execute does. We assume success if no error is raised.
+            # The ON CONFLICT clause handles duplicates gracefully in the DB.
+            if await self._executemany(query_str, params_list):
+                success_count = len(
+                    params_list
+                )  # Count items attempted in the batch insert
+                logger.info(
+                    f"Batch add news attempted for {success_count} items. "
+                    f"{skipped_count} items were skipped beforehand (missing data or duplicates)."
+                    f" DB handled potential conflicts via ON CONFLICT."
+                )
 
         except asyncpg.IntegrityConstraintViolationError as e:
             # This might catch FK violations if IDs are invalid
             logger.error(f"Error during batch add news (check foreign keys): {e}")
-            # Partial success might have occurred before the error
-            success_count = 0  # Or try to estimate based on error context if possible
+            # Cannot reliably determine partial success without more complex logic
+            success_count = 0
         except asyncpg.PostgresError as e:
             logger.error(f"Error in batch add news: {e}")
             success_count = 0
@@ -164,6 +178,9 @@ class NewsRepository(BaseRepository):
             logger.error(f"Unexpected error in batch add news: {e}")
             success_count = 0
 
+        # The success_count here represents items successfully passed to executemany,
+        # not necessarily rows inserted (due to ON CONFLICT).
+        # The skipped_count represents items filtered out *before* the DB call.
         return success_count, skipped_count
 
     # Update return type hint (Dict -> asyncpg.Record)
@@ -302,7 +319,8 @@ class NewsRepository(BaseRepository):
                 logger.warning(
                     f"Delete command for news ID {news_id} executed but status was '{status}'."
                 )
-                return deleted
+
+            return deleted
         except asyncpg.PostgresError as e:
             logger.error(f"Error deleting news item: {e}")
             return False
