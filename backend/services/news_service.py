@@ -3,7 +3,7 @@
 
 """
 NewsService Module
-- Coordinates retrieval, processing, analysis, and storage of news content.
+- Coordinates retrieval, processing, analysis, and storage of news content for specific users.
 - Utilizes an LLM for link extraction and in-depth content summarization.
 """
 
@@ -27,19 +27,20 @@ from core.ws_manager import ws_manager
 from background.tasks.news_tasks import process_source_url_task_celery
 
 from utils.prompt import SYSTEM_PROMPT_ANALYZE_CONTENT
+from models import NewsSourceCreate, NewsCategoryCreate, User  # Import Pydantic models
 
 # Configure module-level logger
 logger = logging.getLogger(__name__)
 
 # Constants for LLM model and token limits
 DEFAULT_MODEL = "deepseek-v3-250324"
-MAX_OUTPUT_TOKENS = 16384  # Max tokens for LLM output
+MAX_OUTPUT_TOKENS = 16384
 MAX_INPUT_TOKENS = 131072 - 2 * MAX_OUTPUT_TOKENS
 
 
 class NewsService:
     """
-    Service class responsible for:
+    Service class responsible for user-specific:
     - Fetching and cleaning HTML content.
     - Converting to Markdown and chunking large texts.
     - Extracting article links via LLM.
@@ -55,13 +56,10 @@ class NewsService:
         source_repo: NewsSourceRepository,
         category_repo: NewsCategoryRepository,
     ):
-        # Initialize database repository interfaces
         self._news_repo = news_repo
         self._source_repo = source_repo
         self._category_repo = category_repo
-        self._llm_pool: Optional[LLMClientPool] = (
-            None  # Will be set later by set_llm_pool method
-        )
+        self._llm_pool: Optional[LLMClientPool] = None
 
     def set_llm_pool(self, llm_pool: LLMClientPool):
         """Set the LLM client pool after initialization"""
@@ -69,23 +67,26 @@ class NewsService:
         logger.info("LLM client pool set for NewsService")
 
     # -------------------------------------------------------------------------
-    # Public CRUD Methods (Pass-through to Repositories)
+    # Public CRUD Methods (User-Aware)
     # -------------------------------------------------------------------------
     # --- News Item Methods ---
-    async def get_news_by_id(self, news_id: int) -> Optional[Dict[str, Any]]:
-        """Get a news item by ID"""
-        record = await self._news_repo.get_by_id(news_id)
+    async def get_news_by_id(
+        self, news_id: int, user_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """Get a news item by ID for a specific user."""
+        record = await self._news_repo.get_by_id(news_id, user_id)
         return dict(record) if record else None
 
     async def get_all_news(
-        self, limit: int = 100, offset: int = 0
+        self, user_id: int, limit: int = 100, offset: int = 0
     ) -> List[Dict[str, Any]]:
-        """Get all news items with pagination"""
-        records = await self._news_repo.get_all(limit, offset)
+        """Get all news items for a specific user with pagination."""
+        records = await self._news_repo.get_all(user_id, limit, offset)
         return [dict(record) for record in records]
 
     async def get_news_with_filters(
         self,
+        user_id: int,  # Add user_id
         category_id: Optional[int] = None,
         source_id: Optional[int] = None,
         has_analysis: Optional[bool] = None,
@@ -93,8 +94,10 @@ class NewsService:
         page_size: int = 20,
         search_term: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """Get news items with filters"""
-        records = await self._news_repo.get_news_with_filters(
+        """Get news items for a specific user with filters."""
+        # Use get_news_with_filters_as_dict which already handles user_id and returns dicts
+        return await self._news_repo.get_news_with_filters_as_dict(
+            user_id=user_id,
             category_id=category_id,
             source_id=source_id,
             analyzed=has_analysis,
@@ -102,234 +105,254 @@ class NewsService:
             page_size=page_size,
             search_term=search_term,
         )
-        return [dict(record) for record in records]
 
     async def update_news(
-        self, news_id: int, news_item: Dict[str, Any]
+        self, news_id: int, user_id: int, news_item: Dict[str, Any]
     ) -> Optional[Dict[str, Any]]:
-        """Update a news item. Not implemented yet."""
-        # TODO: Implement news update logic
+        """Update a news item for a specific user. Not implemented yet."""
+        # TODO: Implement news update logic, ensuring user_id check
+        logger.warning(
+            f"update_news not implemented yet (news_id: {news_id}, user_id: {user_id})"
+        )
+        # Example check:
+        # existing = await self._news_repo.get_by_id(news_id, user_id)
+        # if not existing: return None
+        # ... perform update using self._news_repo.update(...)
         return None
 
-    async def delete_news(self, news_id: int) -> bool:
-        """Delete a news item."""
-        return await self._news_repo.delete(news_id)
+    async def delete_news(self, news_id: int, user_id: int) -> bool:
+        """Delete a news item for a specific user."""
+        return await self._news_repo.delete(news_id, user_id)
 
-    async def clear_all_news(self) -> bool:
-        """Clear all news items."""
-        return await self._news_repo.clear_all()
+    async def clear_all_news_for_user(self, user_id: int) -> bool:
+        """Clear all news items for a specific user."""
+        return await self._news_repo.clear_all_for_user(user_id)
 
     # --- Category Methods ---
-    async def get_all_categories(self) -> List[Dict[str, Any]]:
-        """Get all categories"""
-        records = await self._category_repo._fetchall(
-            """
-            SELECT id, name FROM news_category
-            """
-        )
+    async def get_all_categories(self, user_id: int) -> List[Dict[str, Any]]:
+        """Get all categories for a specific user."""
+        records = await self._category_repo.get_all(user_id)
         return [dict(record) for record in records]
 
-    async def get_all_categories_with_counts(self) -> List[Dict[str, Any]]:
-        """Get all categories with news item counts"""
-        records = await self._category_repo.get_with_source_count()
+    async def get_all_categories_with_counts(
+        self, user_id: int
+    ) -> List[Dict[str, Any]]:
+        """Get all categories for a user with news source counts (also user-specific)."""
+        records = await self._category_repo.get_with_source_count(user_id)
         return [dict(record) for record in records]
 
-    async def get_category_by_id(self, category_id: int) -> Optional[Dict[str, Any]]:
-        """Get a category by ID"""
-        record = await self._category_repo.get_by_id(category_id)
+    async def get_category_by_id(
+        self, category_id: int, user_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """Get a category by ID for a specific user."""
+        record = await self._category_repo.get_by_id(category_id, user_id)
         return dict(record) if record else None
 
-    async def add_category(self, name: str) -> Optional[int]:
-        """Add a new category."""
-        return await self._category_repo.add(name)
+    async def add_category(self, name: str, user_id: int) -> Optional[int]:
+        """Add a new category for a specific user."""
+        return await self._category_repo.add(name, user_id)
 
     async def create_category(
-        self, category_data: Dict[str, Any]
+        self, category_data: NewsCategoryCreate, user_id: int  # Use Pydantic model
     ) -> Optional[Dict[str, Any]]:
-        """Create a new category using data from a dictionary (typically from a Pydantic model)"""
-        name = category_data.get("name", "").strip()
+        """Create a new category for a user using Pydantic model data."""
+        if category_data.user_id != user_id:
+            raise ValueError(
+                "User ID in category data does not match authenticated user."
+            )
+        name = category_data.name.strip()
         if not name:
             return None
 
-        category_id = await self._category_repo.add(name)
+        category_id = await self._category_repo.add(name, user_id)
         if not category_id:
             return None
 
-        # Return a dictionary with the created category data
-        return {"id": category_id, "name": name}
+        return {"id": category_id, "name": name, "user_id": user_id}
 
-    async def update_category(self, category_id: int, new_name: str) -> bool:
-        """Update a category name."""
-        return await self._category_repo.update(category_id, new_name)
+    async def update_category(
+        self, category_id: int, user_id: int, new_name: str
+    ) -> bool:
+        """Update a category name for a specific user."""
+        return await self._category_repo.update(category_id, user_id, new_name)
 
     async def update_category_from_dict(
-        self, category_id: int, category_data: Dict[str, Any]
+        self, category_id: int, user_id: int, category_data: Dict[str, Any]
     ) -> Optional[Dict[str, Any]]:
-        """Update a category using data from a dictionary (typically from a Pydantic model)"""
+        """Update a category for a user using data from a dictionary."""
         new_name = category_data.get("name", "").strip()
         if not new_name:
             return None
 
-        success = await self._category_repo.update(category_id, new_name)
+        success = await self._category_repo.update(category_id, user_id, new_name)
         if not success:
             return None
 
-        # Return the updated category data
-        category = await self._category_repo.get_by_id(category_id)
-        if not category:
-            return None
+        category = await self._category_repo.get_by_id(category_id, user_id)
+        return dict(category) if category else None
 
-        return {"id": category[0], "name": category[1]}
-
-    async def delete_category(self, category_id: int) -> bool:
-        """Delete a category."""
-        # Note: This will cascade delete all sources in this category
-        return await self._category_repo.delete(category_id)
+    async def delete_category(self, category_id: int, user_id: int) -> bool:
+        """Delete a category for a specific user."""
+        return await self._category_repo.delete(category_id, user_id)
 
     # --- Source Methods ---
-    async def get_all_sources(self) -> List[Dict[str, Any]]:
-        """Get all news sources with category information"""
-        records = await self._source_repo.get_all()
+    async def get_all_sources(self, user_id: int) -> List[Dict[str, Any]]:
+        """Get all news sources for a specific user with category information."""
+        records = await self._source_repo.get_all(user_id)
         return [dict(record) for record in records]
 
     async def get_sources_by_category_id(
-        self, category_id: int
+        self, category_id: int, user_id: int
     ) -> List[Dict[str, Any]]:
-        """Get all news sources for a specific category"""
-        records = await self._source_repo.get_by_category(category_id)
+        """Get all news sources for a specific category belonging to a user."""
+        records = await self._source_repo.get_by_category(category_id, user_id)
         return [dict(record) for record in records]
 
-    async def get_source_by_id(self, source_id: int) -> Optional[Dict[str, Any]]:
-        """Get a news source by ID with category information"""
-        record = await self._source_repo.get_by_id(source_id)
+    async def get_source_by_id(
+        self, source_id: int, user_id: int
+    ) -> Optional[Dict[str, Any]]:
+        """Get a news source by ID for a specific user with category information."""
+        record = await self._source_repo.get_by_id(source_id, user_id)
         return dict(record) if record else None
 
     async def add_source(
-        self, name: str, url: str, category_name: str
+        self, name: str, url: str, category_name: str, user_id: int
     ) -> Optional[int]:
-        """Add a news source.
-        Creates the category if it doesn't exist."""
-        # First get or create the category
-        category = await self._category_repo.get_by_name(category_name)
+        """Add a news source for a user. Creates the category if it doesn't exist for the user."""
+        category = await self._category_repo.get_by_name(category_name, user_id)
         if category:
-            category_id = category[0]
+            category_id = category["id"]  # Access by key name
         else:
-            category_id = await self._category_repo.add(category_name)
+            category_id = await self._category_repo.add(category_name, user_id)
             if not category_id:
-                logger.error(f"Failed to create category: {category_name}")
+                logger.error(
+                    f"Failed to create category '{category_name}' for user {user_id}"
+                )
                 return None
 
-        # Now add the source
-        return await self._source_repo.add(name, url, category_id)
+        return await self._source_repo.add(name, url, category_id, user_id)
 
     async def update_source(
-        self, source_id: int, name: str, url: str, category_name: str
+        self, source_id: int, user_id: int, name: str, url: str, category_name: str
     ) -> bool:
-        """Update a news source.
-        Creates the category if it doesn't exist."""
-        # First get or create the category
-        category = await self._category_repo.get_by_name(category_name)
+        """Update a news source for a user. Creates the category if it doesn't exist for the user."""
+        category = await self._category_repo.get_by_name(category_name, user_id)
         if category:
-            category_id = category[0]
+            category_id = category["id"]
         else:
-            category_id = await self._category_repo.add(category_name)
+            category_id = await self._category_repo.add(category_name, user_id)
             if not category_id:
-                logger.error(f"Failed to create category: {category_name}")
+                logger.error(
+                    f"Failed to create category '{category_name}' for user {user_id}"
+                )
                 return False
 
-        # Now update the source
-        return await self._source_repo.update(source_id, name, url, category_id)
+        return await self._source_repo.update(
+            source_id, user_id, name, url, category_id
+        )
 
-    async def delete_source(self, source_id: int) -> bool:
-        """Delete a news source."""
-        return await self._source_repo.delete(source_id)
+    async def delete_source(self, source_id: int, user_id: int) -> bool:
+        """Delete a news source for a specific user."""
+        return await self._source_repo.delete(source_id, user_id)
 
-    async def update_news_analysis(self, news_id: int, analysis_text: str) -> bool:
-        """Update the analysis field of a news item."""
-        return await self._news_repo.update_analysis(news_id, analysis_text)
+    async def update_news_analysis(
+        self, news_id: int, user_id: int, analysis_text: str
+    ) -> bool:
+        """Update the analysis field of a news item for a specific user."""
+        return await self._news_repo.update_analysis(news_id, user_id, analysis_text)
 
     async def create_source(
-        self, source_data: Dict[str, Any]
+        self, source_data: NewsSourceCreate, user_id: int  # Use Pydantic model
     ) -> Optional[Dict[str, Any]]:
-        """Create a news source from dictionary data"""
-        # Extract required fields
-        name = source_data.get("name", "").strip()
-        url = source_data.get("url", "").strip()
-        category_id = source_data.get("category_id")
+        """Create a news source for a user from Pydantic model data."""
+        if source_data.user_id != user_id:
+            raise ValueError(
+                "User ID in source data does not match authenticated user."
+            )
 
-        # Validate required fields
+        name = source_data.name.strip()
+        url = str(source_data.url)  # Convert AnyHttpUrl to string if needed by repo
+        category_id = source_data.category_id
+
         if not name or not url or not category_id:
-            logger.warning("Missing required fields for source creation")
+            logger.warning(
+                f"Missing required fields for source creation for user {user_id}"
+            )
             return None
 
-        # Check if source with name or URL already exists
-        if await self._source_repo.exists_by_name(name):
-            logger.warning(f"Source with name '{name}' already exists")
+        # Check if category exists for the user
+        category = await self._category_repo.get_by_id(category_id, user_id)
+        if not category:
+            logger.warning(f"Category ID {category_id} not found for user {user_id}")
             return None
 
-        if await self._source_repo.exists_by_url(url):
-            logger.warning(f"Source with URL '{url}' already exists")
-            return None
+        # Check if source with name or URL already exists for the user
+        # Assuming get_by_name exists in NewsSourceRepository
+        existing_by_name = await self._source_repo.get_by_name(name, user_id)
+        if existing_by_name:
+            logger.warning(
+                f"Source with name '{name}' already exists for user {user_id}"
+            )
+            return dict(existing_by_name)
 
-        # Add the source to the database
+        existing_by_url = await self._source_repo.get_by_url(url, user_id)
+        if existing_by_url:
+            logger.warning(f"Source with URL '{url}' already exists for user {user_id}")
+            return dict(existing_by_url)
+
         source_id = await self._source_repo.add(
-            name=name, url=url, category_id=category_id
+            name=name, url=url, category_id=category_id, user_id=user_id
         )
         if not source_id:
-            logger.error("Failed to add source to database")
+            logger.error(f"Failed to add source to database for user {user_id}")
             return None
 
-        # Return the newly created source
-        return await self.get_source_by_id(source_id)
+        # Fetch the full source details including category name
+        new_source = await self.get_source_by_id(source_id, user_id)
+        return new_source  # Already a dict
 
     async def fetch_sources_in_background(
         self,
         source_ids: List[int],
+        user_id: int,  # Add user_id
         task_group_id: str,
     ) -> Dict[str, List[str]]:
         """
-        Schedule Celery tasks to fetch and process news from multiple sources.
-
-        Args:
-            source_ids: List of source IDs to process
-            task_group_id: Unique identifier for this batch of tasks
-
-        Returns:
-            Dict with task_group_id and list of Celery task IDs
+        Schedule Celery tasks to fetch and process news from multiple sources for a specific user.
         """
         if not source_ids:
-            logger.warning(f"No source IDs provided for task group {task_group_id}")
+            logger.warning(
+                f"No source IDs provided for task group {task_group_id} for user {user_id}"
+            )
             return {"task_group_id": task_group_id, "task_ids": []}
 
-        # Send overall task initialization update via WebSocket
         await ws_manager.send_update(
             task_group_id,
             {
                 "task_group_id": task_group_id,
                 "status": "initializing",
                 "progress": 0,
-                "message": f"初始化 {len(source_ids)} 个数据源的抓取任务",
+                "message": f"初始化 {len(source_ids)} 个数据源的抓取任务 (用户: {user_id})",
                 "total_sources": len(source_ids),
                 "completed_sources": 0,
             },
         )
 
         logger.info(
-            f"Scheduling Celery tasks for {len(source_ids)} sources in task group {task_group_id}"
+            f"Scheduling Celery tasks for {len(source_ids)} sources in task group {task_group_id} for user {user_id}"
         )
 
-        # Track task IDs and source info for each task
         task_ids = []
         source_info = {}
 
-        # Schedule a Celery task for each source
         for source_id in source_ids:
             try:
-                # Get source details
-                source = await self._source_repo.get_by_id(source_id)
+                # Get source details, ensuring it belongs to the user
+                source = await self._source_repo.get_by_id(source_id, user_id)
                 if not source:
-                    logger.error(f"Source ID {source_id} not found")
-                    # Send error update via WebSocket
+                    logger.error(
+                        f"Source ID {source_id} not found or not owned by user {user_id}"
+                    )
                     await ws_manager.send_update(
                         task_group_id,
                         {
@@ -338,37 +361,36 @@ class NewsService:
                             "status": "error",
                             "step": "error",
                             "progress": 0,
-                            "message": f"源ID {source_id} 未找到",
+                            "message": f"源ID {source_id} 未找到或不属于用户 {user_id}",
                         },
                     )
                     continue
 
-                # Extract required details
-                url = source[2]  # URL is at index 2
-                source_name = source[1]  # Name is at index 1
+                url = source["url"]
+                source_name = source["name"]
 
-                # Create a Celery task
+                # Pass user_id to the Celery task if the task needs it
+                # Assuming the task signature is updated: process_source_url_task_celery(source_id, url, source_name, task_group_id, user_id)
                 task = process_source_url_task_celery.delay(
-                    source_id, url, source_name, task_group_id
+                    source_id, url, source_name, task_group_id, user_id  # Pass user_id
                 )
 
-                # Store the task ID and source info
                 task_ids.append(task.id)
                 source_info[task.id] = {
                     "source_id": source_id,
                     "source_name": source_name,
+                    "user_id": user_id,  # Include user_id if needed by consumer
                 }
 
                 logger.info(
-                    f"Scheduled Celery task for source: {source_name} (ID: {source_id}), task ID: {task.id}"
+                    f"Scheduled Celery task for source: {source_name} (ID: {source_id}, User: {user_id}), task ID: {task.id}"
                 )
 
             except Exception as e:
                 logger.error(
-                    f"Failed to schedule task for source ID {source_id}: {e}",
+                    f"Failed to schedule task for source ID {source_id} (User: {user_id}): {e}",
                     exc_info=True,
                 )
-                # Send error update via WebSocket
                 await ws_manager.send_update(
                     task_group_id,
                     {
@@ -377,72 +399,59 @@ class NewsService:
                         "status": "error",
                         "step": "error",
                         "progress": 0,
-                        "message": f"调度任务失败: {str(e)}",
+                        "message": f"调度任务失败 (用户: {user_id}): {str(e)}",
                     },
                 )
 
-        # Store task_ids and source_info mappings in Redis for the WebSocket endpoint to use
-        # This implementation stores the mappings in a way that the WebSocket endpoint can retrieve them
         task_data = {
             "task_group_id": task_group_id,
             "task_ids": task_ids,
             "source_info": source_info,
+            "user_id": user_id,  # Store user_id with task group data if needed
         }
-
-        # TODO: In a production implementation, store this in Redis
-        # For now, we'll use ws_manager to store task data
-        # This isn't ideal, but provides the necessary mappings without additional dependencies
         await ws_manager.store_task_data(task_group_id, task_data)
 
         return {"task_group_id": task_group_id, "task_ids": task_ids}
 
     async def stream_analysis_for_news_item(
-        self, news_id: int, force: bool = False
+        self, news_id: int, user_id: int, force: bool = False  # Add user_id
     ) -> AsyncGenerator[str, None]:
         """
-        Analyzes a specific news item and streams the results.
-
-        Args:
-            news_id: The ID of the news item to analyze
-            force: If True, reanalyze even if analysis already exists
-
-        Yields:
-            Each chunk of the analysis text as it's generated
-
-        After streaming is complete, saves the full analysis to the database
+        Analyzes a specific news item belonging to a user and streams the results.
         """
         if not self._llm_pool:
             yield "Error: LLM client pool not initialized"
             return
 
-        logger.info(f"Stream analyzing news item with ID: {news_id}")
+        logger.info(f"Stream analyzing news item ID: {news_id} for user {user_id}")
 
         try:
-            # Check if analysis already exists
+            # Check if analysis already exists for this user's item
             if not force:
-                analysis = await self._news_repo.get_analysis_by_id(news_id)
+                # Need get_analysis_by_id in repo to accept user_id
+                analysis = await self._news_repo.get_analysis_by_id(news_id, user_id)
                 if analysis:
-                    logger.info(f"Using existing analysis for news item {news_id}")
+                    logger.info(
+                        f"Using existing analysis for news item {news_id} (User: {user_id})"
+                    )
                     yield analysis
                     return
 
-            # Get the content for analysis
-            news_content = await self._news_repo.get_content_by_id(news_id)
+            # Get the content for analysis, ensuring ownership
+            news_content = await self._news_repo.get_content_by_id(news_id, user_id)
             if not news_content:
-                logger.error(f"No content found for news item {news_id}")
-                yield "Error: No content available for analysis."
+                logger.error(
+                    f"No content found for news item {news_id} or not owned by user {user_id}"
+                )
+                yield "Error: No content available for analysis or item not found."
                 return
 
-            # Prepare prompt for the LLM
             user_prompt = f"""
                 Please analyze the following news content:\n\"\"\"\n{news_content}\n\"\"\"
-                **Write in the same language as the original content** (e.g., if the original content is in Chinese, the analysis should also be in Chinese). 
+                **Write in the same language as the original content** (e.g., if the original content is in Chinese, the analysis should also be in Chinese).
                 """
 
-            # Store the complete analysis text
             full_analysis = ""
-
-            # Get the stream generator from the LLM pool
             stream = await self._llm_pool.stream_completion_content(
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT_ANALYZE_CONTENT},
@@ -452,24 +461,26 @@ class NewsService:
                 temperature=0.7,
             )
 
-            # Stream the analysis through the LLM
             async for chunk in stream:
-                # Add to the full analysis
                 full_analysis += chunk
-                # Stream the chunk to the client
                 yield chunk
 
-            # Save the complete analysis to the database
             if full_analysis:
                 try:
-                    await self._news_repo.update_analysis(news_id, full_analysis)
-                    logger.info(f"Saved analysis for news item {news_id}")
+                    # Pass user_id to update_analysis
+                    await self._news_repo.update_analysis(
+                        news_id, user_id, full_analysis
+                    )
+                    logger.info(
+                        f"Saved analysis for news item {news_id} (User: {user_id})"
+                    )
                 except Exception as e:
                     logger.error(
-                        f"Failed to save analysis for news item {news_id}: {e}"
+                        f"Failed to save analysis for news item {news_id} (User: {user_id}): {e}"
                     )
-                    # No need to yield anything here, the stream has already completed
 
         except Exception as e:
-            logger.error(f"Error in stream_analysis_for_news_item: {e}")
+            logger.error(
+                f"Error in stream_analysis_for_news_item (User: {user_id}): {e}"
+            )
             yield f"Error during analysis: {str(e)}"

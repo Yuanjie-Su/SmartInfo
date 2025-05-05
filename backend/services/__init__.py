@@ -13,9 +13,11 @@ and core components like the LLM client pool.
 from .chat_service import ChatService
 from .news_service import NewsService
 from .setting_service import SettingService
+from .auth_service import AuthService
 
 __all__ = [
     "ChatService",
     "NewsService",
     "SettingService",
+    "AuthService",
 ]

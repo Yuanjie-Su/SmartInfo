@@ -9,6 +9,7 @@ from db.repositories.api_key_repository import ApiKeyRepository
 from db.repositories.system_config_repository import SystemConfigRepository
 from db.repositories.chat_repository import ChatRepository
 from db.repositories.message_repository import MessageRepository
+from db.repositories.user_repository import UserRepository
 
 __all__ = [
     "NewsRepository",
@@ -18,4 +19,5 @@ __all__ = [
     "SystemConfigRepository",
     "ChatRepository",
     "MessageRepository",
-] 
+    "UserRepository",
+]

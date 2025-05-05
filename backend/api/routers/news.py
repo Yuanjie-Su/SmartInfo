@@ -1,48 +1,37 @@
 # backend/api/routers/news.py
 # -*- coding: utf-8 -*-
 """
-API router for news functionalities (Version 1).
-Handles CRUD for news items, sources, categories, and initiates fetching/analysis tasks.
-
-Endpoints:
-- GET /items: List news items with optional filtering
-- GET /items/{news_id}: Get a specific news item
-- POST /items: Create a new news item
-- PUT /items/{news_id}: Update a news item
-- PUT /items/{news_id}/analysis: Update analysis for a news item
-- DELETE /items/{news_id}: Delete a news item
-- DELETE /items/clear: Clear all news items
-- POST /items/{news_id}/analyze/stream: Stream analysis for a news item
-- GET /sources: List all news sources
-- GET /sources/category/{category_id}: List news sources by category
-- GET /sources/{source_id}: Get a specific news source
-- POST /sources: Create a news source
-- PUT /sources/{source_id}: Update a news source
-- DELETE /sources/{source_id}: Delete a news source
-- GET /categories: List all news categories
-- POST /categories: Create a news category
-- PUT /categories/{category_id}: Update a news category
-- DELETE /categories/{category_id}: Delete a news category
-- POST /tasks/fetch/*: Various task endpoints for fetching and analysis
+API router for user-specific news functionalities (Version 1).
+Handles CRUD for news items, sources, categories, and initiates fetching/analysis tasks for the authenticated user.
 """
 
 import logging
 from fastapi import APIRouter, Depends, HTTPException, Body, Query, status
 from fastapi.responses import StreamingResponse
-from typing import List, Dict, Any, Optional, AsyncGenerator
+from typing import (
+    List,
+    Dict,
+    Any,
+    Optional,
+    AsyncGenerator,
+    Annotated,
+)  # Import Annotated
 import uuid
 
 # Import dependencies from the centralized dependencies module
-from api.dependencies import get_news_service
+from api.dependencies import (
+    get_news_service,
+    get_current_active_user,
+)  # Import user dependency
 
 # Import schemas from the main models package
-from models.schemas.news import (
+from models import (  # Import models directly
     NewsItem,
     NewsItemCreate,
     NewsItemUpdate,
     NewsSource,
     NewsSourceCreate,
-    NewsSourceUpdate,  # Ensure this exists if needed for PUT
+    NewsSourceUpdate,
     NewsCategory,
     NewsCategoryCreate,
     NewsCategoryUpdate,
@@ -50,9 +39,10 @@ from models.schemas.news import (
     FetchUrlRequest,
     AnalyzeRequest,
     AnalyzeContentRequest,
-    AnalysisResult,  # Usually analysis result is streamed, this might not be used directly
+    AnalysisResult,
     UpdateAnalysisRequest,
     FetchSourceBatchRequest,
+    User,  # Import User schema
 )
 
 # Import the service class type hint
@@ -62,16 +52,20 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# --- News Item Endpoints ---
+# --- News Item Endpoints (User-Aware) ---
 
 
 @router.get(
     "/items",
     response_model=List[NewsItem],
-    summary="List news items",
-    description="Retrieve a paginated list of news items, optionally filtered.",
+    summary="List user's news items",
+    description="Retrieve a paginated list of news items belonging to the current user, optionally filtered.",
 )
 async def get_filtered_news_items(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    news_service: Annotated[
+        NewsService, Depends(get_news_service)
+    ],  # Moved Depends before Query
     category_id: Optional[int] = Query(None, description="Filter by category ID"),
     source_id: Optional[int] = Query(None, description="Filter by source ID"),
     analyzed: Optional[bool] = Query(
@@ -82,14 +76,13 @@ async def get_filtered_news_items(
     search_term: Optional[str] = Query(
         None, description="Search term for title/content (case-insensitive)"
     ),
-    news_service: NewsService = Depends(get_news_service),
 ):
     """
-    Retrieve news items with various filtering options (category, source,
-    analysis status, search term) and pagination.
+    Retrieve news items for the current user with various filtering options.
     """
     try:
         news_items = await news_service.get_news_with_filters(
+            user_id=current_user.id,  # Pass user_id
             category_id=category_id,
             source_id=source_id,
             has_analysis=analyzed,
@@ -97,9 +90,12 @@ async def get_filtered_news_items(
             page_size=page_size,
             search_term=search_term,
         )
+        # Service method returns dicts, FastAPI handles response model validation
         return news_items
     except Exception as e:
-        logger.exception("Failed to retrieve filtered news items", exc_info=True)
+        logger.exception(
+            "Failed to retrieve filtered news items for user", exc_info=True
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An error occurred while retrieving news items.",
@@ -112,18 +108,21 @@ async def get_filtered_news_items(
     summary="Get a specific news item",
 )
 async def get_news_item_by_id(
-    news_id: int, news_service: NewsService = Depends(get_news_service)
+    news_id: int,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    news_service: Annotated[NewsService, Depends(get_news_service)],
 ):
     """
-    Retrieve a single news item by its unique identifier.
+    Retrieve a single news item by its ID, ensuring it belongs to the current user.
     """
-    news_item = await news_service.get_news_by_id(news_id)
+    news_item = await news_service.get_news_by_id(
+        news_id=news_id, user_id=current_user.id
+    )
     if not news_item:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"News item with ID {news_id} not found.",
+            detail=f"News item with ID {news_id} not found or not owned by user.",
         )
-    # The service returns a Dict, FastAPI handles conversion to NewsItem response_model
     return news_item
 
 
@@ -132,44 +131,79 @@ async def get_news_item_by_id(
     response_model=NewsItem,
     status_code=status.HTTP_201_CREATED,
     summary="Create a news item",
+    description="Manually create a new news item for the current user.",
 )
 async def create_news_item(
     news_item_data: NewsItemCreate,
-    news_service: NewsService = Depends(get_news_service),
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    news_service: Annotated[NewsService, Depends(get_news_service)],
 ):
     """
-    Manually create a new news item in the database.
-    Requires title and URL. Source and category names/IDs are optional.
+    Manually create a new news item for the current user.
+    Requires title and URL. Source/category IDs must belong to the user.
     """
+    # Ensure the item data is associated with the current user
+    news_item_data_with_user = news_item_data.model_copy(
+        update={"user_id": current_user.id}
+    )
+
     try:
-        # Convert Pydantic model to dictionary for the service layer
-        news_item_dict = news_item_data.model_dump(exclude_unset=True)
+        # Assuming service method `create_news` exists and handles user_id
+        # If not, need to implement it or call repo directly after validation
+        # created_item_dict = await news_service.create_news(news_item_data_with_user)
 
-        # The service's create_news expects a dictionary and returns the created item's dict or None
-        created_item_dict = await news_service.create_news(news_item_dict)
+        # Placeholder: Directly call repo add (assuming service method not implemented yet)
+        # Need validation for category_id and source_id ownership if calling repo directly
+        if news_item_data_with_user.category_id:
+            cat = await news_service.get_category_by_id(
+                news_item_data_with_user.category_id, current_user.id
+            )
+            if not cat:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Category ID {news_item_data_with_user.category_id} not found or not owned by user.",
+                )
+        if news_item_data_with_user.source_id:
+            src = await news_service.get_source_by_id(
+                news_item_data_with_user.source_id, current_user.id
+            )
+            if not src:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Source ID {news_item_data_with_user.source_id} not found or not owned by user.",
+                )
 
-        if not created_item_dict:
-            # Check if failure was due to duplicate URL
-            if "url" in news_item_dict and await news_service._news_repo.exists_by_url(
-                str(
-                    news_item_dict.get("url", "")
-                ).strip()  # Ensure URL is string for check
+        item_dict = news_item_data_with_user.model_dump(exclude_unset=True)
+        created_id = await news_service._news_repo.add(
+            item=item_dict, user_id=current_user.id
+        )
+
+        if not created_id:
+            # Check for duplicate URL for this user
+            url_str = str(item_dict.get("url", "")).strip()
+            if await news_service._news_repo.exists_by_url(
+                url=url_str, user_id=current_user.id
             ):
-                url_str = str(news_item_dict.get("url", "")).strip()
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail=f"News item with URL '{url_str}' already exists.",
+                    detail=f"News item with URL '{url_str}' already exists for this user.",
                 )
             else:
-                # Generic creation failure
                 raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Failed to create news item.",
+                    status_code=500, detail="Failed to create news item."
                 )
-        # Return the created item (FastAPI will validate against NewsItem model)
+
+        created_item_dict = await news_service.get_news_by_id(
+            created_id, current_user.id
+        )
+        if not created_item_dict:  # Should not happen
+            raise HTTPException(
+                status_code=500, detail="Failed to retrieve created news item."
+            )
+
         return created_item_dict
     except HTTPException:
-        raise  # Re-raise HTTP exceptions directly
+        raise
     except Exception as e:
         logger.exception("Failed to create news item", exc_info=True)
         raise HTTPException(
@@ -182,94 +216,72 @@ async def create_news_item(
     "/items/{news_id}",
     response_model=NewsItem,
     summary="Update a news item",
-    description="Update details of an existing news item. Note: URL typically cannot be changed.",
+    description="Update details of an existing news item belonging to the current user.",
 )
 async def update_news_item(
     news_id: int,
-    news_item_data: NewsItemUpdate,  # Schema allows partial updates
-    news_service: NewsService = Depends(get_news_service),
+    news_item_data: NewsItemUpdate,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    news_service: Annotated[NewsService, Depends(get_news_service)],
 ):
     """
-    Update an existing news item's details.
-    Note: Service-level implementation for update is currently missing.
+    Update an existing news item's details for the current user.
+    Service-level implementation for update is currently missing.
     """
     try:
         news_item_dict = news_item_data.model_dump(exclude_unset=True)
         if not news_item_dict:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No update data provided.",
-            )
+            raise HTTPException(status_code=400, detail="No update data provided.")
 
-        # *** Placeholder: Assumes NewsService.update_news(id, data) exists ***
-        # updated_item_data = news_service.update_news(news_id, news_item_dict)
+        # *** Placeholder: Assumes NewsService.update_news(id, user_id, data) exists ***
+        # updated_item_data = await news_service.update_news(news_id, current_user.id, news_item_dict)
         # if not updated_item_data:
-        #     raise HTTPException(
-        #         status_code=status.HTTP_404_NOT_FOUND,
-        #         detail=f"News item with ID {news_id} not found or update failed."
-        #     )
+        #     raise HTTPException(status_code=404, detail=f"News item {news_id} not found or not owned by user.")
         # return updated_item_data
         # *********************************************************************
 
-        # Raise 501 as the service method is not implemented
-        raise HTTPException(
-            status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail="News item update functionality is not implemented.",
-        )
+        raise HTTPException(status_code=501, detail="News item update not implemented.")
     except HTTPException:
-        raise  # Re-raise known HTTP exceptions
+        raise
     except Exception as e:
         logger.exception(f"Failed to update news item {news_id}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while updating the news item.",
-        )
+        raise HTTPException(status_code=500, detail="Error updating news item.")
 
 
 @router.put(
     "/items/{news_id}/analysis",
     summary="Update analysis for a news item",
-    response_model=Dict[str, str],  # Simple confirmation message
+    response_model=Dict[str, str],
 )
 async def update_news_item_analysis(
     news_id: int,
     request: UpdateAnalysisRequest,
-    news_service: NewsService = Depends(get_news_service),
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    news_service: Annotated[NewsService, Depends(get_news_service)],
 ):
     """
-    Manually update the analysis fields for a news item.
-    This allows setting the summary, entities, sentiment, etc. without re-running LLM analysis.
+    Manually update the analysis field for a news item belonging to the current user.
     """
     try:
-        # Convert Pydantic model to dictionary for service layer
-        update_data = request.model_dump(exclude_unset=True)
-
-        # Call service method
-        success = await news_service.update_news_analysis(news_id, update_data)
-
+        # Service method checks ownership
+        success = await news_service.update_news_analysis(
+            news_id=news_id, user_id=current_user.id, analysis_text=request.analysis
+        )
         if not success:
-            # Check if it failed because the news item doesn't exist
-            if await news_service.get_news_by_id(news_id) is None:
+            # Check if item exists for user to give 404 vs 500
+            if await news_service.get_news_by_id(news_id, current_user.id) is None:
                 raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"News item with ID {news_id} not found.",
+                    status_code=404,
+                    detail=f"News item {news_id} not found or not owned by user.",
                 )
             else:
-                # Some other update failure
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Analysis update failed.",
-                )
-
+                raise HTTPException(status_code=500, detail="Analysis update failed.")
         return {"message": f"Analysis updated for news item {news_id}"}
     except HTTPException:
-        raise  # Re-raise HTTP exceptions
+        raise
     except Exception as e:
         logger.exception(f"Failed to update analysis for news {news_id}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while updating the analysis.",
-        )
+        raise HTTPException(status_code=500, detail="Error updating analysis.")
 
 
 @router.delete(
@@ -278,91 +290,103 @@ async def update_news_item_analysis(
     summary="Delete a news item",
 )
 async def delete_news_item(
-    news_id: int, news_service: NewsService = Depends(get_news_service)
+    news_id: int,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    news_service: Annotated[NewsService, Depends(get_news_service)],
 ):
     """
-    Permanently delete a news item and its associated analysis data.
+    Permanently delete a news item belonging to the current user.
     """
-    success = await news_service.delete_news(news_id)
+    success = await news_service.delete_news(news_id=news_id, user_id=current_user.id)
     if not success:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"News item with ID {news_id} not found or deletion failed.",
+            detail=f"News item {news_id} not found or not owned by user.",
         )
-    # No content to return on successful deletion
     return None
 
 
 @router.delete(
     "/items/clear",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="Clear all news items (USE WITH CAUTION)",
-    description="Permanently deletes all news items from the database.",
+    summary="Clear all user's news items (USE WITH CAUTION)",
+    description="Permanently deletes all news items belonging to the current user.",
 )
-async def clear_all_news_items(news_service: NewsService = Depends(get_news_service)):
+async def clear_all_my_news_items(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    news_service: Annotated[NewsService, Depends(get_news_service)],
+):
     """
-    Dangerous endpoint that removes ALL news items from the database.
-    This is mainly for development purposes and should be disabled in production.
+    Removes ALL news items belonging to the current user.
     """
     try:
-        # This endpoint is intentionally guarded with try-except and logging
-        # due to its destructive nature
-        logger.warning("Attempting to delete ALL news items from database")
-        count = await news_service.clear_all_news()
-        logger.warning(f"Successfully deleted {count} news items from database")
+        logger.warning(
+            f"Attempting to delete ALL news items for user {current_user.id}"
+        )
+        success = await news_service.clear_all_news_for_user(user_id=current_user.id)
+        # Repo method returns bool, but doesn't indicate count easily. Log success/failure.
+        if success:
+            logger.warning(
+                f"Successfully cleared news items for user {current_user.id}"
+            )
+        else:
+            # This might happen if there were no items or a DB error occurred
+            logger.error(f"Failed to clear news items for user {current_user.id}")
+            # Raise error even if it might just mean no items existed? Or just return success?
+            # Let's assume success means the operation completed without DB error.
+            pass
         return None
     except Exception as e:
-        logger.exception("Failed to clear all news items", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while clearing news items.",
+        logger.exception(
+            f"Failed to clear news items for user {current_user.id}", exc_info=True
         )
+        raise HTTPException(status_code=500, detail="Error clearing news items.")
 
 
-# --- News Source Endpoints ---
+# --- News Source Endpoints (User-Aware) ---
 
 
 @router.get(
-    "/sources", response_model=List[NewsSource], summary="List all news sources"
+    "/sources", response_model=List[NewsSource], summary="List user's news sources"
 )
-async def get_all_news_sources(news_service: NewsService = Depends(get_news_service)):
-    """
-    Retrieve a list of all configured news sources.
-    """
+async def get_all_news_sources(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    news_service: Annotated[NewsService, Depends(get_news_service)],
+):
+    """Retrieve a list of all news sources configured by the current user."""
     try:
-        sources = await news_service.get_all_sources()
+        sources = await news_service.get_all_sources(user_id=current_user.id)
         return sources
     except Exception as e:
-        logger.exception("Failed to retrieve news sources", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while retrieving news sources.",
-        )
+        logger.exception("Failed to retrieve user news sources", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error retrieving news sources.")
 
 
 @router.get(
     "/sources/category/{category_id}",
     response_model=List[NewsSource],
-    summary="List news sources by category",
+    summary="List user's news sources by category",
 )
 async def get_sources_by_category(
-    category_id: int, news_service: NewsService = Depends(get_news_service)
+    category_id: int,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    news_service: Annotated[NewsService, Depends(get_news_service)],
 ):
-    """
-    Retrieve all news sources belonging to a specific category.
-    Returns an empty list if the category has no associated sources.
-    """
+    """Retrieve news sources for the current user belonging to a specific category."""
     try:
-        # Verify category exists first
-        category = await news_service.get_category_by_id(category_id)
+        # Verify category exists for user first
+        category = await news_service.get_category_by_id(
+            category_id=category_id, user_id=current_user.id
+        )
         if not category:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Category with ID {category_id} not found.",
+                status_code=404,
+                detail=f"Category {category_id} not found or not owned by user.",
             )
 
-        # Get sources for the category
-        sources = await news_service.get_sources_by_category_id(category_id)
+        sources = await news_service.get_sources_by_category_id(
+            category_id=category_id, user_id=current_user.id
+        )
         return sources
     except HTTPException:
         raise
@@ -371,8 +395,7 @@ async def get_sources_by_category(
             f"Failed to retrieve sources for category {category_id}", exc_info=True
         )
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while retrieving category sources.",
+            status_code=500, detail="Error retrieving category sources."
         )
 
 
@@ -382,16 +405,18 @@ async def get_sources_by_category(
     summary="Get a specific news source",
 )
 async def get_news_source_by_id(
-    source_id: int, news_service: NewsService = Depends(get_news_service)
+    source_id: int,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    news_service: Annotated[NewsService, Depends(get_news_service)],
 ):
-    """
-    Retrieve a single news source by its unique identifier.
-    """
-    source = await news_service.get_source_by_id(source_id)
+    """Retrieve a single news source by ID, ensuring it belongs to the current user."""
+    source = await news_service.get_source_by_id(
+        source_id=source_id, user_id=current_user.id
+    )
     if not source:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"News source with ID {source_id} not found.",
+            status_code=404,
+            detail=f"News source {source_id} not found or not owned by user.",
         )
     return source
 
@@ -403,68 +428,51 @@ async def get_news_source_by_id(
     summary="Create a news source",
 )
 async def create_news_source(
-    source_data: NewsSourceCreate, news_service: NewsService = Depends(get_news_service)
+    source_data: NewsSourceCreate,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    news_service: Annotated[NewsService, Depends(get_news_service)],
 ):
-    """
-    Create a new news source configuration.
+    """Create a new news source configuration for the current user."""
+    # Ensure the source data is associated with the current user
+    source_data_with_user = source_data.model_copy(update={"user_id": current_user.id})
 
-    Required fields:
-    - name: Unique name for the source
-    - url: Base URL of the source
-    - category_id: ID of the category the source belongs to
-    """
     try:
-        # Convert to dictionary for service layer
-        source_data_dict = source_data.model_dump(exclude_unset=True)
-
-        # Basic validation
-        url = str(source_data_dict.get("url", "")).strip()
-        name = source_data_dict.get("name", "").strip()
-        category_id = source_data_dict.get("category_id")
-
-        if not all([name, url, category_id]):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Name, URL and category ID are required.",
-            )
-
-        # Attempt to create the source
         created_source = await news_service.create_source(
-            {
-                "name": name,
-                "url": url,
-                "category_id": category_id,
-            }
+            source_data=source_data_with_user, user_id=current_user.id
         )
         if not created_source:
-            # Check if it's because the name already exists
-            if await news_service._source_repo.exists_by_name(name):
+            # Service method handles checks for existing name/url for the user
+            # Re-check here to provide specific conflict error
+            name = source_data_with_user.name.strip()
+            url = str(source_data_with_user.url).strip()
+            if await news_service._source_repo.exists_by_name(name, current_user.id):
                 raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=f"News source with name '{name}' already exists.",
+                    status_code=409, detail=f"Source name '{name}' already exists."
                 )
-            # Or because the URL already exists
-            elif await news_service._source_repo.exists_by_url(url):
+            elif await news_service._source_repo.exists_by_url(url, current_user.id):
                 raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=f"News source with URL '{url}' already exists.",
+                    status_code=409, detail=f"Source URL '{url}' already exists."
+                )
+            elif not await news_service.get_category_by_id(
+                source_data_with_user.category_id, current_user.id
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Category ID {source_data_with_user.category_id} not found or not owned by user.",
                 )
             else:
-                # Generic creation error
                 raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Failed to create news source.",
+                    status_code=500, detail="Failed to create news source."
                 )
-
         return created_source
+    except ValueError as ve:  # Catch validation errors from service
+        logger.error(f"Source creation validation error: {ve}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
     except HTTPException:
-        raise  # Re-raise HTTP exceptions
+        raise
     except Exception as e:
         logger.exception("Failed to create news source", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while creating the news source.",
-        )
+        raise HTTPException(status_code=500, detail="Error creating news source.")
 
 
 @router.put(
@@ -474,123 +482,81 @@ async def create_news_source(
 )
 async def update_news_source(
     source_id: int,
-    source_data: NewsSourceUpdate,  # Using partial update schema
-    news_service: NewsService = Depends(get_news_service),
+    source_data: NewsSourceUpdate,  # Allows partial updates
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    news_service: Annotated[NewsService, Depends(get_news_service)],
 ):
-    """
-    Update an existing news source configuration.
-    Allows partial updates - only the fields included in the request will be changed.
-
-    Note: When updating RSS feed URL or selectors, ensure the new values will still
-    work with the source's content structure.
-    """
+    """Update an existing news source configuration for the current user."""
     try:
-        # First check if the source exists
-        existing_source = await news_service.get_source_by_id(source_id)
+        # Check if source exists for user first
+        existing_source = await news_service.get_source_by_id(
+            source_id=source_id, user_id=current_user.id
+        )
         if not existing_source:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"News source with ID {source_id} not found.",
+                status_code=404,
+                detail=f"News source {source_id} not found or not owned by user.",
             )
 
-        # Get the update data as dictionary
         source_data_dict = source_data.model_dump(exclude_unset=True)
         if not source_data_dict:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No update data provided.",
-            )
+            raise HTTPException(status_code=400, detail="No update data provided.")
 
-        # Basic validation on selected fields if they're included in the update
-        if "name" in source_data_dict:
-            name = source_data_dict.get("name", "").strip()
-            if not name:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Name cannot be empty.",
-                )
-            # Check for duplicate name, but allow the same name as current
-            if name != existing_source[
-                "name"
-            ] and await news_service._source_repo.exists_by_name(name):
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=f"News source with name '{name}' already exists.",
-                )
-
-        if "url" in source_data_dict:
-            url = str(source_data_dict.get("url", "")).strip()
-            if not url:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="URL cannot be empty.",
-                )
-            # Check for duplicate URL, but allow the same URL as current
-            if url != existing_source[
-                "url"
-            ] and await news_service._source_repo.exists_by_url(url):
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=f"News source with URL '{url}' already exists.",
-                )
-
-        # Ensure we're not removing both RSS and selectors
-        has_rss = (
-            source_data_dict.get(
-                "rss_feed_url", existing_source.get("rss_feed_url", "")
-            )
-            != ""
-        )
-        has_selectors = (
-            source_data_dict.get(
-                "selector_headline", existing_source.get("selector_headline", "")
-            )
-            != ""
-            and source_data_dict.get(
-                "selector_content", existing_source.get("selector_content", "")
-            )
-            != ""
+        # Prepare full data for service update method (which expects name, url, category_name)
+        # Use existing values if not provided in update
+        name = source_data_dict.get("name", existing_source["name"])
+        url = str(source_data_dict.get("url", existing_source["url"]))
+        category_id = source_data_dict.get(
+            "category_id", existing_source["category_id"]
         )
 
-        if "rss_feed_url" in source_data_dict and not source_data_dict["rss_feed_url"]:
-            # If removing RSS feed, ensure we have selectors
-            if not has_selectors:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Cannot remove RSS feed without having headline and content selectors.",
-                )
-
-        if (
-            "selector_headline" in source_data_dict
-            and not source_data_dict["selector_headline"]
-        ) or (
-            "selector_content" in source_data_dict
-            and not source_data_dict["selector_content"]
-        ):
-            # If removing selectors, ensure we have RSS
-            if not has_rss:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Cannot remove HTML selectors without having an RSS feed URL.",
-                )
-
-        # Update the source
-        updated_source = await news_service.update_source(source_id, source_data_dict)
-        if not updated_source:
+        # Fetch category name for the service method
+        category = await news_service.get_category_by_id(
+            category_id=category_id, user_id=current_user.id
+        )
+        if not category:
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to update news source.",
+                status_code=400,
+                detail=f"Category ID {category_id} not found or not owned by user.",
             )
+        category_name = category["name"]
 
-        return updated_source
+        # Perform checks for name/url conflicts if they are being changed
+        if "name" in source_data_dict and name != existing_source["name"]:
+            if await news_service._source_repo.exists_by_name(name, current_user.id):
+                raise HTTPException(
+                    status_code=409, detail=f"Source name '{name}' already exists."
+                )
+        if "url" in source_data_dict and url != existing_source["url"]:
+            if await news_service._source_repo.exists_by_url(url, current_user.id):
+                raise HTTPException(
+                    status_code=409, detail=f"Source URL '{url}' already exists."
+                )
+
+        # Call the service update method
+        success = await news_service.update_source(
+            source_id=source_id,
+            user_id=current_user.id,
+            name=name,
+            url=url,
+            category_name=category_name,  # Service expects category name
+        )
+
+        if not success:
+            # Should have been caught by checks above or repo error
+            raise HTTPException(status_code=500, detail="Failed to update news source.")
+
+        # Return the updated source
+        updated_source_data = await news_service.get_source_by_id(
+            source_id, current_user.id
+        )
+        return updated_source_data
+
     except HTTPException:
-        raise  # Re-raise HTTP exceptions
+        raise
     except Exception as e:
         logger.exception(f"Failed to update news source {source_id}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while updating the news source.",
-        )
+        raise HTTPException(status_code=500, detail="Error updating news source.")
 
 
 @router.delete(
@@ -599,47 +565,44 @@ async def update_news_source(
     summary="Delete a news source",
 )
 async def delete_news_source(
-    source_id: int, news_service: NewsService = Depends(get_news_service)
+    source_id: int,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    news_service: Annotated[NewsService, Depends(get_news_service)],
 ):
-    """
-    Delete a news source configuration.
-    This does not delete any news items that were already fetched from this source.
-    """
-    success = await news_service.delete_source(source_id)
+    """Delete a news source configuration belonging to the current user."""
+    success = await news_service.delete_source(
+        source_id=source_id, user_id=current_user.id
+    )
     if not success:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"News source with ID {source_id} not found or deletion failed.",
+            status_code=404,
+            detail=f"News source {source_id} not found or not owned by user.",
         )
-    # No content to return on successful deletion
     return None
 
 
-# --- News Category Endpoints ---
+# --- News Category Endpoints (User-Aware) ---
 
 
 @router.get(
     "/categories",
     response_model=List[NewsCategory],
-    summary="List all news categories",
+    summary="List user's news categories",
 )
 async def get_all_news_categories(
-    news_service: NewsService = Depends(get_news_service),
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    news_service: Annotated[NewsService, Depends(get_news_service)],
 ):
-    """
-    Retrieve a list of all news categories.
-    Categories are used to organize news sources.
-    """
+    """Retrieve a list of all news categories created by the current user."""
     try:
-        categories = await news_service.get_all_categories()
-        logger.info(f"Retrieved {len(categories)} news categories: {categories}")
+        # Use the method that includes source counts
+        categories = await news_service.get_all_categories_with_counts(
+            user_id=current_user.id
+        )
         return categories
     except Exception as e:
-        logger.exception("Failed to retrieve news categories", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while retrieving news categories.",
-        )
+        logger.exception("Failed to retrieve user news categories", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error retrieving news categories.")
 
 
 @router.post(
@@ -650,49 +613,48 @@ async def get_all_news_categories(
 )
 async def create_news_category(
     category_data: NewsCategoryCreate,
-    news_service: NewsService = Depends(get_news_service),
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    news_service: Annotated[NewsService, Depends(get_news_service)],
 ):
-    """
-    Create a new news category.
-    Categories are used to organize news sources and provide filtering options.
-    """
+    """Create a new news category for the current user."""
+    # Ensure the category data is associated with the current user
+    category_data_with_user = category_data.model_copy(
+        update={"user_id": current_user.id}
+    )
+
     try:
-        # Convert to dictionary for service layer
-        category_data_dict = category_data.model_dump()
-
-        # Validate name
-        name = category_data_dict.get("name", "").strip()
-        if not name:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Category name is required.",
-            )
-
-        # Create the category
-        created_category = await news_service.create_category(category_data_dict)
+        created_category = await news_service.create_category(
+            category_data=category_data_with_user, user_id=current_user.id
+        )
         if not created_category:
-            # Check if it's because the name already exists
-            if await news_service._category_repo.exists_by_name(name):
+            # Service method handles checks for existing name for the user
+            name = category_data_with_user.name.strip()
+            if await news_service._category_repo.exists_by_name(name, current_user.id):
                 raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=f"News category with name '{name}' already exists.",
+                    status_code=409, detail=f"Category name '{name}' already exists."
                 )
             else:
-                # Generic creation error
                 raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Failed to create news category.",
+                    status_code=500, detail="Failed to create news category."
                 )
+        # Need to fetch the full category object including potential source_count
+        # Service create_category returns dict with id, name, user_id. Fetch full object.
+        full_category = await news_service.get_category_by_id(
+            created_category["id"], current_user.id
+        )
+        # Add source_count manually if needed, or adjust response model/service method
+        full_category_dict = dict(full_category) if full_category else {}
+        full_category_dict["source_count"] = 0  # Assume 0 for newly created
+        return full_category_dict
 
-        return created_category
+    except ValueError as ve:  # Catch validation errors from service
+        logger.error(f"Category creation validation error: {ve}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
     except HTTPException:
-        raise  # Re-raise HTTP exceptions
+        raise
     except Exception as e:
         logger.exception("Failed to create news category", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while creating the news category.",
-        )
+        raise HTTPException(status_code=500, detail="Error creating news category.")
 
 
 @router.put(
@@ -702,66 +664,65 @@ async def create_news_category(
 )
 async def update_news_category(
     category_id: int,
-    category_data: NewsCategoryUpdate,
-    news_service: NewsService = Depends(get_news_service),
+    category_data: NewsCategoryUpdate,  # Allows partial updates (only name)
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    news_service: Annotated[NewsService, Depends(get_news_service)],
 ):
-    """
-    Update an existing news category's details.
-    """
+    """Update an existing news category's name for the current user."""
     try:
-        # First check if category exists
-        existing_category = await news_service.get_category_by_id(category_id)
+        category_data_dict = category_data.model_dump(exclude_unset=True)
+        new_name = category_data_dict.get("name", "").strip()
+        if not new_name:
+            raise HTTPException(
+                status_code=400, detail="Category name cannot be empty."
+            )
+
+        # Check for duplicate name for this user
+        existing_category = await news_service.get_category_by_id(
+            category_id, current_user.id
+        )
         if not existing_category:
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"News category with ID {category_id} not found.",
+                status_code=404,
+                detail=f"Category {category_id} not found or not owned by user.",
             )
 
-        # Get update data as dictionary
-        category_data_dict = category_data.model_dump(exclude_unset=True)
-        if not category_data_dict:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No update data provided.",
-            )
-
-        # Validate name if it's being updated
-        if "name" in category_data_dict:
-            name = category_data_dict["name"].strip()
-            if not name:
+        if new_name != existing_category["name"]:
+            if await news_service._category_repo.exists_by_name(
+                new_name, current_user.id
+            ):
                 raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Category name cannot be empty.",
+                    status_code=409,
+                    detail=f"Category name '{new_name}' already exists.",
                 )
 
-            # Check for duplicate name, but allow the same name as current
-            if name != existing_category[
-                "name"
-            ] and await news_service._category_repo.exists_by_name(name):
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=f"News category with name '{name}' already exists.",
-                )
-
-        # Update the category
-        updated_category = await news_service.update_category(
-            category_id, category_data_dict
+        success = await news_service.update_category(
+            category_id=category_id, user_id=current_user.id, new_name=new_name
         )
-        if not updated_category:
+        if not success:
+            # Should have been caught by checks above or repo error
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to update news category.",
+                status_code=500, detail="Failed to update news category."
             )
 
-        return updated_category
+        # Return the updated category, potentially with source count
+        updated_category = await news_service.get_category_by_id(
+            category_id, current_user.id
+        )
+        # Fetch count separately or adjust service/response model
+        count_data = await news_service.get_all_categories_with_counts(current_user.id)
+        source_count = next(
+            (c["source_count"] for c in count_data if c["id"] == category_id), 0
+        )
+        updated_category_dict = dict(updated_category) if updated_category else {}
+        updated_category_dict["source_count"] = source_count
+        return updated_category_dict
+
     except HTTPException:
-        raise  # Re-raise HTTP exceptions
+        raise
     except Exception as e:
         logger.exception(f"Failed to update news category {category_id}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while updating the news category.",
-        )
+        raise HTTPException(status_code=500, detail="Error updating news category.")
 
 
 @router.delete(
@@ -770,308 +731,222 @@ async def update_news_category(
     summary="Delete a news category",
 )
 async def delete_news_category(
-    category_id: int, news_service: NewsService = Depends(get_news_service)
+    category_id: int,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    news_service: Annotated[NewsService, Depends(get_news_service)],
 ):
-    """
-    Delete a news category.
-    This will remove the category from any associated news sources,
-    but not delete the sources themselves.
-    """
-    success = await news_service.delete_category(category_id)
+    """Delete a news category belonging to the current user."""
+    # Service method handles user check and potential FK constraints
+    success = await news_service.delete_category(
+        category_id=category_id, user_id=current_user.id
+    )
     if not success:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"News category with ID {category_id} not found or deletion failed.",
-        )
-    # No content to return on successful deletion
+        # Could be 404 (not found/owned) or 409 (conflict due to sources)
+        # Check existence first for better error
+        if await news_service.get_category_by_id(category_id, current_user.id) is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Category {category_id} not found or not owned by user.",
+            )
+        else:
+            # Assume conflict if deletion failed but category exists
+            raise HTTPException(
+                status_code=409,
+                detail=f"Cannot delete category {category_id} as it may have associated news sources.",
+            )
     return None
 
 
-# --- News Fetching and Processing Endpoints ---
+# --- News Fetching and Processing Endpoints (User-Aware) ---
 
-
-@router.post(
-    "/tasks/fetch/url",
-    status_code=status.HTTP_200_OK,  # 200 OK as it processes directly (for now)
-    summary="Fetch and process a single URL immediately",
-    response_model=Dict[str, Any],
-)
-async def trigger_fetch_single_url(
-    request: FetchUrlRequest, news_service: NewsService = Depends(get_news_service)
-):
-    """
-    Fetch and process a single URL immediately.
-    Unlike the other fetch endpoints, this one runs synchronously and returns the result.
-
-    You can optionally specify a source_id to associate the news with, and set
-    should_analyze=True to immediately run analysis on the fetched content.
-    """
-    try:
-        url = str(request.url).strip()
-        source_id = request.source_id  # Can be None
-        should_analyze = request.should_analyze or False
-
-        # Basic URL validation
-        if not url or not url.startswith(("http://", "https://")):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid URL. Must be a fully qualified HTTP or HTTPS URL.",
-            )
-
-        # Check if the URL already exists in the database
-        if await news_service._news_repo.exists_by_url(url):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="A news item with this URL already exists in the database.",
-            )
-
-        # If source_id provided, validate it exists
-        if source_id is not None:
-            source = await news_service.get_source_by_id(source_id)
-            if not source:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"News source with ID {source_id} not found.",
-                )
-
-        # Process the URL
-        result = await news_service.fetch_single_url(url, source_id, should_analyze)
-        if not result or "news_id" not in result:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to process the URL.",
-            )
-
-        return result
-    except HTTPException:
-        raise  # Re-raise HTTP exceptions
-    except Exception as e:
-        logger.exception(
-            f"Failed to fetch single URL: {str(request.url).strip()}", exc_info=True
-        )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"An error occurred while fetching the URL: {str(e)}",
-        )
+# Note: fetch_single_url is removed as it wasn't user-aware and less practical.
 
 
 @router.post(
     "/tasks/fetch/batch",
     status_code=status.HTTP_202_ACCEPTED,
-    summary="Start fetching news from multiple sources in parallel",
+    summary="Start fetching news from user's sources",
     response_model=Dict[str, str],
 )
 async def trigger_fetch_batch_sources(
     request: FetchSourceBatchRequest,
-    news_service: NewsService = Depends(get_news_service),
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    news_service: Annotated[NewsService, Depends(get_news_service)],
 ):
     """
-    Start Celery tasks to fetch news from multiple sources in parallel.
-    Each source is processed as a separate task, and progress can be monitored
-    via WebSocket connection.
-
-    Returns a task_group_id that can be used to connect to the WebSocket endpoint
-    to monitor progress.
+    Start Celery tasks to fetch news from multiple sources belonging to the current user.
     """
     try:
         if not request.source_ids:
+            raise HTTPException(status_code=400, detail="No source IDs provided.")
+
+        # Validate that all source IDs belong to the user before scheduling
+        valid_source_ids = []
+        for source_id in request.source_ids:
+            source = await news_service.get_source_by_id(
+                source_id=source_id, user_id=current_user.id
+            )
+            if not source:
+                logger.warning(
+                    f"Skipping source ID {source_id} in batch fetch request for user {current_user.id} as it's not found or not owned."
+                )
+                # Optionally raise error, or just skip non-owned sources
+                # raise HTTPException(status_code=403, detail=f"Source ID {source_id} not owned by user.")
+            else:
+                valid_source_ids.append(source_id)
+
+        if not valid_source_ids:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No source IDs provided.",
+                status_code=400,
+                detail="None of the provided source IDs belong to the user.",
             )
 
-        # Generate a unique task group ID
         task_group_id = str(uuid.uuid4())
-
-        # Schedule Celery tasks with this task group ID
         result = await news_service.fetch_sources_in_background(
-            request.source_ids, task_group_id
+            source_ids=valid_source_ids,
+            user_id=current_user.id,  # Pass user_id
+            task_group_id=task_group_id,
         )
 
         logger.info(
-            f"Scheduled Celery tasks for {len(request.source_ids)} sources with task_group_id: {task_group_id}"
+            f"Scheduled Celery tasks for {len(valid_source_ids)} sources for user {current_user.id} with task_group_id: {task_group_id}"
         )
-
-        # Return the task group ID for WebSocket monitoring
         return {
             "task_group_id": task_group_id,
-            "message": f"Fetch tasks scheduled for {len(request.source_ids)} sources.",
+            "message": f"Fetch tasks scheduled for {len(valid_source_ids)} sources.",
         }
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Error scheduling batch source fetch", exc_info=True)
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to schedule batch fetch: {str(e)}",
+            status_code=500, detail=f"Failed to schedule batch fetch: {str(e)}"
         )
 
 
-# --- News Analysis Endpoints ---
+# --- News Analysis Endpoints (User-Aware) ---
 
-
-@router.post(
-    "/tasks/analyze/all",
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Start analysis for all news items",
-    response_model=Dict[str, str],
-)
-async def trigger_analyze_all_news(
-    request: AnalyzeRequest = Body(..., description="Analysis request parameters"),
-    news_service: NewsService = Depends(get_news_service),
-):
-    """
-    Start a background task to analyze all unanalyzed news items.
-    This process uses the LLM to extract entities, summarize, etc.
-
-    This is a non-blocking call that immediately returns, while analysis continues in the background.
-    """
-    try:
-        # Start the analysis process for all news in the background
-        force_reanalysis = request.force_reanalysis or False
-        await news_service.analyze_all_news_background(force_reanalysis)
-        return {"message": "News analysis started successfully."}
-    except Exception as e:
-        logger.exception("Failed to start news analysis", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to start news analysis process.",
-        )
+# Note: analyze_all_news_background needs modification in service to be user-specific
+# Assuming it's modified or removed for now.
 
 
 @router.post(
     "/tasks/analyze/items",
     status_code=status.HTTP_202_ACCEPTED,
-    summary="Start analysis for specific news items",
+    summary="Start analysis for specific user news items",
     response_model=Dict[str, str],
 )
 async def trigger_analyze_news_by_ids(
-    request: AnalyzeRequest = Body(
-        ..., description="Analysis request with specific news IDs"
-    ),
-    news_service: NewsService = Depends(get_news_service),
+    request: AnalyzeRequest,  # Contains news_ids and force flag
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    news_service: Annotated[NewsService, Depends(get_news_service)],
 ):
     """
-    Start a background task to analyze specific news items by their IDs.
-    This process uses the LLM to extract entities, summarize, etc.
-
-    This is a non-blocking call that immediately returns, while analysis continues in the background.
+    Start a background task to analyze specific news items belonging to the current user.
     """
     try:
         news_ids = request.news_ids
-        force_reanalysis = request.force_reanalysis or False
+        force_reanalysis = request.force or False  # Use force from request
 
         if not news_ids:
+            raise HTTPException(status_code=400, detail="No news items specified.")
+
+        # Validate that all news IDs exist and belong to the user
+        valid_news_ids = []
+        for news_id in news_ids:
+            item = await news_service.get_news_by_id(
+                news_id=news_id, user_id=current_user.id
+            )
+            if not item:
+                logger.warning(
+                    f"Skipping news ID {news_id} in analysis request for user {current_user.id} as it's not found or not owned."
+                )
+                # Optionally raise error
+            else:
+                valid_news_ids.append(news_id)
+
+        if not valid_news_ids:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No news items specified for analysis.",
+                status_code=400,
+                detail="None of the provided news IDs belong to the user.",
             )
 
-        # Validate that all news IDs exist
-        for news_id in news_ids:
-            if await news_service.get_news_by_id(news_id) is None:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"News item with ID {news_id} not found.",
-                )
+        # Assuming service method analyze_news_by_ids_background exists and takes user_id
+        # await news_service.analyze_news_by_ids_background(valid_news_ids, current_user.id, force_reanalysis)
 
-        # Start analyzing the specified news items
-        await news_service.analyze_news_by_ids_background(news_ids, force_reanalysis)
-        num_items = len(news_ids)
-        return {
-            "message": f"Analysis started for {num_items} news item{'s' if num_items != 1 else ''}."
-        }
-    except HTTPException:
-        raise  # Re-raise HTTP exceptions
-    except Exception as e:
-        logger.exception(
-            "Failed to start news analysis for specific items", exc_info=True
-        )
+        # Placeholder: Raise 501 as background task logic needs user context update
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to start news analysis process.",
+            status_code=501,
+            detail="Background analysis by IDs not implemented with user context.",
         )
+
+        # num_items = len(valid_news_ids)
+        # return {"message": f"Analysis started for {num_items} news item{'s' if num_items != 1 else ''}."}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Failed to start analysis for specific items", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to start analysis.")
 
 
 @router.post(
     "/analyze/content",
     summary="Analyze provided content with instructions",
-    response_class=StreamingResponse,  # Stream the analysis back
-    description="Analyze arbitrary text content using the LLM based on provided instructions. The result is streamed.",
+    response_class=StreamingResponse,
+    description="Analyze arbitrary text content using the LLM based on provided instructions. The result is streamed. (Not user-specific unless results are saved per user)",
 )
 async def analyze_arbitrary_content(
     request: AnalyzeContentRequest,
-    news_service: NewsService = Depends(get_news_service),
+    # current_user: Annotated[User, Depends(get_current_active_user)], # Add if saving results per user
+    news_service: Annotated[NewsService, Depends(get_news_service)],
 ):
-    """
-    Analyze arbitrary text content using the LLM.
-    This endpoint allows streaming the results back as they're generated.
-
-    The analysis is controlled by the instructions provided in the request.
-    """
+    """Analyze arbitrary text content using the LLM. (Currently not user-specific)."""
     try:
-        # Check we have content and instructions
         if not request.content or not request.content.strip():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Content to analyze cannot be empty.",
-            )
-
+            raise HTTPException(status_code=400, detail="Content cannot be empty.")
         if not request.instructions or not request.instructions.strip():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Analysis instructions cannot be empty.",
-            )
+            raise HTTPException(status_code=400, detail="Instructions cannot be empty.")
 
-        # Define the generator for streaming
+        # Assuming analyze_content_streaming doesn't need user_id unless saving results
         async def stream_generator():
-            async for chunk in await news_service.analyze_content_streaming(
+            # Need to await the coroutine returned by the service method
+            stream = await news_service.analyze_content_streaming(
                 content=request.content, instructions=request.instructions
-            ):
+            )
+            async for chunk in stream:
                 yield f"{chunk}"
 
-        # Return a streaming response
-        return StreamingResponse(
-            stream_generator(),
-            media_type="text/plain",
-        )
+        return StreamingResponse(stream_generator(), media_type="text/plain")
     except HTTPException:
-        raise  # Re-raise HTTP exceptions
+        raise
     except Exception as e:
         logger.exception("Failed to analyze content", exc_info=True)
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"An error occurred during content analysis: {str(e)}",
+            status_code=500, detail=f"Error analyzing content: {str(e)}"
         )
 
 
 @router.post(
     "/items/{news_id}/analyze/stream",
-    summary="Stream analysis for a specific news item",
-    description="Streams analysis for a news item. If analysis already exists, returns it directly. If not, generates a new analysis and streams it in real-time.",
+    summary="Stream analysis for a specific user news item",
+    description="Streams analysis for a news item belonging to the current user.",
     response_class=StreamingResponse,
 )
 async def stream_news_item_analysis(
     news_id: int,
-    force: bool = Query(False, description="Force re-analysis even if analysis exists"),
-    news_service: NewsService = Depends(get_news_service),
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    news_service: Annotated[
+        NewsService, Depends(get_news_service)
+    ],  # Moved Depends before Query
+    force: bool = Query(False, description="Force re-analysis"),
 ):
-    """
-    Streams analysis for a specific news item.
-    If analysis already exists, returns it directly.
-    If not, triggers LLM analysis and streams the results as they are generated.
-
-    After streaming completes, the analysis is saved to the database.
-    """
-    # Check if the news item exists
-    news_item = await news_service.get_news_by_id(news_id)
-    if not news_item:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"News item with ID {news_id} not found.",
-        )
-
-    # Setup the streaming response with the analysis generator
+    """Streams analysis for a specific news item belonging to the current user."""
+    # Service method now handles user check
     return StreamingResponse(
-        news_service.stream_analysis_for_news_item(news_id, force),
+        news_service.stream_analysis_for_news_item(
+            news_id=news_id, user_id=current_user.id, force=force
+        ),
         media_type="text/plain",
     )

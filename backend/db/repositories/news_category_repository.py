@@ -16,7 +16,13 @@ from db.schema_constants import (
     NEWS_CATEGORY_ID,
     NEWS_CATEGORY_NAME,
     NEWS_SOURCE_CATEGORY_ID,
+    # NEWS_CATEGORY_USER_ID, # Conceptually adding user_id
 )
+
+# Note: Assuming 'user_id' column exists conceptually in NEWS_CATEGORY_TABLE and NEWS_SOURCES_TABLE
+NEWS_CATEGORY_USER_ID = "user_id"
+NEWS_SOURCE_USER_ID = "user_id"  # Needed for join in get_with_source_count
+
 from db.repositories.base_repository import BaseRepository
 
 logger = logging.getLogger(__name__)
@@ -25,146 +31,170 @@ logger = logging.getLogger(__name__)
 class NewsCategoryRepository(BaseRepository):
     """Repository for news_category table operations."""
 
-    async def add(self, name: str) -> Optional[int]:
-        """Adds a new category. Returns the new ID or existing ID if conflict."""
+    async def add(self, name: str, user_id: int) -> Optional[int]:
+        """Adds a new category for a user. Returns the new ID or existing ID if conflict."""
         query_insert = f"""
-            INSERT INTO {NEWS_CATEGORY_TABLE} ({NEWS_CATEGORY_NAME}) VALUES ($1)
-            ON CONFLICT ({NEWS_CATEGORY_NAME}) DO NOTHING
+            INSERT INTO {NEWS_CATEGORY_TABLE} ({NEWS_CATEGORY_NAME}, {NEWS_CATEGORY_USER_ID}) VALUES ($1, $2)
+            ON CONFLICT ({NEWS_CATEGORY_NAME}, {NEWS_CATEGORY_USER_ID}) DO NOTHING
             RETURNING {NEWS_CATEGORY_ID}
         """
-        query_select = f"SELECT {NEWS_CATEGORY_ID} FROM {NEWS_CATEGORY_TABLE} WHERE {NEWS_CATEGORY_NAME} = $1"
+        query_select = f"SELECT {NEWS_CATEGORY_ID} FROM {NEWS_CATEGORY_TABLE} WHERE {NEWS_CATEGORY_NAME} = $1 AND {NEWS_CATEGORY_USER_ID} = $2"
+        params_insert = (name, user_id)
+        params_select = (name, user_id)
 
         try:
-            # Use _fetchone for RETURNING id
-            record = await self._fetchone(query_insert, (name,))
+            record = await self._fetchone(query_insert, params_insert)
             inserted_id = record[0] if record else None
 
             if inserted_id is not None:
-                logger.info(f"Added news category '{name}' with ID {inserted_id}.")
+                logger.info(
+                    f"Added news category '{name}' with ID {inserted_id} for user {user_id}."
+                )
                 return inserted_id
             else:
-                logger.debug(f"Category '{name}' likely already exists. Fetching ID.")
-                # Use _fetchone for SELECT id
-                existing_record = await self._fetchone(query_select, (name,))
+                logger.debug(
+                    f"Category '{name}' for user {user_id} likely already exists. Fetching ID."
+                )
+                existing_record = await self._fetchone(query_select, params_select)
                 existing_id = existing_record[0] if existing_record else None
                 if existing_id is not None:
                     logger.debug(
-                        f"Found existing category '{name}' with ID {existing_id}."
+                        f"Found existing category '{name}' with ID {existing_id} for user {user_id}."
                     )
                     return existing_id
                 else:
                     logger.error(
-                        f"Category '{name}' conflict occurred but failed to fetch existing ID."
+                        f"Category '{name}' conflict for user {user_id} occurred but failed to fetch existing ID."
                     )
                     return None
 
         except asyncpg.PostgresError as e:
-            logger.error(f"Error adding news category: {e}")
+            logger.error(f"Error adding news category for user {user_id}: {e}")
             return None
         except Exception as e:
-            logger.error(f"Unexpected error adding news category: {e}")
+            logger.error(
+                f"Unexpected error adding news category for user {user_id}: {e}"
+            )
             return None
 
-    async def get_by_id(self, category_id: int) -> Optional[asyncpg.Record]:
-        """Gets a category by its ID."""
-        query_str = f"SELECT {NEWS_CATEGORY_ID}, {NEWS_CATEGORY_NAME} FROM {NEWS_CATEGORY_TABLE} WHERE {NEWS_CATEGORY_ID} = $1"
-
+    async def get_by_id(
+        self, category_id: int, user_id: int
+    ) -> Optional[asyncpg.Record]:
+        """Gets a category by its ID for a specific user."""
+        query_str = f"SELECT {NEWS_CATEGORY_ID}, {NEWS_CATEGORY_NAME}, {NEWS_CATEGORY_USER_ID} FROM {NEWS_CATEGORY_TABLE} WHERE {NEWS_CATEGORY_ID} = $1 AND {NEWS_CATEGORY_USER_ID} = $2"
         try:
-            return await self._fetchone(query_str, (category_id,))
+            return await self._fetchone(query_str, (category_id, user_id))
         except Exception as e:
-            logger.error(f"Error getting category by ID: {e}")
+            logger.error(
+                f"Error getting category by ID {category_id} for user {user_id}: {e}"
+            )
             return None
 
-    async def get_by_name(self, name: str) -> Optional[asyncpg.Record]:
-        """Gets a category by its name."""
-        query_str = f"SELECT {NEWS_CATEGORY_ID}, {NEWS_CATEGORY_NAME} FROM {NEWS_CATEGORY_TABLE} WHERE {NEWS_CATEGORY_NAME} = $1"
-
+    async def get_by_name(self, name: str, user_id: int) -> Optional[asyncpg.Record]:
+        """Gets a category by its name for a specific user."""
+        query_str = f"SELECT {NEWS_CATEGORY_ID}, {NEWS_CATEGORY_NAME}, {NEWS_CATEGORY_USER_ID} FROM {NEWS_CATEGORY_TABLE} WHERE {NEWS_CATEGORY_NAME} = $1 AND {NEWS_CATEGORY_USER_ID} = $2"
         try:
-            return await self._fetchone(query_str, (name,))
+            return await self._fetchone(query_str, (name, user_id))
         except Exception as e:
-            logger.error(f"Error getting category by name: {e}")
+            logger.error(
+                f"Error getting category by name '{name}' for user {user_id}: {e}"
+            )
             return None
 
-    async def exists_by_name(self, name: str) -> bool:
-        """Checks if a category with the given name exists."""
-        query_str = f"SELECT 1 FROM {NEWS_CATEGORY_TABLE} WHERE {NEWS_CATEGORY_NAME} = $1 LIMIT 1"
+    async def exists_by_name(self, name: str, user_id: int) -> bool:
+        """Checks if a category with the given name exists for a specific user."""
+        query_str = f"SELECT 1 FROM {NEWS_CATEGORY_TABLE} WHERE {NEWS_CATEGORY_NAME} = $1 AND {NEWS_CATEGORY_USER_ID} = $2 LIMIT 1"
         try:
-            # Use _fetchone
-            record = await self._fetchone(query_str, (name,))
+            record = await self._fetchone(query_str, (name, user_id))
             return record is not None
         except Exception as e:
-            logger.error(f"Error checking if category exists by name: {e}")
+            logger.error(
+                f"Error checking if category exists by name for user {user_id}: {e}"
+            )
             return False
 
-    async def get_all(self) -> List[asyncpg.Record]:
-        """Gets all categories."""
-        query_str = f"SELECT {NEWS_CATEGORY_ID}, {NEWS_CATEGORY_NAME} FROM {NEWS_CATEGORY_TABLE} ORDER BY {NEWS_CATEGORY_NAME}"
-
+    async def get_all(self, user_id: int) -> List[asyncpg.Record]:
+        """Gets all categories for a specific user."""
+        query_str = f"SELECT {NEWS_CATEGORY_ID}, {NEWS_CATEGORY_NAME}, {NEWS_CATEGORY_USER_ID} FROM {NEWS_CATEGORY_TABLE} WHERE {NEWS_CATEGORY_USER_ID} = $1 ORDER BY {NEWS_CATEGORY_NAME}"
         try:
-            return await self._fetchall(query_str)
+            return await self._fetchall(query_str, (user_id,))
         except Exception as e:
-            logger.error(f"Error getting all categories: {e}")
+            logger.error(f"Error getting all categories for user {user_id}: {e}")
             return []
 
-    async def get_with_source_count(self) -> List[asyncpg.Record]:
-        """Gets all categories with count of sources for each category."""
+    async def get_with_source_count(self, user_id: int) -> List[asyncpg.Record]:
+        """Gets all categories for a user with count of sources (also belonging to the user) for each category."""
         query_str = f"""
             SELECT c.{NEWS_CATEGORY_ID}, c.{NEWS_CATEGORY_NAME}, COUNT(s.{NEWS_SOURCE_ID}) as source_count
             FROM {NEWS_CATEGORY_TABLE} c
-            LEFT JOIN {NEWS_SOURCES_TABLE} s ON c.{NEWS_CATEGORY_ID} = s.{NEWS_SOURCE_CATEGORY_ID}
+            LEFT JOIN {NEWS_SOURCES_TABLE} s ON c.{NEWS_CATEGORY_ID} = s.{NEWS_SOURCE_CATEGORY_ID} AND s.{NEWS_SOURCE_USER_ID} = c.{NEWS_CATEGORY_USER_ID}
+            WHERE c.{NEWS_CATEGORY_USER_ID} = $1
             GROUP BY c.{NEWS_CATEGORY_ID}, c.{NEWS_CATEGORY_NAME}
             ORDER BY c.{NEWS_CATEGORY_NAME}
         """
-
         try:
-            return await self._fetchall(query_str)
+            return await self._fetchall(query_str, (user_id,))
         except Exception as e:
-            logger.error(f"Error getting categories with source count: {e}")
+            logger.error(
+                f"Error getting categories with source count for user {user_id}: {e}"
+            )
             return []
 
-    async def update(self, category_id: int, name: str) -> bool:
-        """Updates a category by ID."""
-        query_str = f"UPDATE {NEWS_CATEGORY_TABLE} SET {NEWS_CATEGORY_NAME} = $1 WHERE {NEWS_CATEGORY_ID} = $2"
-
+    async def update(self, category_id: int, user_id: int, name: str) -> bool:
+        """Updates a category by ID for a specific user."""
+        query_str = f"UPDATE {NEWS_CATEGORY_TABLE} SET {NEWS_CATEGORY_NAME} = $1 WHERE {NEWS_CATEGORY_ID} = $2 AND {NEWS_CATEGORY_USER_ID} = $3"
         try:
-            status = await self._execute(query_str, (name, category_id))
+            status = await self._execute(query_str, (name, category_id, user_id))
             updated = status is not None and status.startswith("UPDATE 1")
             if updated:
-                logger.info(f"Updated category ID {category_id} to '{name}'.")
+                logger.info(
+                    f"Updated category ID {category_id} to '{name}' for user {user_id}."
+                )
             else:
                 logger.warning(
-                    f"Update command for category ID {category_id} executed but status was '{status}'."
+                    f"Update command for category ID {category_id} (User: {user_id}) executed but status was '{status}'. Category might not exist or belong to user."
                 )
             return updated
         except asyncpg.IntegrityConstraintViolationError as e:
             logger.error(
-                f"Error updating category (potential duplicate name '{name}'): {e}"
+                f"Error updating category for user {user_id} (potential duplicate name '{name}'): {e}"
             )
             return False
         except asyncpg.PostgresError as e:
-            logger.error(f"Error updating category: {e}")
+            logger.error(f"Error updating category for user {user_id}: {e}")
             return False
         except Exception as e:
-            logger.error(f"Error updating category: {e}")
+            logger.error(f"Unexpected error updating category for user {user_id}: {e}")
             return False
 
-    async def delete(self, category_id: int) -> bool:
-        """Deletes a category by ID."""
-        query_str = f"DELETE FROM {NEWS_CATEGORY_TABLE} WHERE {NEWS_CATEGORY_ID} = $1"
-
+    async def delete(self, category_id: int, user_id: int) -> bool:
+        """Deletes a category by ID for a specific user."""
+        # Note: Consider implications if news sources depend on this category.
+        # The DB schema should define ON DELETE behavior (e.g., RESTRICT, CASCADE, SET NULL).
+        # Assuming RESTRICT or similar, this might fail if sources exist.
+        query_str = f"DELETE FROM {NEWS_CATEGORY_TABLE} WHERE {NEWS_CATEGORY_ID} = $1 AND {NEWS_CATEGORY_USER_ID} = $2"
         try:
-            status = await self._execute(query_str, (category_id,))
+            status = await self._execute(query_str, (category_id, user_id))
             deleted = status is not None and status.startswith("DELETE 1")
             if deleted:
-                logger.info(f"Deleted category ID {category_id}.")
+                logger.info(f"Deleted category ID {category_id} for user {user_id}.")
             else:
                 logger.warning(
-                    f"Delete command for category ID {category_id} executed but status was '{status}'."
+                    f"Delete command for category ID {category_id} (User: {user_id}) executed but status was '{status}'. Category might not exist, belong to user, or have dependent sources."
                 )
             return deleted
+        except asyncpg.ForeignKeyViolationError as e:
+            logger.error(
+                f"Cannot delete category ID {category_id} for user {user_id} because dependent news sources exist: {e}"
+            )
+            return False
         except asyncpg.PostgresError as e:
-            logger.error(f"Error deleting category {category_id}: {e}")
+            logger.error(
+                f"Error deleting category {category_id} for user {user_id}: {e}"
+            )
             return False
         except Exception as e:
-            logger.error(f"Error deleting category: {e}")
+            logger.error(
+                f"Unexpected error deleting category {category_id} for user {user_id}: {e}"
+            )
             return False

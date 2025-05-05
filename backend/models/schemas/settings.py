@@ -22,6 +22,7 @@ class SystemConfigBase(BaseModel):
     description: Optional[str] = Field(
         None, description="Optional description of the setting"
     )
+    user_id: int = Field(..., description="ID of the user this setting belongs to")
 
 
 class SystemConfig(SystemConfigBase):

@@ -68,5 +68,27 @@ NEWS_ANALYSIS = "analysis"
 NEWS_DATE = "date"
 NEWS_CONTENT = "content"
 
+# System Config table column names (continued)
+SYSTEM_CONFIG_USER_ID = "user_id"  # Added for user association
+
+# News table column names
+NEWS_ID = "id"
+NEWS_TITLE = "title"
+NEWS_URL = "url"
+NEWS_SOURCE_NAME = "source_name"
+NEWS_CATEGORY_NAME = "category_name"
+NEWS_SOURCE_ID = "source_id"
+NEWS_CATEGORY_ID = "category_id"
+NEWS_SUMMARY = "summary"
+NEWS_ANALYSIS = "analysis"
+NEWS_DATE = "date"
+NEWS_CONTENT = "content"
+
+# Users Table
+USERS_TABLE = "users"
+USERS_ID = "id"
+USERS_USERNAME = "username"
+USERS_HASHED_PASSWORD = "hashed_password"
+
 # Default values
 DEFAULT_SEQUENCE_NUMBER = 0

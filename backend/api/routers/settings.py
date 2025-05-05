@@ -1,76 +1,72 @@
 # backend/api/routers/settings.py
 # -*- coding: utf-8 -*-
 """
-API router for application settings and API key management (Version 1).
+API router for user-specific application settings and API key management (Version 1).
 """
 
 import logging
 from fastapi import APIRouter, Depends, HTTPException, Body, status
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Annotated  # Import Annotated
 
 # Import dependencies from the centralized dependencies module
 from api.dependencies import (
     get_setting_service,
     get_llm_pool_dependency,
+    get_current_active_user,  # Import user dependency
 )
 
 # Import schemas from the main models package
-from models.schemas.api_key import ApiKey, ApiKeyCreate
-from models.schemas.settings import SystemConfigUpdate
+from models import ApiKey, ApiKeyCreate, SystemConfigUpdate, User  # Import User schema
 
 # Import service and pool type hints
 from services.setting_service import SettingService
-from core.llm.pool import LLMClientPool  # Corrected import path
+from core.llm.pool import LLMClientPool
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# --- API Key Endpoints ---
+# --- API Key Endpoints (User-Aware) ---
 
 
 @router.get(
     "/api_keys",
     response_model=List[ApiKey],
-    summary="List all API keys",
-    description="Retrieve all configured API keys stored in the database.",
+    summary="List user's API keys",
+    description="Retrieve all API keys configured by the current user.",
 )
 async def get_all_api_keys(
-    setting_service: SettingService = Depends(get_setting_service),
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    setting_service: Annotated[SettingService, Depends(get_setting_service)],
 ):
-    """
-    Retrieve a list of all API keys. The actual key values are included.
-    Handle with care in frontend applications.
-    """
+    """Retrieve a list of all API keys belonging to the current user."""
     try:
-        api_keys = await setting_service.get_all_api_keys()
-        # The service returns ApiKey objects which FastAPI serializes
+        api_keys = await setting_service.get_all_api_keys(user_id=current_user.id)
         return api_keys
     except Exception as e:
-        logger.exception("Failed to retrieve all API keys", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while retrieving API keys.",
-        )
+        logger.exception("Failed to retrieve user API keys", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error retrieving API keys.")
 
 
 @router.get(
     "/api_keys/{api_key_id}",
     response_model=ApiKey,
     summary="Get API key by ID",
-    description="Retrieve a specific API key by its ID.",
+    description="Retrieve a specific API key by its ID, ensuring it belongs to the user.",
 )
 async def get_api_key_by_id(
-    api_key_id: int, setting_service: SettingService = Depends(get_setting_service)
+    api_key_id: int,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    setting_service: Annotated[SettingService, Depends(get_setting_service)],
 ):
-    """
-    Retrieve details for a single API key identified by its ID.
-    """
-    api_key = await setting_service.get_api_key_by_id(api_key_id)
+    """Retrieve details for a single API key owned by the current user."""
+    api_key = await setting_service.get_api_key_by_id(
+        api_id=api_key_id, user_id=current_user.id
+    )
     if not api_key:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"API key with ID '{api_key_id}' not found.",
+            status_code=404,
+            detail=f"API key {api_key_id} not found or not owned by user.",
         )
     return api_key
 
@@ -80,305 +76,232 @@ async def get_api_key_by_id(
     response_model=ApiKey,
     status_code=status.HTTP_201_CREATED,
     summary="Create a new API key",
-    description="Create a new API key with the provided model, base_url, api_key, context, and max_output_tokens.",
+    description="Create a new API key for the current user.",
 )
 async def create_api_key(
     api_key_data: ApiKeyCreate,
-    setting_service: SettingService = Depends(get_setting_service),
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    setting_service: Annotated[SettingService, Depends(get_setting_service)],
 ):
-    """
-    Create a new API key with the provided data.
-    """
+    """Create a new API key for the current user."""
+    # Ensure the data is associated with the current user
+    api_key_data_with_user = api_key_data.model_copy(
+        update={"user_id": current_user.id}
+    )
     try:
         saved_key = await setting_service.save_api_key(
-            model=api_key_data.model,
-            base_url=api_key_data.base_url,
-            api_key=api_key_data.api_key,
-            context=api_key_data.context,
-            max_output_tokens=api_key_data.max_output_tokens,
-            description=api_key_data.description,
+            api_key_data=api_key_data_with_user, user_id=current_user.id
         )
-        if not saved_key:  # Should not happen if service throws exceptions correctly
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to save API key.",
-            )
+        # Service method now returns the created object or raises error
         return saved_key
     except ValueError as ve:
-        # Catches validation errors from the service
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
+        raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         logger.exception(
             f"Failed to save API key '{api_key_data.model}'", exc_info=True
         )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while saving the API key.",
-        )
+        raise HTTPException(status_code=500, detail="Error saving API key.")
 
 
 @router.put(
     "/api_keys/{api_key_id}",
     response_model=ApiKey,
     summary="Update an API key",
-    description="Update an existing API key identified by ID.",
+    description="Update an existing API key belonging to the current user.",
 )
 async def update_api_key(
     api_key_id: int,
-    api_key_data: ApiKeyCreate,
-    setting_service: SettingService = Depends(get_setting_service),
+    api_key_data: ApiKeyCreate,  # Use Create schema for update payload
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    setting_service: Annotated[SettingService, Depends(get_setting_service)],
 ):
-    """
-    Update an existing API key. This endpoint requires the API key ID in the path
-    and expects the updated values in the body.
-    Returns 404 if the API key ID does not exist.
-    """
+    """Update an existing API key owned by the current user."""
+    # Ensure the data is associated with the current user for validation
+    api_key_data_with_user = api_key_data.model_copy(
+        update={"user_id": current_user.id}
+    )
     try:
         updated_key = await setting_service.update_api_key(
             api_id=api_key_id,
-            model=api_key_data.model,
-            base_url=api_key_data.base_url,
-            api_key=api_key_data.api_key,
-            context=api_key_data.context,
-            max_output_tokens=api_key_data.max_output_tokens,
-            description=api_key_data.description,
+            user_id=current_user.id,
+            api_key_data=api_key_data_with_user,  # Pass the validated data
         )
         if not updated_key:
-            # Service returns None if the key wasn't found for update
+            # Service returns None if not found/owned
             raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"API key with ID '{api_key_id}' not found.",
+                status_code=404,
+                detail=f"API key {api_key_id} not found or not owned by user.",
             )
         return updated_key
     except ValueError as ve:
-        # Catches validation errors
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
+        raise HTTPException(status_code=400, detail=str(ve))
     except Exception as e:
         logger.exception(f"Failed to update API key ID '{api_key_id}'", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while updating the API key.",
-        )
+        raise HTTPException(status_code=500, detail="Error updating API key.")
 
 
 @router.delete(
     "/api_keys/{api_key_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete an API key",
-    description="Delete an API key from the database by its ID.",
+    description="Delete an API key belonging to the current user.",
 )
 async def delete_api_key(
-    api_key_id: int, setting_service: SettingService = Depends(get_setting_service)
+    api_key_id: int,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    setting_service: Annotated[SettingService, Depends(get_setting_service)],
 ):
-    """
-    Remove an API key configuration using its unique ID.
-    """
-    success = await setting_service.delete_api_key(api_key_id)
+    """Remove an API key configuration owned by the current user."""
+    success = await setting_service.delete_api_key(
+        api_id=api_key_id, user_id=current_user.id
+    )
     if not success:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"API key with ID '{api_key_id}' not found or deletion failed.",
+            status_code=404,
+            detail=f"API key {api_key_id} not found or not owned by user.",
         )
-    return None  # No content on success
+    return None
 
 
 @router.post(
     "/api_keys/{api_key_id}/test",
     response_model=Dict[str, Any],
     summary="Test API key connection",
-    description="Test the connection to the LLM service using a specific API key.",
+    description="Test the connection using a specific API key belonging to the user.",
 )
 async def test_api_key(
-    api_key_id: int, setting_service: SettingService = Depends(get_setting_service)
+    api_key_id: int,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    setting_service: Annotated[SettingService, Depends(get_setting_service)],
 ):
-    """
-    Test the connection to an LLM service using the specified API key.
-    Performs a simple request to verify API key validity and connectivity.
-
-    Returns success or error status along with any relevant details.
-    """
+    """Test connection using an API key owned by the current user."""
     try:
-        result = await setting_service.test_api_key_connection(api_key_id)
-        if result["status"] == "error":
-            # We return a 200 status even for test failures since the API call succeeded
-            # The client should check the "status" field to determine test success
-            return result
+        # Service method now checks ownership
+        result = await setting_service.test_api_key_connection(
+            api_key_id=api_key_id, user_id=current_user.id
+        )
         return result
     except HTTPException:
-        # Re-raise HTTP exceptions (like 404) directly
         raise
     except Exception as e:
         logger.exception(f"Error testing API key ID {api_key_id}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to test API key: {str(e)}",
-        )
+        raise HTTPException(status_code=500, detail=f"Failed to test API key: {str(e)}")
 
 
-# --- System Settings Endpoints ---
+# --- System Settings Endpoints (User-Aware) ---
 
 
 @router.get(
     "/settings",
     response_model=Dict[str, Any],
-    summary="Get application settings",
-    description="Retrieve all persistent application settings.",
+    summary="Get user's application settings",
+    description="Retrieve persistent application settings for the current user.",
 )
 async def get_all_settings(
-    setting_service: SettingService = Depends(get_setting_service),
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    setting_service: Annotated[SettingService, Depends(get_setting_service)],
 ):
-    """
-    Fetch the current values of all settings managed by the application configuration,
-    primarily those stored persistently in the database.
-    """
+    """Fetch settings for the current user, falling back to defaults."""
     try:
-        settings = await setting_service.get_all_settings()
+        settings = await setting_service.get_all_settings(user_id=current_user.id)
         return settings
     except Exception as e:
-        logger.exception("Failed to retrieve application settings", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while retrieving settings.",
-        )
+        logger.exception("Failed to retrieve user settings", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error retrieving settings.")
 
 
 @router.put(
     "/settings",
     response_model=Dict[str, Any],
-    summary="Update application settings",
-    description="Update one or more persistent application settings.",
+    summary="Update user's application settings",
+    description="Update persistent application settings for the current user.",
 )
 async def update_settings(
-    # Body receives a dict of settings to update
-    settings_update: SystemConfigUpdate,
-    setting_service: SettingService = Depends(get_setting_service),
+    settings_update: SystemConfigUpdate,  # Contains the dict of settings
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    setting_service: Annotated[SettingService, Depends(get_setting_service)],
 ):
-    """
-    Update persistent application settings with the provided values.
-    Only valid settings keys will be accepted.
-    """
+    """Update persistent settings for the current user."""
     try:
-        # The settings_update is a Pydantic model - convert to dict for service
-        settings_dict = settings_update.model_dump()
-        # Only include non-None values in the update
-        settings_to_update = {k: v for k, v in settings_dict.items() if v is not None}
+        settings_dict = settings_update.settings  # Access the inner dict
+        if not settings_dict:
+            return await setting_service.get_all_settings(user_id=current_user.id)
 
-        if not settings_to_update:
-            # If nothing to update, just return current settings
-            return await setting_service.get_all_settings()
-
-        # Update settings via service
-        updated_settings = await setting_service.update_settings(settings_to_update)
+        updated_settings = await setting_service.update_settings(
+            settings=settings_dict, user_id=current_user.id
+        )
         return updated_settings
-
     except ValueError as ve:
-        # For validation errors (invalid keys, etc.)
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
+        raise HTTPException(status_code=400, detail=str(ve))
     except RuntimeError as re:
-        # For persistence/save failures
         logger.error(f"Settings update failed: {str(re)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(re),
-        )
+        raise HTTPException(status_code=500, detail=str(re))
     except Exception as e:
-        # Unexpected errors
-        logger.exception("Failed to update application settings", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while updating settings.",
-        )
+        logger.exception("Failed to update user settings", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error updating settings.")
 
 
 @router.post(
     "/settings/reset",
     response_model=Dict[str, Any],
-    summary="Reset settings to defaults",
-    description="Reset all persistent application settings to their default values.",
+    summary="Reset user's settings to defaults",
+    description="Reset persistent settings for the current user to defaults.",
 )
 async def reset_settings(
-    setting_service: SettingService = Depends(get_setting_service),
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    setting_service: Annotated[SettingService, Depends(get_setting_service)],
 ):
-    """
-    Reset all persistent application settings to their factory default values.
-    This action cannot be undone.
-    """
+    """Reset persistent settings for the current user to defaults."""
     try:
-        # The service handles the reset logic
-        reset_settings = await setting_service.reset_settings_to_defaults()
-        return reset_settings
-
+        reset_settings_values = await setting_service.reset_settings_to_defaults(
+            user_id=current_user.id
+        )
+        return reset_settings_values
     except RuntimeError as re:
-        # For persistence/save failures
         logger.error(f"Settings reset failed: {str(re)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(re),
-        )
+        raise HTTPException(status_code=500, detail=str(re))
     except Exception as e:
-        # Unexpected errors
-        logger.exception("Failed to reset application settings", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while resetting settings to defaults.",
-        )
+        logger.exception("Failed to reset user settings", exc_info=True)
+        raise HTTPException(status_code=500, detail="Error resetting settings.")
 
 
-# --- LLM Service Status Endpoints ---
+# --- LLM Service Status Endpoints (Not user-specific) ---
 
 
 @router.get(
     "/llm/test",
     summary="Test LLM service connection",
     response_model=Dict[str, Any],
-    description="Verify connectivity and basic functionality of the configured LLM service.",
+    description="Verify connectivity and basic functionality of a configured LLM service (uses first available key).",
 )
 async def test_llm_connection(
-    # Inject the LLM pool dependency
-    llm_pool: LLMClientPool = Depends(get_llm_pool_dependency),
+    # Inject the LLM pool dependency - Pool uses keys from DB/config
+    llm_pool: Annotated[LLMClientPool, Depends(get_llm_pool_dependency)],
 ):
-    """
-    Test the connection to the LLM service by sending a simple request.
-    Returns success status and response time, or error details if the request fails.
-    """
+    """Test connection using a client from the pool."""
     try:
-        # Get a client to test with
-        llm_client = llm_pool.get_client()
+        llm_client = llm_pool.get_client()  # Get any available client
+        if not llm_client:
+            raise HTTPException(
+                status_code=503, detail="No LLM clients available in the pool."
+            )
 
-        # Simple test prompt
-        test_prompt = [
-            {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": "Say hello to verify connectivity."},
-        ]
-
-        # Track start time for response timing
-        import time
-
+        test_prompt = [{"role": "user", "content": "Say hello"}]
         start_time = time.time()
+        response = await llm_client.agenerate_response(test_prompt, max_tokens=10)
+        response_time = round((time.time() - start_time) * 1000, 2)
 
-        # Execute test call
-        response = await llm_client.agenerate_response(test_prompt)
-
-        # Calculate response time
-        response_time = round((time.time() - start_time) * 1000, 2)  # ms
-
-        # Return success payload
         return {
             "status": "success",
             "response": response[:100] + "..." if len(response) > 100 else response,
             "response_time_ms": response_time,
             "model": llm_client.model_name,
         }
-
     except Exception as e:
-        # Return error information
         logger.error(f"LLM connection test failed: {str(e)}", exc_info=True)
-        error_message = str(e)
-        error_type = type(e).__name__
-
         return {
             "status": "error",
-            "error_type": error_type,
-            "error_message": error_message,
-            "suggestion": "Check your API key configuration and network connectivity.",
+            "error_type": type(e).__name__,
+            "error_message": str(e),
+            "suggestion": "Check API key configurations and network connectivity.",
         }

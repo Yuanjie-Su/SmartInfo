@@ -43,6 +43,7 @@ from .schemas.settings import (
     SystemConfig,
     SystemConfigUpdate,
 )
+from .schemas.user import UserBase, UserCreate, User, UserInDB
 
 
 __all__ = [
@@ -82,4 +83,9 @@ __all__ = [
     "SystemConfigBase",
     "SystemConfig",
     "SystemConfigUpdate",
+    # User Schemas
+    "UserBase",
+    "UserCreate",
+    "User",
+    "UserInDB",
 ]

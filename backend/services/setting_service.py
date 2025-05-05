@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-Setting service for managing application settings and API keys
+Setting service for managing user-specific application settings and API keys
 """
 
 import logging
@@ -10,243 +10,254 @@ import json
 from typing import Dict, Any, List, Optional, Union
 
 # Import using backend package path
-from config import AppConfig
+from config import AppConfig  # Keep for default values, but user settings override
 from db.repositories.api_key_repository import ApiKeyRepository
 from db.repositories.system_config_repository import SystemConfigRepository
-from models.schemas.api_key import ApiKey
+from models import (
+    ApiKey,
+    ApiKeyCreate,
+    SystemConfig,
+    SystemConfigBase,
+    User,
+)  # Import relevant models
+
 from core.llm.client import AsyncLLMClient
 
 logger = logging.getLogger(__name__)
 
 
 class SettingService:
-    """Service for managing application settings and API keys"""
+    """Service for managing user-specific application settings and API keys"""
 
     def __init__(
         self,
-        config: AppConfig,
+        config: AppConfig,  # Keep config for defaults
         api_key_repo: ApiKeyRepository,
         system_config_repo: SystemConfigRepository,
     ):
         """Initialize the setting service"""
-        self._config = config
+        self._config = config  # Used for default values
         self._api_key_repo = api_key_repo
         self._system_config_repo = system_config_repo
 
-    async def get_api_key_by_id(self, api_id: int) -> Optional[ApiKey]:
-        """Get an ApiKey object by ID"""
-        # 使用返回Record的方法
-        api_key_record = await self._api_key_repo.get_by_id(api_id)
+    # --- API Key Management (User-Aware) ---
+
+    async def get_api_key_by_id(self, api_id: int, user_id: int) -> Optional[ApiKey]:
+        """Get an ApiKey object by ID for a specific user."""
+        api_key_record = await self._api_key_repo.get_by_id(api_id, user_id)
         if not api_key_record:
             return None
+        # Assuming ApiKey model includes user_id
+        return ApiKey.model_validate(api_key_record)  # Use model_validate
 
-        # 将Record转换为字典，然后创建ApiKey对象
-        api_key_dict = dict(api_key_record)
-        return ApiKey(**api_key_dict)
-
-    async def get_all_api_keys(self) -> List[ApiKey]:
-        """Get all API keys"""
-        api_keys_data = await self._api_key_repo.get_all()
+    async def get_all_api_keys(self, user_id: int) -> List[ApiKey]:
+        """Get all API keys for a specific user."""
+        api_keys_data = await self._api_key_repo.get_all(user_id)
+        # Assuming ApiKey model includes user_id
         return [
-            ApiKey(
-                id=item["id"],
-                model=item["model"],
-                base_url=item["base_url"],
-                api_key=item["api_key"],
-                context=item["context"],
-                max_output_tokens=item["max_output_tokens"],
-                description=item.get("description"),
-                created_date=item.get("created_date"),
-                modified_date=item.get("modified_date"),
-            )
-            for item in api_keys_data
-        ]
+            ApiKey.model_validate(item) for item in api_keys_data
+        ]  # Use model_validate
 
     async def save_api_key(
-        self,
-        model: str,
-        base_url: str,
-        api_key: str,
-        context: int,
-        max_output_tokens: int,
-        description: Optional[str] = None,
+        self, api_key_data: ApiKeyCreate, user_id: int  # Use Pydantic model
     ) -> ApiKey:
-        """Save a new API key"""
-        if not model or not base_url or not api_key:
+        """Save a new API key for a specific user."""
+        if api_key_data.user_id != user_id:
+            raise ValueError(
+                "User ID in API key data does not match authenticated user."
+            )
+
+        if (
+            not api_key_data.model
+            or not api_key_data.base_url
+            or not api_key_data.api_key
+        ):
             raise ValueError("Model, base URL, and API key are required")
 
-        if not isinstance(context, int) or not isinstance(max_output_tokens, int):
+        if not isinstance(api_key_data.context, int) or not isinstance(
+            api_key_data.max_output_tokens, int
+        ):
             raise ValueError("Context and max output tokens must be integers")
 
-        if context <= max_output_tokens:
+        if api_key_data.context <= api_key_data.max_output_tokens:
             raise ValueError("Context must be greater than max output tokens")
 
-        # Create new key
         key_id = await self._api_key_repo.add(
-            model=model,
-            base_url=base_url,
-            api_key=api_key,
-            context=context,
-            max_output_tokens=max_output_tokens,
-            description=description,
+            model=api_key_data.model,
+            base_url=str(api_key_data.base_url),  # Ensure URL is string
+            api_key=api_key_data.api_key,
+            context=api_key_data.context,
+            max_output_tokens=api_key_data.max_output_tokens,
+            description=api_key_data.description,
+            user_id=user_id,  # Pass user_id
         )
 
         if key_id:
-            return await self.get_api_key_by_id(key_id)
+            created_key = await self.get_api_key_by_id(key_id, user_id)
+            if created_key:
+                return created_key
+            else:
+                # Should not happen if add succeeded
+                raise RuntimeError(
+                    f"Failed to retrieve newly created API key {key_id} for user {user_id}"
+                )
 
-        raise ValueError(f"Failed to save API key for {model}")
+        raise ValueError(
+            f"Failed to save API key for model {api_key_data.model} for user {user_id}"
+        )
 
     async def update_api_key(
         self,
         api_id: int,
-        model: str,
-        base_url: str,
-        context: int,
-        max_output_tokens: int,
-        api_key: Optional[str] = None,
-        description: Optional[str] = None,
+        user_id: int,  # Add user_id
+        api_key_data: ApiKeyCreate,  # Use Pydantic model for update data
     ) -> Optional[ApiKey]:
-        """Update an existing API key"""
-        if not model or not base_url:
+        """Update an existing API key for a specific user."""
+        if api_key_data.user_id != user_id:
+            raise ValueError(
+                "User ID in API key data does not match authenticated user."
+            )
+
+        if not api_key_data.model or not api_key_data.base_url:
             raise ValueError("Model and base URL are required")
 
-        if not isinstance(context, int) or not isinstance(max_output_tokens, int):
+        if not isinstance(api_key_data.context, int) or not isinstance(
+            api_key_data.max_output_tokens, int
+        ):
             raise ValueError("Context and max output tokens must be integers")
 
-        if context <= max_output_tokens:
+        if api_key_data.context <= api_key_data.max_output_tokens:
             raise ValueError("Context must be greater than max output tokens")
 
-        # Check if API key exists by ID
-        existing_key = await self._api_key_repo.get_by_id(api_id)
-        if not existing_key:
-            return None
-
-        # Use the update method by ID
+        # Repository update method checks ownership via user_id in WHERE clause
         updated = await self._api_key_repo.update(
             api_id=api_id,
-            model=model,
-            base_url=base_url,
-            api_key=api_key,
-            context=context,
-            max_output_tokens=max_output_tokens,
-            description=description,
+            user_id=user_id,  # Pass user_id for ownership check
+            model=api_key_data.model,
+            base_url=str(api_key_data.base_url),
+            api_key=api_key_data.api_key,  # Pass optional new key
+            context=api_key_data.context,
+            max_output_tokens=api_key_data.max_output_tokens,
+            description=api_key_data.description,
         )
 
         if not updated:
-            return None
+            return None  # Update failed (likely not found or not owned)
 
-        return await self.get_api_key_by_id(api_id)
+        return await self.get_api_key_by_id(api_id, user_id)
 
-    async def delete_api_key(self, api_id: int) -> bool:
-        """Delete an API key by ID"""
-        return await self._api_key_repo.delete(api_id)
+    async def delete_api_key(self, api_id: int, user_id: int) -> bool:
+        """Delete an API key by ID for a specific user."""
+        return await self._api_key_repo.delete(api_id, user_id)
 
-    async def get_all_settings(self) -> Dict[str, Any]:
-        """Get all application settings"""
-        # Get settings from config (persistent settings loaded from DB and environment)
-        settings = {}
-        # Get persistent settings from the config object (already loaded from DB)
-        for key in self._config.DEFAULT_PERSISTENT_CONFIG:
-            settings[key] = self._config.get_persistent(key)
+    # --- System Settings Management (User-Aware) ---
 
-        return settings
+    async def get_all_settings(self, user_id: int) -> Dict[str, Any]:
+        """Get all application settings for a specific user, falling back to defaults."""
+        user_settings = await self._system_config_repo.get_all(user_id)
 
-    async def update_settings(self, settings: Dict[str, Any]) -> Dict[str, Any]:
-        """Update application settings"""
+        # Combine user settings with defaults, user settings take precedence
+        final_settings = {}
+        for key, default_value in self._config.DEFAULT_PERSISTENT_CONFIG.items():
+            final_settings[key] = user_settings.get(
+                key, default_value
+            )  # Use default if not set by user
+
+        return final_settings
+
+    async def update_settings(
+        self, settings: Dict[str, Any], user_id: int
+    ) -> Dict[str, Any]:
+        """Update application settings for a specific user."""
         if not settings:
-            return await self.get_all_settings()
+            return await self.get_all_settings(user_id)
 
-        # Validate settings keys against the default persistent config keys
         valid_keys = self._config.DEFAULT_PERSISTENT_CONFIG.keys()
         invalid_keys = [k for k in settings if k not in valid_keys]
         if invalid_keys:
             raise ValueError(f"Invalid settings keys: {', '.join(invalid_keys)}")
 
-        # Update settings in config's in-memory representation
+        # Save each setting to the database for the user
+        all_success = True
         for key, value in settings.items():
-            self._config.set_persistent(key, value)
+            # Convert value to string for storage if necessary (repo expects string)
+            # Consider more robust type handling based on key if needed
+            str_value = str(value)
+            success = await self._system_config_repo.set(
+                config_key=key,
+                config_value=str_value,
+                user_id=user_id,
+                # Optionally fetch description from defaults or pass None
+                description=self._config.DEFAULT_PERSISTENT_CONFIG_DESC.get(key),
+            )
+            if not success:
+                all_success = False
+                logger.error(f"Failed to save setting '{key}' for user {user_id}")
+                # Decide whether to continue or raise immediately
+                # raise RuntimeError(f"Failed to save setting '{key}' for user {user_id}")
 
-        # Save the updated persistent settings from memory to the database
-        success = await self._config.save_persistent()
+        if not all_success:
+            # Or raise a more general error if partial success is unacceptable
+            logger.warning(f"One or more settings failed to save for user {user_id}")
+
+        return await self.get_all_settings(user_id)
+
+    async def reset_settings_to_defaults(self, user_id: int) -> Dict[str, Any]:
+        """Reset application settings to defaults for a specific user."""
+        # Clear existing settings for the user from the database
+        success = await self._system_config_repo.clear_all_for_user(user_id)
+
         if not success:
-            raise RuntimeError("Failed to save settings to database")
+            logger.error(
+                f"Failed to clear existing system config from DB for user {user_id} during reset."
+            )
+            # Depending on requirements, might want to raise an error here
+            # raise RuntimeError(f"Failed to clear existing system config for user {user_id}")
 
-        return await self.get_all_settings()
+        # Return the default settings (as no user-specific settings exist now)
+        default_settings = {}
+        for key, default_value in self._config.DEFAULT_PERSISTENT_CONFIG.items():
+            default_settings[key] = default_value
+        return default_settings
 
-    async def reset_settings_to_defaults(self) -> Dict[str, Any]:
-        """Reset application settings to defaults"""
-        # Reset settings in config's in-memory representation to defaults
-        self._config.reset_persistent_to_defaults()
+    # --- API Key Testing (User-Aware) ---
 
-        # Clear existing settings from the database and save the default settings
-        success = await self._system_config_repo.clear_all()  # Clear existing from DB
-
-        if not success:
-            logger.error("Failed to clear existing system config from DB during reset.")
-            # Continue to save defaults even if clearing old settings failed
-            # raise RuntimeError("Failed to clear existing system config from database")
-
-        # Save the default settings from memory to the database
-        success = await self._config.save_persistent()
-        if not success:
-            raise RuntimeError("Failed to save default settings to database")
-
-        return await self.get_all_settings()
-
-    async def test_api_key_connection(self, api_key_id: int) -> Dict[str, Any]:
+    async def test_api_key_connection(
+        self, api_key_id: int, user_id: int
+    ) -> Dict[str, Any]:
         """
-        Test connection for a specific API key by ID.
-
-        Args:
-            api_key_id: ID of the API key to test
-
-        Returns:
-            Dictionary with test status and results
-
-        Raises:
-            HTTPException: If the API key is not found
+        Test connection for a specific API key belonging to a user.
         """
-        # 使用返回Record的方法
-        api_key_record = await self._api_key_repo.get_by_id(api_key_id)
+        api_key_record = await self._api_key_repo.get_by_id(api_key_id, user_id)
         if not api_key_record:
-            # We'll let the router convert this to a 404 HTTP response
             from fastapi import HTTPException, status
 
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"API key with ID '{api_key_id}' not found.",
+                detail=f"API key with ID '{api_key_id}' not found or not owned by user.",
             )
 
-        # 将Record转换为字典
         api_key_dict = dict(api_key_record)
-
-        # Extract relevant information from the dictionary
         model = api_key_dict["model"]
         base_url = api_key_dict["base_url"]
         api_key = api_key_dict["api_key"]
         max_output_tokens = api_key_dict["max_output_tokens"]
 
-        # Create a simple test message
         test_messages = [{"role": "user", "content": "hello"}]
 
-        # Create a temporary LLM client for testing
         try:
             async with AsyncLLMClient(
                 base_url=base_url,
                 api_key=api_key,
-                timeout=10,  # Use a shorter timeout for testing
+                timeout=10,
             ) as client:
-                # Call the client with minimal tokens for a faster test
                 response_content = await client.get_completion_content(
                     messages=test_messages,
                     model=model,
-                    max_tokens=min(
-                        10, max_output_tokens
-                    ),  # Use a small max_tokens value
+                    max_tokens=min(10, max_output_tokens),
                     temperature=0.7,
                 )
 
-                # Check the response
                 if response_content:
                     return {
                         "status": "success",
@@ -264,5 +275,7 @@ class SettingService:
                     }
 
         except Exception as e:
-            logger.error(f"API key test failed for ID {api_key_id}: {str(e)}")
+            logger.error(
+                f"API key test failed for ID {api_key_id} (User: {user_id}): {str(e)}"
+            )
             return {"status": "error", "message": f"Connection test failed: {str(e)}"}

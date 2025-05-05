@@ -7,10 +7,13 @@ Handles chat session management, message operations, and interaction with the LL
 
 import logging
 from fastapi import APIRouter, Depends, HTTPException, Body, status
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Annotated  # Import Annotated
 
 # Import dependencies from the centralized dependencies module
-from api.dependencies import get_chat_service
+from api.dependencies import (
+    get_chat_service,
+    get_current_active_user,
+)  # Import user dependency
 
 # Import schemas from the main models package
 from models.schemas.chat import (
@@ -20,6 +23,7 @@ from models.schemas.chat import (
     MessageCreate,
     ChatAnswer,
     Question,
+    User,  # Import User schema
 )
 
 # Import the service class type hint
@@ -29,19 +33,22 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# --- Chat Session Endpoints ---
+# --- Chat Session Endpoints (User-Aware) ---
 
 
-@router.get("/", response_model=List[Chat], summary="List all chat sessions")
-async def get_all_chats(chat_service: ChatService = Depends(get_chat_service)):
+@router.get("/", response_model=List[Chat], summary="List user's chat sessions")
+async def get_all_chats(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    chat_service: Annotated[ChatService, Depends(get_chat_service)],
+):
     """
-    Retrieve a list of all existing chat sessions, ordered by last update time.
+    Retrieve a list of all chat sessions belonging to the current user.
     """
     try:
-        chats = await chat_service.get_all_chats()
+        chats = await chat_service.get_all_chats(user_id=current_user.id)
         return chats
     except Exception as e:
-        logger.exception("Failed to retrieve all chats", exc_info=True)
+        logger.exception("Failed to retrieve user chats", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An error occurred while retrieving chats.",
@@ -50,16 +57,19 @@ async def get_all_chats(chat_service: ChatService = Depends(get_chat_service)):
 
 @router.get("/{chat_id}", response_model=Chat, summary="Get a specific chat session")
 async def get_chat_by_id(
-    chat_id: int, chat_service: ChatService = Depends(get_chat_service)
+    chat_id: int,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    chat_service: Annotated[ChatService, Depends(get_chat_service)],
 ):
     """
-    Retrieve a specific chat session by its unique ID, including its messages.
+    Retrieve a specific chat session by its ID, ensuring it belongs to the current user.
+    Includes messages.
     """
-    chat = await chat_service.get_chat_by_id(chat_id)
+    chat = await chat_service.get_chat_by_id(chat_id=chat_id, user_id=current_user.id)
     if not chat:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Chat session with ID {chat_id} not found.",
+            detail=f"Chat session with ID {chat_id} not found or not owned by user.",
         )
     return chat
 
@@ -71,20 +81,26 @@ async def get_chat_by_id(
     summary="Create a new chat session",
 )
 async def create_chat(
-    chat_data: ChatCreate, chat_service: ChatService = Depends(get_chat_service)
+    chat_data: ChatCreate,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    chat_service: Annotated[ChatService, Depends(get_chat_service)],
 ):
     """
-    Create a new chat session with the provided title.
+    Create a new chat session for the current user.
+    The user_id from the token will override any user_id in chat_data.
     """
+    # Ensure the chat data is associated with the current user
+    chat_data_with_user = chat_data.model_copy(update={"user_id": current_user.id})
+
     try:
-        new_chat = await chat_service.create_chat(chat_data)
-        if not new_chat:
-            # This might occur if DB insertion fails unexpectedly
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to create chat session.",
-            )
+        new_chat = await chat_service.create_chat(
+            chat_data=chat_data_with_user, user_id=current_user.id
+        )
+        # Service layer now returns the full Chat object or raises error
         return new_chat
+    except ValueError as ve:  # Catch potential validation errors from service
+        logger.error(f"Chat creation validation error: {ve}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
     except Exception as e:
         logger.exception("Failed to create chat", exc_info=True)
         raise HTTPException(
@@ -96,26 +112,25 @@ async def create_chat(
 @router.put("/{chat_id}", response_model=Chat, summary="Update a chat session title")
 async def update_chat(
     chat_id: int,
-    chat_data: ChatCreate,  # Re-using ChatCreate schema for title update
-    chat_service: ChatService = Depends(get_chat_service),
+    chat_data: ChatCreate,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    chat_service: Annotated[ChatService, Depends(get_chat_service)],
 ):
     """
-    Update the title of an existing chat session.
+    Update the title of an existing chat session belonging to the current user.
     """
-    updated_chat = await chat_service.update_chat(chat_id, chat_data)
+    # Ensure the chat data is associated with the current user for update check
+    chat_data_with_user = chat_data.model_copy(update={"user_id": current_user.id})
+
+    updated_chat = await chat_service.update_chat(
+        chat_id=chat_id, chat_data=chat_data_with_user, user_id=current_user.id
+    )
     if not updated_chat:
-        # Check if the chat originally existed
-        if await chat_service.get_chat_by_id(chat_id) is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Chat session with ID {chat_id} not found.",
-            )
-        else:
-            # Update failed for other reasons (e.g., DB error)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to update chat session.",
-            )
+        # Service handles the check if chat exists and belongs to user
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Chat session with ID {chat_id} not found or not owned by user.",
+        )
     return updated_chat
 
 
@@ -125,22 +140,24 @@ async def update_chat(
     summary="Delete a chat session",
 )
 async def delete_chat(
-    chat_id: int, chat_service: ChatService = Depends(get_chat_service)
+    chat_id: int,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    chat_service: Annotated[ChatService, Depends(get_chat_service)],
 ):
     """
-    Delete a chat session and all its associated messages by its ID.
+    Delete a chat session belonging to the current user.
     """
-    success = await chat_service.delete_chat(chat_id)
+    success = await chat_service.delete_chat(chat_id=chat_id, user_id=current_user.id)
     if not success:
+        # Service handles the check if chat exists and belongs to user
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Chat session with ID {chat_id} not found or deletion failed.",
+            detail=f"Chat session with ID {chat_id} not found or not owned by user.",
         )
-    # No content to return on successful deletion
     return None
 
 
-# --- Message Endpoints ---
+# --- Message Endpoints (User context checked via chat ownership) ---
 
 
 @router.get(
@@ -149,44 +166,49 @@ async def delete_chat(
     summary="List messages in a chat",
 )
 async def get_messages_by_chat_id(
-    chat_id: int, chat_service: ChatService = Depends(get_chat_service)
+    chat_id: int,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    chat_service: Annotated[ChatService, Depends(get_chat_service)],
 ):
     """
-    Retrieve all messages for a specific chat session, ordered by timestamp.
+    Retrieve all messages for a specific chat session, ensuring the chat belongs to the current user.
     """
-    # First, check if chat exists to provide a better error message
-    if await chat_service.get_chat_by_id(chat_id) is None:
+    # Check chat ownership first
+    chat = await chat_service.get_chat_by_id(chat_id=chat_id, user_id=current_user.id)
+    if not chat:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Chat session with ID {chat_id} not found.",
+            detail=f"Chat session with ID {chat_id} not found or not owned by user.",
         )
-    try:
-        messages = await chat_service.get_messages_by_chat_id(chat_id)
-        return messages
-    except Exception as e:
-        logger.exception(
-            f"Failed to retrieve messages for chat {chat_id}", exc_info=True
-        )
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="An error occurred while retrieving messages.",
-        )
+    # Messages are already loaded in the chat object by the service method
+    return chat.messages or []
 
 
 @router.get(
     "/messages/{message_id}", response_model=Message, summary="Get a specific message"
 )
 async def get_message_by_id(
-    message_id: int, chat_service: ChatService = Depends(get_chat_service)
+    message_id: int,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    chat_service: Annotated[ChatService, Depends(get_chat_service)],
 ):
     """
-    Retrieve a specific message by its unique ID.
+    Retrieve a specific message by its ID, ensuring its chat belongs to the current user.
     """
     message = await chat_service.get_message_by_id(message_id)
     if not message:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Message with ID {message_id} not found.",
+        )
+    # Verify chat ownership
+    chat = await chat_service.get_chat_by_id(
+        chat_id=message.chat_id, user_id=current_user.id
+    )
+    if not chat:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,  # Or 404 if we hide existence
+            detail=f"Access denied to message {message_id}.",
         )
     return message
 
@@ -198,24 +220,25 @@ async def get_message_by_id(
     summary="Add a message to a chat",
 )
 async def create_message(
-    message_data: MessageCreate, chat_service: ChatService = Depends(get_chat_service)
+    message_data: MessageCreate,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    chat_service: Annotated[ChatService, Depends(get_chat_service)],
 ):
     """
-    Add a new message (typically from the user or assistant) to an existing chat session.
+    Add a new message to a chat session, ensuring the chat belongs to the current user.
     """
-    # Validate that the chat_id exists
-    if await chat_service.get_chat_by_id(message_data.chat_id) is None:
+    # Verify chat ownership before adding message
+    chat = await chat_service.get_chat_by_id(
+        chat_id=message_data.chat_id, user_id=current_user.id
+    )
+    if not chat:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,  # Or 400 Bad Request
-            detail=f"Chat session with ID {message_data.chat_id} not found.",
+            status_code=status.HTTP_404_NOT_FOUND,  # Or 403 Forbidden
+            detail=f"Chat session with ID {message_data.chat_id} not found or not owned by user.",
         )
     try:
+        # Service create_message doesn't need user_id directly, relies on prior check
         new_message = await chat_service.create_message(message_data)
-        if not new_message:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to create message.",
-            )
         return new_message
     except Exception as e:
         logger.exception("Failed to create message", exc_info=True)
@@ -231,62 +254,73 @@ async def create_message(
     summary="Delete a message",
 )
 async def delete_message(
-    message_id: int, chat_service: ChatService = Depends(get_chat_service)
+    message_id: int,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    chat_service: Annotated[ChatService, Depends(get_chat_service)],
 ):
     """
-    Delete a specific message by its ID.
+    Delete a specific message by its ID, ensuring its chat belongs to the current user.
     """
-    success = await chat_service.delete_message(message_id)
-    if not success:
+    # Get message to find chat_id
+    message = await chat_service.get_message_by_id(message_id)
+    if not message:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Message with ID {message_id} not found or deletion failed.",
+            detail=f"Message with ID {message_id} not found.",
         )
-    # No content to return on successful deletion
+    # Verify chat ownership
+    chat = await chat_service.get_chat_by_id(
+        chat_id=message.chat_id, user_id=current_user.id
+    )
+    if not chat:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,  # Or 404
+            detail=f"Access denied to delete message {message_id}.",
+        )
+
+    # Proceed with deletion
+    success = await chat_service.delete_message(message_id)
+    if not success:
+        # This might happen if the message was deleted between checks, or DB error
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete message {message_id}.",
+        )
     return None
 
 
-# --- LLM Interaction Endpoint ---
+# --- LLM Interaction Endpoint (User-Aware) ---
 
 
 @router.post("/ask", response_model=ChatAnswer, summary="Ask a question to the LLM")
 async def ask_question(
-    question_data: Question, chat_service: ChatService = Depends(get_chat_service)
+    question_data: Question,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    chat_service: Annotated[ChatService, Depends(get_chat_service)],
 ):
     """
-    Ask a question to the LLM and get a response, optionally in the context of an existing chat.
+    Ask a question to the LLM for the current user.
 
-    If chat_id is provided, the question and response will be added to that chat's history.
-    If no chat_id is provided, a new chat will be created with the question as the title.
+    If chat_id is provided, it must belong to the user.
+    If no chat_id is provided, a new chat will be created for the user.
     """
     try:
-        # If a chat ID is provided, check if it exists
-        if (
-            question_data.chat_id
-            and await chat_service.get_chat_by_id(question_data.chat_id) is None
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Chat session with ID {question_data.chat_id} not found.",
-            )
-
-        # Process the question through the service
+        # Service method now handles chat_id validation and user association
         response = await chat_service.process_question(
             content=question_data.content,
+            user=current_user,  # Pass the authenticated user object
             chat_id=question_data.chat_id,
         )
-
         return response
 
     except ValueError as ve:
-        # Handle service-level validation errors
-        logger.error(f"Validation error: {str(ve)}")
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(ve),
-        )
+        logger.error(f"Validation error during /ask: {str(ve)}")
+        # Check if the error is about chat ownership to return 404/403
+        if "not found or does not belong to user" in str(ve):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(ve))
+        else:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
     except Exception as e:
-        # Handle unexpected errors
         logger.exception("Error processing question", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

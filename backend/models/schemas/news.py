@@ -16,6 +16,7 @@ class NewsCategoryBase(BaseModel):
     """Base schema for news category data."""
 
     name: str = Field(..., max_length=100, description="Name of the news category")
+    user_id: int = Field(..., description="ID of the user who owns this category")
 
 
 class NewsCategoryCreate(NewsCategoryBase):
@@ -55,6 +56,7 @@ class NewsSourceBase(BaseModel):
     category_id: int = Field(
         ..., description="ID of the category this source belongs to"
     )
+    user_id: int = Field(..., description="ID of the user who owns this source")
 
 
 class NewsSourceCreate(NewsSourceBase):
@@ -119,6 +121,7 @@ class NewsItemBase(BaseModel):
     # Include source_name and category_name for easier handling in create/update
     source_name: Optional[str] = Field(None, description="Name of the news source")
     category_name: Optional[str] = Field(None, description="Name of the news category")
+    user_id: int = Field(..., description="ID of the user who owns this news item")
 
 
 class NewsItemCreate(NewsItemBase):

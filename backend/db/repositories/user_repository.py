@@ -1,0 +1,88 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+"""
+User Repository Module
+Handles database operations related to users.
+"""
+
+from typing import Optional
+import asyncpg
+
+from .base_repository import BaseRepository
+from models import UserInDB  # Assuming UserInDB includes id, username, hashed_password
+from db.schema_constants import (
+    USERS_TABLE,
+    USERS_ID,
+    USERS_USERNAME,
+    USERS_HASHED_PASSWORD,
+)
+
+
+class UserRepository(BaseRepository):
+    """
+    Repository for user-related database operations.
+    """
+
+    async def add_user(self, username: str, hashed_password: str) -> Optional[UserInDB]:
+        """
+        Adds a new user to the database.
+
+        Args:
+            username: The username of the new user.
+            hashed_password: The securely hashed password for the new user.
+
+        Returns:
+            The created user object (UserInDB) if successful, otherwise None.
+        """
+        query = f"""
+            INSERT INTO {USERS_TABLE} ({USERS_USERNAME}, {USERS_HASHED_PASSWORD})
+            VALUES ($1, $2)
+            RETURNING {USERS_ID}, {USERS_USERNAME}, {USERS_HASHED_PASSWORD}
+        """
+        try:
+            record = await self.conn.fetchrow(query, username, hashed_password)
+            return UserInDB(**record) if record else None
+        except asyncpg.UniqueViolationError:
+            # Handle username conflict if necessary, maybe raise an exception or return None
+            print(f"Username '{username}' already exists.")
+            return None
+        except Exception as e:
+            print(f"Error adding user: {e}")  # Basic error logging
+            return None
+
+    async def get_user_by_username(self, username: str) -> Optional[UserInDB]:
+        """
+        Retrieves a user by their username.
+
+        Args:
+            username: The username to search for.
+
+        Returns:
+            The user object (UserInDB) if found, otherwise None.
+        """
+        query = f"""
+            SELECT {USERS_ID}, {USERS_USERNAME}, {USERS_HASHED_PASSWORD}
+            FROM {USERS_TABLE}
+            WHERE {USERS_USERNAME} = $1
+        """
+        record = await self.conn.fetchrow(query, username)
+        return UserInDB(**record) if record else None
+
+    async def get_user_by_id(self, user_id: int) -> Optional[UserInDB]:
+        """
+        Retrieves a user by their ID.
+
+        Args:
+            user_id: The ID of the user to search for.
+
+        Returns:
+            The user object (UserInDB) if found, otherwise None.
+        """
+        query = f"""
+            SELECT {USERS_ID}, {USERS_USERNAME}, {USERS_HASHED_PASSWORD}
+            FROM {USERS_TABLE}
+            WHERE {USERS_ID} = $1
+        """
+        record = await self.conn.fetchrow(query, user_id)
+        return UserInDB(**record) if record else None

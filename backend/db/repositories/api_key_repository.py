@@ -24,7 +24,12 @@ from db.schema_constants import (
     API_CONFIG_DESCRIPTION,
     API_CONFIG_CREATED_DATE,
     API_CONFIG_MODIFIED_DATE,
+    # API_CONFIG_USER_ID, # Conceptually adding user_id
 )
+
+# Note: Assuming 'user_id' column exists conceptually in API_CONFIG_TABLE
+API_CONFIG_USER_ID = "user_id"
+
 from db.repositories.base_repository import BaseRepository
 
 logger = logging.getLogger(__name__)
@@ -40,16 +45,17 @@ class ApiKeyRepository(BaseRepository):
         api_key: str,
         context: int,
         max_output_tokens: int,
+        user_id: int,  # Add user_id
         description: str = None,
     ) -> Optional[int]:
-        """Adds a new API key configuration. Returns new ID or None if failed."""
+        """Adds a new API key configuration for a user. Returns new ID or None if failed."""
         current_time = datetime.now(timezone.utc)
         query_str = f"""
             INSERT INTO {API_CONFIG_TABLE} (
-                {API_CONFIG_MODEL}, {API_CONFIG_BASE_URL}, {API_CONFIG_API_KEY}, 
+                {API_CONFIG_MODEL}, {API_CONFIG_BASE_URL}, {API_CONFIG_API_KEY},
                 {API_CONFIG_CONTEXT}, {API_CONFIG_MAX_OUTPUT_TOKENS}, {API_CONFIG_DESCRIPTION},
-                {API_CONFIG_CREATED_DATE}, {API_CONFIG_MODIFIED_DATE}
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                {API_CONFIG_CREATED_DATE}, {API_CONFIG_MODIFIED_DATE}, {API_CONFIG_USER_ID}
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             RETURNING {API_CONFIG_ID}
         """
         params = (
@@ -61,29 +67,32 @@ class ApiKeyRepository(BaseRepository):
             description,
             current_time,
             current_time,
+            user_id,  # Add user_id
         )
 
         try:
-            # Use _fetchval for RETURNING id
             last_id = await self._fetchval(query_str, params)
 
             if last_id is not None:
-                logger.info(f"Added API key for model {model} with ID {last_id}.")
+                logger.info(
+                    f"Added API key for model {model} with ID {last_id} for user {user_id}."
+                )
             else:
                 logger.warning(
-                    f"Failed to add API key for model {model}, no ID returned."
+                    f"Failed to add API key for model {model} for user {user_id}, no ID returned."
                 )
             return last_id
         except asyncpg.PostgresError as e:
-            logger.error(f"Error adding API key: {e}")
+            logger.error(f"Error adding API key for user {user_id}: {e}")
             return None
         except Exception as e:
-            logger.error(f"Unexpected error adding API key: {e}")
+            logger.error(f"Unexpected error adding API key for user {user_id}: {e}")
             return None
 
     async def update(
         self,
         api_id: int,
+        user_id: int,  # Add user_id
         model: str,
         base_url: str,
         api_key: str = None,
@@ -91,21 +100,24 @@ class ApiKeyRepository(BaseRepository):
         max_output_tokens: int = None,
         description: str = None,
     ) -> bool:
-        """Updates an API key by ID."""
-        existing_record = await self.get_by_id(api_id)
+        """Updates an API key by ID for a specific user."""
+        # Check ownership first
+        existing_record = await self.get_by_id(api_id, user_id)
         if not existing_record:
-            logger.warning(f"Failed to update API key ID {api_id} (not found).")
+            logger.warning(
+                f"Failed to update API key ID {api_id} for user {user_id} (not found or not owned)."
+            )
             return False
         existing = dict(existing_record)
 
         current_time = datetime.now(timezone.utc)
         query_str = f"""
-            UPDATE {API_CONFIG_TABLE} 
-            SET {API_CONFIG_MODEL} = $1, {API_CONFIG_BASE_URL} = $2, 
-                {API_CONFIG_API_KEY} = $3, {API_CONFIG_CONTEXT} = $4, 
-                {API_CONFIG_MAX_OUTPUT_TOKENS} = $5, {API_CONFIG_DESCRIPTION} = $6, 
+            UPDATE {API_CONFIG_TABLE}
+            SET {API_CONFIG_MODEL} = $1, {API_CONFIG_BASE_URL} = $2,
+                {API_CONFIG_API_KEY} = $3, {API_CONFIG_CONTEXT} = $4,
+                {API_CONFIG_MAX_OUTPUT_TOKENS} = $5, {API_CONFIG_DESCRIPTION} = $6,
                 {API_CONFIG_MODIFIED_DATE} = $7
-            WHERE {API_CONFIG_ID} = $8
+            WHERE {API_CONFIG_ID} = $8 AND {API_CONFIG_USER_ID} = $9
         """
         params = (
             model,
@@ -120,87 +132,94 @@ class ApiKeyRepository(BaseRepository):
             (
                 description
                 if description is not None
-                else existing[API_CONFIG_DESCRIPTION.lower()]
+                else existing.get(
+                    API_CONFIG_DESCRIPTION.lower()
+                )  # Use .get for optional field
             ),
             current_time,
             api_id,
+            user_id,  # Add user_id to WHERE clause
         )
 
         try:
             status = await self._execute(query_str, params)
             updated = status is not None and status.startswith("UPDATE 1")
             if updated:
-                logger.info(f"Updated API key ID {api_id}.")
+                logger.info(f"Updated API key ID {api_id} for user {user_id}.")
             else:
+                # This case should ideally not happen if get_by_id check passed, but log just in case
                 logger.warning(
-                    f"Update command for API key ID {api_id} executed but status was '{status}'."
+                    f"Update command for API key ID {api_id} (User: {user_id}) executed but status was '{status}'."
                 )
             return updated
         except asyncpg.PostgresError as e:
-            logger.error(f"Error updating API key: {e}")
+            logger.error(f"Error updating API key for user {user_id}: {e}")
             return False
         except Exception as e:
-            logger.error(f"Unexpected error updating API key: {e}")
+            logger.error(f"Unexpected error updating API key for user {user_id}: {e}")
             return False
 
-    async def delete(self, api_id: int) -> bool:
-        """Deletes an API key by ID."""
-        query_str = f"DELETE FROM {API_CONFIG_TABLE} WHERE {API_CONFIG_ID} = $1"
+    async def delete(self, api_id: int, user_id: int) -> bool:
+        """Deletes an API key by ID for a specific user."""
+        query_str = f"DELETE FROM {API_CONFIG_TABLE} WHERE {API_CONFIG_ID} = $1 AND {API_CONFIG_USER_ID} = $2"
 
         try:
-            status = await self._execute(query_str, (api_id,))
+            status = await self._execute(query_str, (api_id, user_id))
             deleted = status is not None and status.startswith("DELETE 1")
             if deleted:
-                logger.info(f"Deleted API key ID {api_id}.")
+                logger.info(f"Deleted API key ID {api_id} for user {user_id}.")
             else:
                 logger.warning(
-                    f"Delete command for API key ID {api_id} executed but status was '{status}'."
+                    f"Delete command for API key ID {api_id} (User: {user_id}) executed but status was '{status}'. Key might not exist or belong to user."
                 )
             return deleted
         except asyncpg.PostgresError as e:
-            logger.error(f"Error deleting API key: {e}")
+            logger.error(f"Error deleting API key for user {user_id}: {e}")
             return False
         except Exception as e:
-            logger.error(f"Unexpected error deleting API key: {e}")
+            logger.error(f"Unexpected error deleting API key for user {user_id}: {e}")
             return False
 
-    async def get_by_id(self, api_id: int) -> Optional[asyncpg.Record]:
-        """Gets an API key by ID."""
+    async def get_by_id(self, api_id: int, user_id: int) -> Optional[asyncpg.Record]:
+        """Gets an API key by ID for a specific user."""
         query_str = f"""
-            SELECT {API_CONFIG_ID}, {API_CONFIG_MODEL}, {API_CONFIG_BASE_URL}, 
-            {API_CONFIG_API_KEY}, {API_CONFIG_CONTEXT}, {API_CONFIG_MAX_OUTPUT_TOKENS}, 
-            {API_CONFIG_DESCRIPTION}, {API_CONFIG_CREATED_DATE}, {API_CONFIG_MODIFIED_DATE} 
-            FROM {API_CONFIG_TABLE} WHERE {API_CONFIG_ID} = $1
+            SELECT {API_CONFIG_ID}, {API_CONFIG_MODEL}, {API_CONFIG_BASE_URL},
+            {API_CONFIG_API_KEY}, {API_CONFIG_CONTEXT}, {API_CONFIG_MAX_OUTPUT_TOKENS},
+            {API_CONFIG_DESCRIPTION}, {API_CONFIG_CREATED_DATE}, {API_CONFIG_MODIFIED_DATE}, {API_CONFIG_USER_ID}
+            FROM {API_CONFIG_TABLE} WHERE {API_CONFIG_ID} = $1 AND {API_CONFIG_USER_ID} = $2
         """
-
         try:
-            return await self._fetchone(query_str, (api_id,))
+            return await self._fetchone(query_str, (api_id, user_id))
         except Exception as e:
-            logger.error(f"Error getting API key by ID: {e}")
+            logger.error(
+                f"Error getting API key by ID {api_id} for user {user_id}: {e}"
+            )
             return None
 
-    async def get_all(self) -> List[asyncpg.Record]:
-        """Gets all API keys as asyncpg.Record objects."""
+    async def get_all(self, user_id: int) -> List[asyncpg.Record]:
+        """Gets all API keys for a specific user as asyncpg.Record objects."""
         query_str = f"""
-            SELECT {API_CONFIG_ID}, {API_CONFIG_MODEL}, {API_CONFIG_BASE_URL}, 
-            {API_CONFIG_API_KEY}, {API_CONFIG_CONTEXT}, {API_CONFIG_MAX_OUTPUT_TOKENS}, 
-            {API_CONFIG_DESCRIPTION}, {API_CONFIG_CREATED_DATE}, {API_CONFIG_MODIFIED_DATE} 
-            FROM {API_CONFIG_TABLE} ORDER BY {API_CONFIG_MODEL}
+            SELECT {API_CONFIG_ID}, {API_CONFIG_MODEL}, {API_CONFIG_BASE_URL},
+            {API_CONFIG_API_KEY}, {API_CONFIG_CONTEXT}, {API_CONFIG_MAX_OUTPUT_TOKENS},
+            {API_CONFIG_DESCRIPTION}, {API_CONFIG_CREATED_DATE}, {API_CONFIG_MODIFIED_DATE}, {API_CONFIG_USER_ID}
+            FROM {API_CONFIG_TABLE}
+            WHERE {API_CONFIG_USER_ID} = $1
+            ORDER BY {API_CONFIG_MODEL}
         """
-
         try:
-            return await self._fetchall(query_str)
+            return await self._fetchall(query_str, (user_id,))
         except Exception as e:
-            logger.error(f"Error getting all API keys: {e}")
+            logger.error(f"Error getting all API keys for user {user_id}: {e}")
             return []
 
-    async def get_api_count(self) -> int:
-        """Gets the total count of API keys."""
-        query_str = f"SELECT COUNT(*) FROM {API_CONFIG_TABLE}"
-
+    async def get_api_count(self, user_id: int) -> int:
+        """Gets the total count of API keys for a specific user."""
+        query_str = (
+            f"SELECT COUNT(*) FROM {API_CONFIG_TABLE} WHERE {API_CONFIG_USER_ID} = $1"
+        )
         try:
-            count = await self._fetchval(query_str)
+            count = await self._fetchval(query_str, (user_id,))
             return count if count is not None else 0
         except Exception as e:
-            logger.error(f"Error getting API key count: {e}")
+            logger.error(f"Error getting API key count for user {user_id}: {e}")
             return 0

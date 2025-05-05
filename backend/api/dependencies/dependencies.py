@@ -9,8 +9,9 @@ Provides dependency injection for database connections, repositories, services, 
 import aiosqlite
 import logging
 from fastapi import Depends, HTTPException, status
-from typing import Optional
-import asyncpg  # Add asyncpg
+from fastapi.security import OAuth2PasswordBearer  # Import OAuth2PasswordBearer
+from typing import Optional, Annotated  # Import Annotated
+import asyncpg
 
 # Import components using absolute backend package path
 from config import config
@@ -23,7 +24,9 @@ from db.repositories import (
     NewsCategoryRepository,
     NewsSourceRepository,
     SystemConfigRepository,
+    UserRepository,  # Import UserRepository
 )
+from models import User  # Import User model
 from services import (
     ChatService,
     NewsService,
@@ -36,7 +39,18 @@ from core.llm import LLMClientPool
 # Import WebSocket manager
 from core.ws_manager import ws_manager
 
+# Import security functions
+from core.security import (
+    decode_access_token,
+    ALGORITHM,
+    SECRET_KEY,
+)  # Need decode_access_token
+
 logger = logging.getLogger(__name__)
+
+# OAuth2 Scheme
+# The tokenUrl should point to the login endpoint created in auth.py
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
 
 # Global instance for the LLM Pool (managed by lifespan in main.py)
 # This variable will be set by the lifespan event handlers in main.py
@@ -177,3 +191,55 @@ async def get_setting_service(
         api_key_repo=api_key_repo,
         system_config_repo=system_config_repo,
     )
+
+
+# --- Authentication Dependency ---
+
+
+async def get_user_repository(conn=Depends(get_connection)) -> UserRepository:
+    """Provides an instance of UserRepository with a database connection."""
+    # Note: get_connection needs to be defined or imported correctly.
+    # Assuming get_connection provides an asyncpg.Connection
+    return UserRepository(conn)
+
+
+async def get_current_active_user(
+    token: Annotated[str, Depends(oauth2_scheme)],
+    user_repo: Annotated[UserRepository, Depends(get_user_repository)],
+) -> User:
+    """
+    Dependency to get the current active user from the JWT token.
+
+    Validates the token, decodes it, retrieves the user ID, and fetches
+    the user from the database. Raises HTTPException 401 if validation fails.
+    """
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+    payload = decode_access_token(token)
+    if payload is None:
+        # This handles decode errors (invalid signature, expired, etc.)
+        raise credentials_exception
+
+    user_id_str: Optional[str] = payload.get("sub")
+    if user_id_str is None:
+        raise credentials_exception
+
+    try:
+        user_id = int(user_id_str)
+    except ValueError:
+        # Handle cases where 'sub' is not a valid integer string
+        raise credentials_exception
+
+    user = await user_repo.get_user_by_id(user_id)
+    if user is None:
+        raise credentials_exception
+
+    # Here you could add checks for user status (e.g., is_active) if needed
+    # if not user.is_active:
+    #     raise HTTPException(status_code=400, detail="Inactive user")
+
+    return user

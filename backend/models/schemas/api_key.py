@@ -23,6 +23,7 @@ class ApiKeyBase(BaseModel):
     description: Optional[str] = Field(
         None, description="Optional description for the API key"
     )
+    user_id: int = Field(..., description="ID of the user who owns this API key")
 
 
 class ApiKeyCreate(ApiKeyBase):

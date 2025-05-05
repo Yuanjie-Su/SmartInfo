@@ -55,6 +55,7 @@ class ChatBase(BaseModel):
     """Base schema for chat session data."""
 
     title: str = Field(..., max_length=255, description="Title of the chat session")
+    user_id: int = Field(..., description="ID of the user who owns this chat")
 
 
 class ChatCreate(ChatBase):
