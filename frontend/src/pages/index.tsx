@@ -40,6 +40,7 @@ import Link from 'next/link';
 import debounce from 'lodash/debounce';
 import type { CheckboxChangeEvent } from 'antd/es/checkbox';
 import AnalysisModal from '@/components/analysis/AnalysisModal';
+import withAuth from '@/components/auth/withAuth'; // Import the HOC
 
 const { Title, Text, Paragraph } = Typography;
 const { Option } = Select;
@@ -678,4 +679,5 @@ const NewsPage: React.FC = () => {
   );
 };
 
-export default NewsPage;
+// Wrap the component with the HOC for authentication
+export default withAuth(NewsPage);

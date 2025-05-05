@@ -35,6 +35,7 @@ import * as settingsService from '@/services/settingsService';
 import * as newsService from '@/services/newsService';
 import MainLayout from '../components/layout/MainLayout';
 import { handleApiError } from '../utils/apiErrorHandler';
+import withAuth from '@/components/auth/withAuth'; // Import the HOC
 
 const { Title, Text, Paragraph } = Typography;
 const { TabPane } = Tabs;
@@ -792,4 +793,5 @@ const Settings: React.FC = () => {
   );
 };
 
-export default Settings;
+// Wrap the component with the HOC for authentication
+export default withAuth(Settings);

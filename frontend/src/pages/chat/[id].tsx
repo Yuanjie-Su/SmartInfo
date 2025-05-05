@@ -20,6 +20,7 @@ import {
 } from '@ant-design/icons';
 import { Chat, Message, MessageCreate } from '@/utils/types';
 import * as chatService from '@/services/chatService';
+import withAuth from '@/components/auth/withAuth'; // Import the HOC
 
 const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;
@@ -265,4 +266,5 @@ const ChatPage: React.FC = () => {
   );
 };
 
-export default ChatPage;
+// Wrap the component with the HOC for authentication
+export default withAuth(ChatPage);

@@ -1,14 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { Layout, Menu, Button, Input, Space, Typography, Divider } from 'antd';
-import { 
-  FileTextOutlined, 
-  MessageOutlined, 
+import { Layout, Menu, Button, Input, Space, Typography, Divider, Spin } from 'antd'; // Added Spin
+import {
+  FileTextOutlined,
+  MessageOutlined,
   SettingOutlined,
   PlusOutlined,
-  SearchOutlined
+  SearchOutlined,
+  LoginOutlined,
+  LogoutOutlined,
+  UserOutlined
 } from '@ant-design/icons';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
+import { useAuth } from '@/context/AuthContext'; // Import useAuth hook
 import { Chat } from '@/utils/types';
 import * as chatService from '@/services/chatService';
 
@@ -17,10 +21,41 @@ const { Text } = Typography;
 const { Search } = Input;
 
 // Helper to format chat date for grouping
-const formatChatDate = (timestamp: number | undefined) => {
+const formatChatDate = (timestampInput: number | string | undefined | null): string => {
+  if (!timestampInput) {
+    return 'Others'; // Or handle as appropriate
+  }
+
+  let chatTimestamp: number;
+  if (typeof timestampInput === 'string') {
+    // Attempt to parse if it's a string (e.g., ISO string or timestamp string)
+    const parsedDate = new Date(timestampInput);
+    if (isNaN(parsedDate.getTime())) {
+      // If parsing fails, try parsing as a number (Unix timestamp string)
+      const parsedNum = parseInt(timestampInput, 10);
+      if (!isNaN(parsedNum)) {
+        chatTimestamp = parsedNum * 1000; // Assume seconds if it's a number string
+      } else {
+        return 'Others'; // Invalid date string
+      }
+    } else {
+      chatTimestamp = parsedDate.getTime(); // Use milliseconds from Date object
+    }
+  } else if (typeof timestampInput === 'number') {
+    // Assume it's a Unix timestamp in seconds, convert to milliseconds
+    chatTimestamp = timestampInput * 1000;
+  } else {
+    return 'Others'; // Should not happen based on type check, but safe fallback
+  }
+
   const now = new Date();
-  const chatDate = timestamp ? new Date(timestamp * 1000) : new Date();
-  
+  const chatDate = new Date(chatTimestamp);
+
+  // Check if chatDate is valid after all parsing attempts
+  if (isNaN(chatDate.getTime())) {
+      return 'Others';
+  }
+
   // Same day?
   if (now.toDateString() === chatDate.toDateString()) {
     return 'Today';
@@ -64,7 +99,8 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const [chats, setChats] = useState<Chat[]>([]);
   const [filteredChats, setFilteredChats] = useState<Chat[]>([]);
   const [selectedKey, setSelectedKey] = useState('news');
-  
+  const { isAuthenticated, user, logout, loading: authLoading } = useAuth(); // Get auth state and functions
+
   // Load chat history on component mount
   useEffect(() => {
     const loadChats = async () => {
@@ -124,9 +160,9 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   
   return (
     <Layout style={{ minHeight: '100vh' }}>
-      <Sider 
-        width={250} 
-        collapsible 
+      <Sider
+        width={250}
+        collapsible
         collapsed={collapsed}
         onCollapse={setCollapsed}
         style={{ 
@@ -206,9 +242,48 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
             </div>
           )}
         </div>
-        
-        {/* Settings at the bottom */}
+
+        {/* User Status & Settings at the bottom */}
         <div style={{ position: 'absolute', bottom: 0, width: '100%', padding: '16px' }}>
+          {/* User Status Section */}
+          {!collapsed && ( // Only show details when not collapsed
+            <div style={{ marginBottom: '16px', padding: '8px 0', borderTop: '1px solid rgba(255, 255, 255, 0.1)', borderBottom: '1px solid rgba(255, 255, 255, 0.1)' }}>
+              {authLoading ? (
+                <div style={{ textAlign: 'center' }}>
+                  <Spin size="small" />
+                </div>
+              ) : isAuthenticated && user ? (
+                <Space direction="vertical" style={{ width: '100%', padding: '0 8px' }}>
+                  <Space>
+                    <UserOutlined style={{ color: 'rgba(255, 255, 255, 0.65)' }} />
+                    <Text style={{ color: 'rgba(255, 255, 255, 0.85)' }} ellipsis>
+                      {user.username}
+                    </Text>
+                  </Space>
+                  <Button
+                    type="text"
+                    icon={<LogoutOutlined />}
+                    onClick={logout}
+                    style={{ color: 'rgba(255, 255, 255, 0.65)', width: '100%', textAlign: 'left', paddingLeft: '8px' }}
+                  >
+                    Logout
+                  </Button>
+                </Space>
+              ) : (
+                 <Link href="/login" passHref>
+                   <Button
+                     type="text"
+                     icon={<LoginOutlined />}
+                     style={{ color: 'rgba(255, 255, 255, 0.65)', width: '100%', textAlign: 'left', paddingLeft: '8px' }}
+                   >
+                     Login
+                   </Button>
+                 </Link>
+              )}
+            </div>
+          )}
+
+          {/* Settings Menu */}
           <Menu
             mode="inline"
             selectedKeys={[selectedKey]}
@@ -236,4 +311,4 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   );
 };
 
-export default MainLayout; 
+export default MainLayout;

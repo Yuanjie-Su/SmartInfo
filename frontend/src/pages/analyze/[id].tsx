@@ -2,6 +2,7 @@ import React from 'react';
 import { useRouter } from 'next/router';
 import AnalysisWindowContent from '@/components/analysis/AnalysisWindowContent';
 import { Typography, Alert } from 'antd';
+import withAuth from '@/components/auth/withAuth'; // Import the HOC
 
 const { Title } = Typography;
 
@@ -39,4 +40,5 @@ const AnalyzePage: React.FC = () => {
   );
 };
 
-export default AnalyzePage;
+// Wrap the component with the HOC for authentication
+export default withAuth(AnalyzePage);

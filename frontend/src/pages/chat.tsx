@@ -25,6 +25,7 @@ import MainLayout from '@/components/layout/MainLayout';
 import * as chatService from '@/services/chatService';
 import { handleApiError } from '@/utils/apiErrorHandler';
 import { Chat, Message, Question } from '@/utils/types';
+import withAuth from '@/components/auth/withAuth'; // Import the HOC
 
 const { Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
@@ -390,4 +391,5 @@ const ChatPage: React.FC = () => {
   );
 };
 
-export default ChatPage;
+// Wrap the component with the HOC for authentication
+export default withAuth(ChatPage);

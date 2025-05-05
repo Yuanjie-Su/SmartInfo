@@ -158,7 +158,9 @@ class DatabaseConnectionManager:
                     cls._instance._connection_mode = None
         return cls._instance
 
-    async def _initialize(self, db_connection_mode: str = "pool"):
+    async def _initialize(
+        self, db_connection_mode: str = "pool", min_size: int = 2, max_size: int = 2
+    ):
         """Initialize database connection resource (pool or single connection)."""
         if self._db_resource is not None:
             logger.warning("Database resource already initialized.")
@@ -192,9 +194,8 @@ class DatabaseConnectionManager:
                     database=db_name,
                     host=db_host,
                     port=db_port,
-                    # Consider adding min_size, max_size for pool configuration
-                    # min_size=1,
-                    # max_size=10
+                    min_size=min_size,
+                    max_size=max_size,
                 )
                 # Create tables using a connection from the pool
                 await self._create_tables(self._db_resource)

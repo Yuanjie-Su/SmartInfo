@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios, { AxiosHeaders } from 'axios'; // Import AxiosHeaders
 
 // Base API configuration
 const api = axios.create({
@@ -12,7 +12,22 @@ const api = axios.create({
 // Request interceptor for adding auth token or other headers if needed
 api.interceptors.request.use(
   (config) => {
-    // You can add auth tokens here if needed
+    // Retrieve the token from localStorage
+    const token = localStorage.getItem('authToken');
+
+    // If the token exists, add it to the Authorization header
+    if (token) {
+      // Ensure headers object exists (Axios should initialize it, but let's be safe)
+      if (!config.headers) {
+        config.headers = new AxiosHeaders(); // Initialize with the correct class
+      }
+      // Use the 'set' method for type safety
+      config.headers.set('Authorization', `Bearer ${token}`);
+      // console.log('Token added to request headers:', config.headers.get('Authorization')); // Optional: for debugging
+    } else {
+      // console.log('No token found, request sent without Authorization header.'); // Optional: for debugging
+    }
+
     return config;
   },
   (error) => {
@@ -36,4 +51,4 @@ api.interceptors.response.use(
   }
 );
 
-export default api; 
+export default api;

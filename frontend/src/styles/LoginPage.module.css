@@ -1,0 +1,19 @@
+/* frontend/src/styles/LoginPage.module.css */
+.loginContainer {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    background-color: #f0f2f5;
+    /* Light grey background */
+}
+
+.loginCard {
+    width: 400px;
+    /* Adjust width as needed */
+    padding: 20px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    /* Subtle shadow */
+}
+
+/* Add any other specific styles if needed */
