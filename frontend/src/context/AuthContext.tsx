@@ -1,15 +1,11 @@
 import React, { createContext, useState, useContext, useEffect, ReactNode } from 'react';
 import { useRouter } from 'next/router';
 // Import actual service functions
-import { loginUser, logoutUser /*, fetchUserProfile */ } from '../services/authService';
+import { loginUser, logoutUser, registerUser, fetchUserProfile, User as UserType } from '../services/authService';
 import api from '../services/api'; // Import api to potentially clear auth header on logout error
 
-// Define the shape of the user object (adjust as needed based on backend response)
-interface User {
-  id: string;
-  username: string;
-  // Add other relevant user fields if returned by backend (e.g., email, roles)
-}
+// Define the shape of the user object based on service type
+type User = UserType;
 
 // Define the shape of the context value
 interface AuthContextType {
@@ -19,7 +15,7 @@ interface AuthContextType {
   loading: boolean; // Indicates initial auth check or ongoing login/logout
   login: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>; // Make logout async
-  // signup?: (userData: any) => Promise<void>; // Optional signup function
+  signup: (username: string, password: string) => Promise<void>; // Implementation of signup function
 }
 
 // Create the context with a default value
@@ -44,26 +40,27 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       const storedToken = localStorage.getItem('authToken');
       if (storedToken) {
         console.log("Found token in localStorage. Validating...");
-        setToken(storedToken); // Temporarily set token for API calls
+        // 设置令牌用于API调用
+        setToken(storedToken);
+        api.defaults.headers.common['Authorization'] = `Bearer ${storedToken}`;
+        
         try {
-          // TODO: Uncomment and use actual profile fetching function if available
-          // const fetchedUser = await fetchUserProfile();
-          // --- Placeholder for user fetch ---
-          // Simulate fetching user based on token - replace with actual call
-          const fetchedUser: User = { id: 'temp-id-from-token', username: 'user-from-token' };
-          console.log("Token validation successful (simulated). User:", fetchedUser);
-          // --- End Placeholder ---
-
+          // 使用真实API调用检查令牌是否有效
+          const fetchedUser = await fetchUserProfile();
+          console.log("Token validation successful. User:", fetchedUser);
+          
+          // 设置验证后的用户状态
           setUser(fetchedUser);
           setIsAuthenticated(true);
           console.log("Auth state initialized from validated token.");
         } catch (error: any) {
           console.error("Token validation failed:", error.message);
+          // 清除无效的令牌和用户信息
           localStorage.removeItem('authToken');
           setToken(null);
           setUser(null);
           setIsAuthenticated(false);
-          // Optionally clear Authorization header from default Axios instance if validation fails
+          // 清除 Axios 默认认证头
           if (api.defaults.headers.common['Authorization']) {
             delete api.defaults.headers.common['Authorization'];
           }
@@ -79,6 +76,15 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
     validateToken();
   }, []); // Run only once on mount
+
+  // 更新API认证头的额外效果
+  useEffect(() => {
+    if (token) {
+      api.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+    } else if (api.defaults.headers.common['Authorization']) {
+      delete api.defaults.headers.common['Authorization'];
+    }
+  }, [token]);
 
   const login = async (username: string, password: string) => {
     setLoading(true);
@@ -139,8 +145,28 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
-  // Optional signup function
-  // const signup = async (userData: any) => { ... };
+  const signup = async (username: string, password: string) => {
+    setLoading(true);
+    try {
+      console.log(`Attempting to register user: ${username}`);
+      
+      // Call the registration service function
+      await registerUser({ username, password });
+      
+      console.log("Registration successful");
+      
+      // Registration successful, automatically login the user
+      // Or simply return and let the signup page redirect to login
+      return;
+      
+    } catch (error) {
+      console.error('Registration failed:', error);
+      // Rethrow the error so the registration page can display it
+      throw error;
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const contextValue: AuthContextType = {
     isAuthenticated,
@@ -149,7 +175,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     loading,
     login,
     logout,
-    // signup,
+    signup,
   };
 
   // Render children only after initial loading is complete

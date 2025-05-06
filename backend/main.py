@@ -12,6 +12,7 @@ import sys
 import os
 from contextlib import asynccontextmanager
 from typing import Optional
+import asyncpg
 from dotenv import load_dotenv
 import logging
 import argparse  # Add argparse for potential future direct script execution
@@ -60,13 +61,9 @@ from db.connection import (
     init_db_connection,
     get_db_connection_context,
 )
-from db.repositories import SystemConfigRepository  # Needed for config init
+from db.repositories import UserPreferenceRepository  # 更新为用户偏好仓库
 from core.llm import LLMClientPool  # Import from new location
 from api import api_router  # Import the main API router
-from api.dependencies import (
-    set_global_llm_pool,
-    get_llm_pool_dependency,
-)  # Import from new dependencies module
 
 
 # --- Application Lifespan Management ---
@@ -83,7 +80,7 @@ async def lifespan(app: FastAPI):
     """
     logger.info("Application lifespan starting...")
     db_manager = None
-    llm_pool_instance = None
+    db_manager = None
 
     # == Startup ==
     try:
@@ -93,50 +90,9 @@ async def lifespan(app: FastAPI):
         db_manager = await init_db_connection()
         logger.info("Database Connection Manager initialized successfully.")
 
-        # 2. Initialize Configuration with DB access
-        # Pass the repository instance to the config object to load/save settings
-        logger.info("Loading persistent configuration from database...")
-        sys_config_repo = SystemConfigRepository()
-        await config.set_db_repo(sys_config_repo)  # This call now loads from DB
-        logger.info("Persistent configuration loaded.")
-
-        # 3. Initialize LLM Client Pool
-        logger.info("Initializing LLM Client Pool...")
-        # Use config values (env > db > defaults)
-        api_key_to_use = config.get("LLM_API_KEY")
-        base_url = config.get(
-            "LLM_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3"
-        )  # Ensure default
-        pool_size = config.get("LLM_POOL_SIZE", 3)  # Ensure default
-        context_window = config.get("LLM_CONTEXT_WINDOW", 4096)  # Ensure default
-        max_output_tokens = config.get("LLM_MAX_OUTPUT_TOKENS", 2048)  # Ensure default
-        default_model = config.get("LLM_MODEL", "deepseek-v3-250324")  # Ensure default
-
-        if not api_key_to_use:
-            logger.warning(
-                "No LLM API key found in config (env/db). LLM features will be limited."
-            )
-
-        llm_pool_instance = LLMClientPool(
-            pool_size=pool_size,
-            base_url=base_url,
-            api_key=api_key_to_use,  # Can be None if no key found
-            model=default_model,
-            context_window=context_window,
-            max_output_tokens=max_output_tokens,
-        )
-        # Set the global pool instance for the dependency injector in api/dependencies.py
-        set_global_llm_pool(llm_pool_instance)
-        logger.info(
-            f"LLM Client Pool initialized (Size: {pool_size}, Base URL: {base_url}, Model: {default_model}, Context Window: {context_window}, Max Output Tokens: {max_output_tokens})."
-        )
-        # Note: Actual client connections within the pool are lazy-initialized on first use.
-
     except Exception as e:
         logger.critical(f"Application startup failed: {e}", exc_info=True)
         # Perform cleanup even if startup fails partially
-        if llm_pool_instance:
-            await llm_pool_instance.close()  # Close pool if it was created
         if db_manager:
             await db_manager._cleanup()  # Use manager's async cleanup
         raise RuntimeError("Application startup failed.") from e
@@ -146,15 +102,6 @@ async def lifespan(app: FastAPI):
 
     # == Shutdown ==
     logger.info("Application lifespan shutting down...")
-    if llm_pool_instance:
-        logger.info("Closing LLM client pool...")
-        try:
-            await llm_pool_instance.close()
-            logger.info("LLM client pool closed.")
-        except Exception as e:
-            logger.error(f"Error closing LLM pool: {e}", exc_info=True)
-    else:
-        logger.info("LLM client pool was not initialized, skipping closure.")
 
     if db_manager:
         logger.info("Closing database connection...")
@@ -214,63 +161,36 @@ async def read_root():
 
 @app.get("/health", tags=["General"], summary="Health Check")
 async def health_check(
-    # Use the dependency function from dependencies
-    # Note: This checks the *global* pool set during lifespan
-    llm_pool: Optional[LLMClientPool] = Depends(
-        get_llm_pool_dependency, use_cache=False
-    ),
+    db_context=Depends(get_db_connection_context),  # Inject DB context manager
 ):
     """
-    Health check endpoint that validates database connection and LLM services.
-    Returns various diagnostic information.
+    Health check endpoint to verify the API is running and the database is reachable.
     """
-    # Check basic application availability
-    app_status = "ok"
-    version = "1.0.0"  # Consider making this dynamic
-
-    # Check database connection status
     db_status = "unknown"
     try:
-        # Get a DB pool and test it by executing a simple query
-        async with get_db_connection_context() as conn:
-            if conn:
-                # Execute a simple query to check connectivity
-                await conn.fetchval("SELECT 1")
+        # Acquire connection using the context manager
+        async with db_context as conn:
+            # Execute a simple query to check the connection
+            await conn.fetchval("SELECT 1")
             db_status = "connected"
+            logger.debug("Database health check successful.")
+    except (asyncpg.PostgresError, OSError, TimeoutError) as e:
+        # Catch specific DB errors, network errors, or timeouts
+        db_status = f"error: {type(e).__name__} - {str(e)}"
+        logger.error(
+            f"Database health check failed: {db_status}", exc_info=False
+        )  # Log less verbosely for health check failures
     except Exception as e:
-        db_status = f"error: {str(e)}"
-        logger.warning(f"Health check - DB connection failed: {e}")
+        # Catch any other unexpected errors
+        db_status = f"unexpected_error: {type(e).__name__} - {str(e)}"
+        logger.error(
+            f"Unexpected error during database health check: {db_status}", exc_info=True
+        )
 
-    # Check LLM service status
-    llm_status = "not_initialized"
-    llm_pool_size = 0
-    if llm_pool:
-        try:
-            llm_status = "initialized"
-            llm_pool_size = llm_pool.pool_size
-            # We don't do a test connection here to avoid overhead
-            # For a deep health check, there's a separate endpoint
-        except Exception as e:
-            llm_status = f"error: {str(e)}"
-            logger.warning(f"Health check - LLM status check failed: {e}")
-
-    # Return detailed health information
-    return {
-        "status": (
-            "healthy"
-            if (app_status == "ok" and db_status == "connected")
-            else "degraded"
-        ),
-        "api_version": version,
-        "components": {
-            "app": {"status": app_status},
-            "database": {"status": db_status},
-            "llm_service": {
-                "status": llm_status,
-                "pool_size": llm_pool_size,
-            },
-        },
-    }
+    # Return the overall API status and the database status
+    # API is considered 'healthy' if it's responding, even if DB has issues.
+    # Clients can check the db_status field for dependency health.
+    return {"api_status": "healthy", "database_status": db_status}
 
 
 # --- Execution Entry Point ---

@@ -3,89 +3,82 @@
 # -*- coding: utf-8 -*-
 
 """
-Models package: Exports Pydantic schemas for data validation and serialization.
+Models module for the application.
+Imports all model classes and re-exports them for convenient imports elsewhere.
 """
 
-# Import schemas from their specific files within the schemas directory
-from .schemas.api_key import ApiKeyBase, ApiKeyCreate, ApiKey
-from .schemas.chat import (
-    MessageBase,
-    MessageCreate,
-    Message,
-    ChatBase,
-    ChatCreate,
-    Chat,
-    ChatAnswer,
-    Question,
-)
-from .schemas.news import (
-    NewsSourceBase,
+# Schemas for request/response models
+from models.schemas.user import User, UserCreate
+from models.schemas.news import (
+    NewsItem as News,  # Alias NewsItem as News
+    NewsItemCreate as NewsCreate,  # Alias NewsItemCreate as NewsCreate
+    NewsItemUpdate as NewsUpdate,  # Alias NewsItemUpdate as NewsUpdate
+    NewsCategory,
+    NewsCategoryCreate,
+    NewsCategoryUpdate,  # Keep NewsCategoryUpdate if it exists elsewhere or might be added
+    NewsSource,
     NewsSourceCreate,
     NewsSourceUpdate,
-    NewsSource,
-    NewsCategoryBase,
-    NewsCategoryCreate,
-    NewsCategoryUpdate,
-    NewsCategory,
-    NewsItemBase,
-    NewsItemCreate,
-    NewsItemUpdate,
-    NewsItem,
     FetchSourceRequest,
+    FetchSourceBatchRequest,
     FetchUrlRequest,
     AnalyzeRequest,
     AnalyzeContentRequest,
     AnalysisResult,
     UpdateAnalysisRequest,
 )
-from .schemas.settings import (
-    SystemConfigBase,
-    SystemConfig,
-    SystemConfigUpdate,
+from models.schemas.api_key import ApiKey, ApiKeyCreate
+from models.schemas.settings import (
+    UserPreference,
+    UserPreferenceBase,
+    UserPreferenceUpdate,
 )
-from .schemas.user import UserBase, UserCreate, User, UserInDB
+from models.schemas.chat import (
+    Chat,
+    ChatCreate,
+    Message,
+    MessageCreate,
+    ChatAnswer,
+    Question,
+)
 
+# Import UserInDB if needed internally, but don't export typically
+from models.schemas.user import UserInDB
 
+# Re-export models for convenient imports elsewhere
 __all__ = [
-    # API Key Schemas
-    "ApiKeyBase",
-    "ApiKeyCreate",
-    "ApiKey",
-    # Chat Schemas
-    "MessageBase",
-    "MessageCreate",
-    "Message",
-    "ChatBase",
-    "ChatCreate",
-    "Chat",
-    "ChatAnswer",
-    "Question",
-    # News Schemas
-    "NewsSourceBase",
-    "NewsSourceCreate",
-    "NewsSourceUpdate",
-    "NewsSource",
-    "NewsCategoryBase",
+    # User related
+    "User",
+    "UserCreate",
+    # News related
+    "News",
+    "NewsCreate",
+    "NewsUpdate",
+    "NewsCategory",
     "NewsCategoryCreate",
     "NewsCategoryUpdate",
-    "NewsCategory",
-    "NewsItemBase",
-    "NewsItemCreate",
-    "NewsItemUpdate",
-    "NewsItem",
+    "NewsSource",
+    "NewsSourceCreate",
+    "NewsSourceUpdate",
     "FetchSourceRequest",
+    "FetchSourceBatchRequest",
     "FetchUrlRequest",
     "AnalyzeRequest",
     "AnalyzeContentRequest",
     "AnalysisResult",
     "UpdateAnalysisRequest",
-    # Settings Schemas
-    "SystemConfigBase",
-    "SystemConfig",
-    "SystemConfigUpdate",
-    # User Schemas
-    "UserBase",
-    "UserCreate",
-    "User",
-    "UserInDB",
+    # API Key related
+    "ApiKey",
+    "ApiKeyCreate",
+    # Settings related
+    "UserPreference",
+    "UserPreferenceBase",
+    "UserPreferenceUpdate",
+    # Chat related
+    "Chat",
+    "ChatCreate",
+    "Message",
+    "MessageCreate",
+    "ChatAnswer",
+    "Question",
 ]

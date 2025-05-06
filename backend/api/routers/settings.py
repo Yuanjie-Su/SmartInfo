@@ -5,22 +5,26 @@ API router for user-specific application settings and API key management (Versio
 """
 
 import logging
+import time
 from fastapi import APIRouter, Depends, HTTPException, Body, status
 from typing import List, Dict, Any, Optional, Annotated  # Import Annotated
 
 # Import dependencies from the centralized dependencies module
 from api.dependencies import (
     get_setting_service,
-    get_llm_pool_dependency,
     get_current_active_user,  # Import user dependency
 )
 
 # Import schemas from the main models package
-from models import ApiKey, ApiKeyCreate, SystemConfigUpdate, User  # Import User schema
+from models import (
+    ApiKey,
+    ApiKeyCreate,
+    UserPreferenceUpdate,
+    User,
+)  # Import User schema
 
-# Import service and pool type hints
+# Import service type hint
 from services.setting_service import SettingService
-from core.llm.pool import LLMClientPool
 
 logger = logging.getLogger(__name__)
 
@@ -217,7 +221,7 @@ async def get_all_settings(
     description="Update persistent application settings for the current user.",
 )
 async def update_settings(
-    settings_update: SystemConfigUpdate,  # Contains the dict of settings
+    settings_update: UserPreferenceUpdate,  # Contains the dict of settings
     current_user: Annotated[User, Depends(get_current_active_user)],
     setting_service: Annotated[SettingService, Depends(get_setting_service)],
 ):
@@ -263,45 +267,3 @@ async def reset_settings(
     except Exception as e:
         logger.exception("Failed to reset user settings", exc_info=True)
         raise HTTPException(status_code=500, detail="Error resetting settings.")
-
-
-# --- LLM Service Status Endpoints (Not user-specific) ---
-
-
-@router.get(
-    "/llm/test",
-    summary="Test LLM service connection",
-    response_model=Dict[str, Any],
-    description="Verify connectivity and basic functionality of a configured LLM service (uses first available key).",
-)
-async def test_llm_connection(
-    # Inject the LLM pool dependency - Pool uses keys from DB/config
-    llm_pool: Annotated[LLMClientPool, Depends(get_llm_pool_dependency)],
-):
-    """Test connection using a client from the pool."""
-    try:
-        llm_client = llm_pool.get_client()  # Get any available client
-        if not llm_client:
-            raise HTTPException(
-                status_code=503, detail="No LLM clients available in the pool."
-            )
-
-        test_prompt = [{"role": "user", "content": "Say hello"}]
-        start_time = time.time()
-        response = await llm_client.agenerate_response(test_prompt, max_tokens=10)
-        response_time = round((time.time() - start_time) * 1000, 2)
-
-        return {
-            "status": "success",
-            "response": response[:100] + "..." if len(response) > 100 else response,
-            "response_time_ms": response_time,
-            "model": llm_client.model_name,
-        }
-    except Exception as e:
-        logger.error(f"LLM connection test failed: {str(e)}", exc_info=True)
-        return {
-            "status": "error",
-            "error_type": type(e).__name__,
-            "error_message": str(e),
-            "suggestion": "Check API key configurations and network connectivity.",
-        }

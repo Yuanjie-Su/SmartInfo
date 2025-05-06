@@ -2,77 +2,6 @@
 # -*- coding: utf-8 -*-
 
 """
-This module provides a connection manager for the SQLite database.
-It handles database connection, table creation, and cleanup.
-
-The DatabaseConnectionManager class manages a single database connection and provides
-methods to initialize the database, create tables, and clean up resources.
-"""
-
-import os
-import logging
-import asyncpg
-import atexit
-from threading import Lock
-from typing import Optional
-
-# Import using backend package path
-from config import config  # Import the config instance
-from db.schema_constants import (
-    # Table names
-    NEWS_CATEGORY_TABLE,
-    NEWS_SOURCES_TABLE,
-    NEWS_TABLE,
-    API_CONFIG_TABLE,
-    SYSTEM_CONFIG_TABLE,
-    CHATS_TABLE,
-    MESSAGES_TABLE,
-    # News category columns
-    # News source columns
-    # News columns
-    NEWS_ID,
-    NEWS_TITLE,
-    NEWS_URL,
-    NEWS_SOURCE_NAME,
-    NEWS_CATEGORY_NAME,
-    NEWS_SOURCE_ID,
-    NEWS_CATEGORY_ID,
-    NEWS_SUMMARY,
-    NEWS_ANALYSIS,
-    NEWS_DATE,
-    NEWS_CONTENT,
-    # API config columns
-    API_CONFIG_ID,
-    API_CONFIG_MODEL,
-    API_CONFIG_BASE_URL,
-    API_CONFIG_API_KEY,
-    API_CONFIG_CONTEXT,
-    API_CONFIG_MAX_OUTPUT_TOKENS,
-    API_CONFIG_DESCRIPTION,
-    API_CONFIG_CREATED_DATE,
-    API_CONFIG_MODIFIED_DATE,
-    # System config columns
-    SYSTEM_CONFIG_KEY,
-    SYSTEM_CONFIG_VALUE,
-    SYSTEM_CONFIG_DESCRIPTION,
-    # Chat columns
-    CHAT_ID,
-    CHAT_TITLE,
-    CHAT_CREATED_AT,
-    CHAT_UPDATED_AT,
-    # Message columns
-    MESSAGE_ID,
-    MESSAGE_CHAT_ID,
-    MESSAGE_SENDER,
-    MESSAGE_CONTENT,
-    MESSAGE_TIMESTAMP,
-    MESSAGE_SEQUENCE_NUMBER,
-)
-
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-
-"""
 This module provides a connection manager for the database.
 It handles database connection initialization and cleanup, supporting
 both connection pool and single connection modes.
@@ -94,11 +23,20 @@ from db.schema_constants import (
     NEWS_SOURCES_TABLE,
     NEWS_TABLE,
     API_CONFIG_TABLE,
-    SYSTEM_CONFIG_TABLE,
+    USER_PREFERENCES_TABLE,
     CHATS_TABLE,
     MESSAGES_TABLE,
+    USERS_TABLE,
     # News category columns
+    NEWS_CATEGORY_ID,
+    NEWS_CATEGORY_NAME,
+    NEWS_CATEGORY_USER_ID,
     # News source columns
+    NEWS_SOURCE_ID,
+    NEWS_SOURCE_NAME,
+    NEWS_SOURCE_URL,
+    NEWS_SOURCE_CATEGORY_ID,
+    NEWS_SOURCE_USER_ID,
     # News columns
     NEWS_ID,
     NEWS_TITLE,
@@ -111,6 +49,7 @@ from db.schema_constants import (
     NEWS_ANALYSIS,
     NEWS_DATE,
     NEWS_CONTENT,
+    NEWS_USER_ID,
     # API config columns
     API_CONFIG_ID,
     API_CONFIG_MODEL,
@@ -121,15 +60,18 @@ from db.schema_constants import (
     API_CONFIG_DESCRIPTION,
     API_CONFIG_CREATED_DATE,
     API_CONFIG_MODIFIED_DATE,
-    # System config columns
-    SYSTEM_CONFIG_KEY,
-    SYSTEM_CONFIG_VALUE,
-    SYSTEM_CONFIG_DESCRIPTION,
+    API_CONFIG_USER_ID,
+    # User Preference columns
+    USER_PREFERENCE_KEY,
+    USER_PREFERENCE_VALUE,
+    USER_PREFERENCE_DESCRIPTION,
+    USER_PREFERENCE_USER_ID,
     # Chat columns
     CHAT_ID,
     CHAT_TITLE,
     CHAT_CREATED_AT,
     CHAT_UPDATED_AT,
+    CHAT_USER_ID,
     # Message columns
     MESSAGE_ID,
     MESSAGE_CHAT_ID,
@@ -137,6 +79,10 @@ from db.schema_constants import (
     MESSAGE_CONTENT,
     MESSAGE_TIMESTAMP,
     MESSAGE_SEQUENCE_NUMBER,
+    # User columns
+    USERS_ID,
+    USERS_USERNAME,
+    USERS_HASHED_PASSWORD,
 )
 
 logger = logging.getLogger(__name__)
@@ -251,12 +197,33 @@ class DatabaseConnectionManager:
             # Use a transaction for schema creation
             async with conn.transaction():
                 try:
+                    # Users Table (PostgreSQL syntax) - Create users table first for foreign key references
+                    await conn.execute(
+                        f"""
+                        CREATE TABLE IF NOT EXISTS {USERS_TABLE} (
+                            {USERS_ID} SERIAL PRIMARY KEY,
+                            {USERS_USERNAME} TEXT NOT NULL UNIQUE,
+                            {USERS_HASHED_PASSWORD} TEXT NOT NULL
+                        )
+                    """
+                    )
+                    logger.debug(f"Table {USERS_TABLE} checked/created.")
+
+                    await conn.execute(
+                        f"""
+                        CREATE INDEX IF NOT EXISTS idx_users_username ON {USERS_TABLE} ({USERS_USERNAME})
+                    """
+                    )
+                    logger.debug(f"Index idx_users_username checked/created.")
+
                     # News Category Table (PostgreSQL syntax)
                     await conn.execute(
                         f"""
                         CREATE TABLE IF NOT EXISTS {NEWS_CATEGORY_TABLE} (
-                            {NEWS_ID} SERIAL PRIMARY KEY,
-                            name TEXT NOT NULL UNIQUE
+                            {NEWS_CATEGORY_ID} SERIAL PRIMARY KEY,
+                            {NEWS_CATEGORY_NAME} TEXT NOT NULL,
+                            {NEWS_CATEGORY_USER_ID} INTEGER NOT NULL REFERENCES {USERS_TABLE}({USERS_ID}) ON DELETE CASCADE,
+                            UNIQUE ({NEWS_CATEGORY_NAME}, {NEWS_CATEGORY_USER_ID})
                         )
                     """
                     )
@@ -266,11 +233,14 @@ class DatabaseConnectionManager:
                     await conn.execute(
                         f"""
                         CREATE TABLE IF NOT EXISTS {NEWS_SOURCES_TABLE} (
-                            {NEWS_ID} SERIAL PRIMARY KEY,
-                            name TEXT NOT NULL,
-                            url TEXT NOT NULL UNIQUE,
-                            category_id INTEGER NOT NULL,
-                            FOREIGN KEY (category_id) REFERENCES {NEWS_CATEGORY_TABLE}({NEWS_ID}) ON DELETE CASCADE
+                            {NEWS_SOURCE_ID} SERIAL PRIMARY KEY,
+                            {NEWS_SOURCE_NAME} TEXT NOT NULL,
+                            {NEWS_SOURCE_URL} TEXT NOT NULL,
+                            {NEWS_SOURCE_CATEGORY_ID} INTEGER NOT NULL,
+                            {NEWS_SOURCE_USER_ID} INTEGER NOT NULL REFERENCES {USERS_TABLE}({USERS_ID}) ON DELETE CASCADE,
+                            FOREIGN KEY ({NEWS_SOURCE_CATEGORY_ID}) REFERENCES {NEWS_CATEGORY_TABLE}({NEWS_CATEGORY_ID}) ON DELETE CASCADE,
+                            UNIQUE ({NEWS_SOURCE_URL}, {NEWS_SOURCE_USER_ID}),
+                            UNIQUE ({NEWS_SOURCE_NAME}, {NEWS_SOURCE_USER_ID})
                         )
                     """
                     )
@@ -278,7 +248,7 @@ class DatabaseConnectionManager:
 
                     await conn.execute(
                         f"""
-                        CREATE INDEX IF NOT EXISTS idx_news_sources_url ON {NEWS_SOURCES_TABLE} (url)
+                        CREATE INDEX IF NOT EXISTS idx_news_sources_url ON {NEWS_SOURCES_TABLE} ({NEWS_SOURCE_URL})
                     """
                     )
                     logger.debug(f"Index idx_news_sources_url checked/created.")
@@ -289,7 +259,7 @@ class DatabaseConnectionManager:
                         CREATE TABLE IF NOT EXISTS {NEWS_TABLE} (
                             {NEWS_ID} BIGSERIAL PRIMARY KEY,
                             {NEWS_TITLE} TEXT NOT NULL,
-                            {NEWS_URL} TEXT NOT NULL UNIQUE,
+                            {NEWS_URL} TEXT NOT NULL,
                             {NEWS_SOURCE_NAME} TEXT,
                             {NEWS_CATEGORY_NAME} TEXT,
                             {NEWS_SOURCE_ID} INTEGER,
@@ -298,8 +268,10 @@ class DatabaseConnectionManager:
                             {NEWS_ANALYSIS} TEXT,
                             {NEWS_DATE} TIMESTAMP WITH TIME ZONE,
                             {NEWS_CONTENT} TEXT,
-                            FOREIGN KEY ({NEWS_SOURCE_ID}) REFERENCES {NEWS_SOURCES_TABLE}({NEWS_ID}) ON DELETE SET NULL,
-                            FOREIGN KEY ({NEWS_CATEGORY_ID}) REFERENCES {NEWS_CATEGORY_TABLE}({NEWS_ID}) ON DELETE SET NULL
+                            {NEWS_USER_ID} INTEGER NOT NULL REFERENCES {USERS_TABLE}({USERS_ID}) ON DELETE CASCADE,
+                            FOREIGN KEY ({NEWS_SOURCE_ID}) REFERENCES {NEWS_SOURCES_TABLE}({NEWS_SOURCE_ID}) ON DELETE SET NULL,
+                            FOREIGN KEY ({NEWS_CATEGORY_ID}) REFERENCES {NEWS_CATEGORY_TABLE}({NEWS_CATEGORY_ID}) ON DELETE SET NULL,
+                            UNIQUE ({NEWS_URL}, {NEWS_USER_ID})
                         )
                     """
                     )
@@ -329,6 +301,12 @@ class DatabaseConnectionManager:
                     """
                     )
                     logger.debug(f"Index idx_news_source_id checked/created.")
+                    await conn.execute(
+                        f"""
+                        CREATE INDEX IF NOT EXISTS idx_news_user_id ON {NEWS_TABLE} ({NEWS_USER_ID})
+                    """
+                    )
+                    logger.debug(f"Index idx_news_user_id checked/created.")
 
                     # API Config Table (PostgreSQL syntax)
                     await conn.execute(
@@ -341,6 +319,7 @@ class DatabaseConnectionManager:
                             {API_CONFIG_CONTEXT} INTEGER,
                             {API_CONFIG_MAX_OUTPUT_TOKENS} INTEGER,
                             {API_CONFIG_DESCRIPTION} TEXT,
+                            {API_CONFIG_USER_ID} INTEGER NOT NULL REFERENCES {USERS_TABLE}({USERS_ID}) ON DELETE CASCADE,
                             {API_CONFIG_CREATED_DATE} TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                             {API_CONFIG_MODIFIED_DATE} TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                         )
@@ -348,17 +327,19 @@ class DatabaseConnectionManager:
                     )
                     logger.debug(f"Table {API_CONFIG_TABLE} checked/created.")
 
-                    # System Config Table (PostgreSQL syntax)
+                    # User Preferences Table (PostgreSQL syntax)
                     await conn.execute(
                         f"""
-                        CREATE TABLE IF NOT EXISTS {SYSTEM_CONFIG_TABLE} (
-                            {SYSTEM_CONFIG_KEY} TEXT PRIMARY KEY,
-                            {SYSTEM_CONFIG_VALUE} TEXT,
-                            {SYSTEM_CONFIG_DESCRIPTION} TEXT
+                        CREATE TABLE IF NOT EXISTS {USER_PREFERENCES_TABLE} (
+                            {USER_PREFERENCE_KEY} TEXT NOT NULL,
+                            {USER_PREFERENCE_VALUE} TEXT,
+                            {USER_PREFERENCE_DESCRIPTION} TEXT,
+                            {USER_PREFERENCE_USER_ID} INTEGER NOT NULL REFERENCES {USERS_TABLE}({USERS_ID}) ON DELETE CASCADE,
+                            PRIMARY KEY ({USER_PREFERENCE_KEY}, {USER_PREFERENCE_USER_ID})
                         )
                     """
                     )
-                    logger.debug(f"Table {SYSTEM_CONFIG_TABLE} checked/created.")
+                    logger.debug(f"Table {USER_PREFERENCES_TABLE} checked/created.")
 
                     # Chats Table (PostgreSQL syntax)
                     await conn.execute(
@@ -366,6 +347,7 @@ class DatabaseConnectionManager:
                         CREATE TABLE IF NOT EXISTS {CHATS_TABLE} (
                             {CHAT_ID} BIGSERIAL PRIMARY KEY,
                             {CHAT_TITLE} TEXT NOT NULL,
+                            {CHAT_USER_ID} INTEGER NOT NULL REFERENCES {USERS_TABLE}({USERS_ID}) ON DELETE CASCADE,
                             {CHAT_CREATED_AT} TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
                             {CHAT_UPDATED_AT} TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                         )

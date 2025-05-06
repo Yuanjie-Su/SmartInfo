@@ -33,6 +33,12 @@ interface SignupResponse {
     };
 }
 
+// Define the User interface for profile data
+export interface User {
+    id: string;
+    username: string;
+    // other user fields that the backend might return
+}
 
 /**
  * Calls the backend API to log in a user.
@@ -87,14 +93,17 @@ export const registerUser = async (userData: SignupData): Promise<SignupResponse
     }
 };
 
-// Optional: Function to validate token / fetch user profile
-// interface User { id: string; username: string; /* ... */ }
-// export const fetchUserProfile = async (): Promise<User> => {
-//   try {
-//     console.warn("Using placeholder API endpoint for profile fetch: /api/auth/profile");
-//     const response = await api.get<User>('/api/auth/profile');
-//     return response.data;
-//   } catch (error) {
-//     throw handleApiError(error, 'Failed to fetch user profile');
-//   }
-// }
+/**
+ * Fetches current user profile using the stored authentication token.
+ * This is used to validate if the token is still valid and get current user data.
+ * @returns A promise that resolves with the user profile data.
+ */
+export const fetchUserProfile = async (): Promise<User> => {
+    try {
+        // Call the /users/me endpoint which is standard in FastAPI applications
+        const response = await api.get<User>('/api/auth/users/me');
+        return response.data;
+    } catch (error) {
+        throw handleApiError(error, 'Failed to fetch user profile');
+    }
+}

@@ -11,9 +11,18 @@ import time
 from typing import List, Dict, Any, Optional, Union
 from datetime import datetime
 
+import logging
+import json
+import time
+from typing import List, Dict, Any, Optional, Union
+from datetime import datetime
+
 from db.repositories.chat_repository import ChatRepository
 from db.repositories.message_repository import MessageRepository
-from core.llm import LLMClientPool
+from db.repositories.api_key_repository import (
+    ApiKeyRepository,
+)  # Import ApiKeyRepository
+from core.llm.client import AsyncLLMClient  # Import AsyncLLMClient
 from models import (  # Import models directly
     Chat,
     ChatCreate,
@@ -21,12 +30,10 @@ from models import (  # Import models directly
     MessageCreate,
     ChatAnswer,
     User,  # Import User for type hinting
+    ApiKey,  # Import ApiKey model
 )
 
 logger = logging.getLogger(__name__)
-
-# Default LLM model for Q&A
-DEFAULT_MODEL = "deepseek-v3-250324"  # Example, adjust if needed
 
 
 class ChatService:
@@ -36,16 +43,12 @@ class ChatService:
         self,
         chat_repo: ChatRepository,
         message_repo: MessageRepository,
+        api_key_repo: ApiKeyRepository,  # Add ApiKeyRepository dependency
     ):
         """Initialize the chat service"""
         self._chat_repo = chat_repo
         self._message_repo = message_repo
-        self._llm_pool: Optional[LLMClientPool] = None
-
-    def set_llm_pool(self, llm_pool: LLMClientPool) -> None:
-        """Set the LLM client pool"""
-        self._llm_pool = llm_pool
-        logger.info("LLM client pool set for ChatService")
+        self._api_key_repo = api_key_repo  # Store ApiKeyRepository
 
     # --- Chat Session Management (User-Aware) ---
 
@@ -169,9 +172,6 @@ class ChatService:
         Returns:
             ChatAnswer object with the LLM's response.
         """
-        if not self._llm_pool:
-            raise ValueError("LLM client pool not set")
-
         messages = []
         chat_title = None
         user_id = user.id  # Get user ID from the authenticated user object
@@ -226,22 +226,43 @@ class ChatService:
         )
         await self.create_message(user_message_create)
 
-        # Run inference with the LLM
+        # Get user-specific LLM client
+        client = await self._get_user_llm_client(user_id)
+        if client is None:
+            error_msg = f"No valid LLM API key found for user {user_id}."
+            logger.error(error_msg)
+            # Add an assistant message indicating the error
+            answer_content = "Sorry, I cannot process your request. No valid LLM API key is configured for your account."
+            assistant_message_create = MessageCreate(
+                chat_id=chat_id, sender="assistant", content=answer_content
+            )
+            await self.create_message(assistant_message_create)
+            raise ValueError(error_msg)  # Or return a specific error response
+
+        # Run inference with the LLM using the on-demand client
         system_message = {"role": "system", "content": "你是一个有帮助的AI助手。"}
         if not messages or messages[0]["role"] != "system":
             messages.insert(0, system_message)
 
-        answer_content = await self._llm_pool.get_completion_content(
-            messages=messages, model=DEFAULT_MODEL
-        )
-
-        if not answer_content:
-            error_msg = "Failed to get response from LLM"
-            logger.error(error_msg)
+        answer_content = None
+        try:
+            async with client as llm_client:
+                answer_content = await llm_client.get_completion_content(
+                    messages=messages
+                )
+        except Exception as e:
+            error_msg = f"Error during LLM inference for user {user_id}: {e}"
+            logger.error(error_msg, exc_info=True)
+            answer_content = (
+                "Sorry, I encountered an error communicating with the LLM service."
+            )
             # Decide whether to save an error message or raise exception
             # Saving an error message might be better UX
-            answer_content = "Sorry, I encountered an error processing your request."
             # raise ValueError(error_msg) # Option to raise
+
+        if not answer_content:
+            answer_content = "Sorry, I received an empty response from the LLM."
+            logger.warning(f"Empty response from LLM for user {user_id}")
 
         # Add assistant's response as a message
         assistant_message_create = MessageCreate(
@@ -254,3 +275,46 @@ class ChatService:
             message_id=assistant_message.id,
             content=answer_content,
         )
+
+    async def _get_user_llm_client(self, user_id: int) -> Optional[AsyncLLMClient]:
+        """
+        Fetches user's API key configuration and instantiates an AsyncLLMClient.
+        Returns None if no valid key is found.
+        """
+        api_keys_data = await self._api_key_repo.get_all(user_id)
+
+        if not api_keys_data:
+            logger.warning(f"No API keys found for user {user_id}.")
+            return None
+
+        # Use the first valid API key found
+        for key_data in api_keys_data:
+            try:
+                api_key = ApiKey.model_validate(key_data)
+                logger.info(
+                    f"Using API key ID {api_key.id} for user {user_id} (Provider: {api_key.provider})."
+                )
+                # Instantiate AsyncLLMClient with user-specific config
+                # Note: AsyncLLMClient expects base_url, api_key, model, etc.
+                # These should come from the ApiKey model fields.
+                # Assuming ApiKey model has fields like base_url, api_key, model, etc.
+                # You might need to map ApiKey fields to AsyncLLMClient parameters
+                # based on the specific LLM provider (api_key.provider).
+                # For simplicity, assuming generic fields match AsyncLLMClient params.
+                # You might need more complex logic here based on provider.
+                return AsyncLLMClient(
+                    base_url=api_key.base_url,
+                    api_key=api_key.api_key,
+                    model=api_key.model,
+                    # Add other parameters if needed, e.g., context_window, max_output_tokens
+                    # These might also come from the ApiKey model or user preferences
+                )
+            except Exception as e:
+                logger.error(
+                    f"Failed to validate or instantiate LLM client for API key data: {key_data}. Error: {e}",
+                    exc_info=True,
+                )
+                continue  # Try the next key
+
+        logger.warning(f"No valid API key configuration found for user {user_id}.")
+        return None

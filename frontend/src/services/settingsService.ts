@@ -1,5 +1,5 @@
 import api from './api';
-import { ApiKey, ApiKeyCreate, SystemConfigUpdate } from '../utils/types';
+import { ApiKey, ApiKeyCreate, UserPreferenceUpdate } from '../utils/types';
 
 const BASE_PATH = '/api/settings';
 
@@ -10,7 +10,7 @@ export const getSettings = async (): Promise<Record<string, any>> => {
 };
 
 export const updateSettings = async (settings: Record<string, any>): Promise<Record<string, any>> => {
-  const settingsUpdate: SystemConfigUpdate = { settings };
+  const settingsUpdate: UserPreferenceUpdate = { settings };
   const response = await api.put(`${BASE_PATH}/settings`, settingsUpdate);
   return response.data;
 };

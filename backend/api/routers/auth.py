@@ -8,27 +8,23 @@ Handles user registration, login (token generation), and user info endpoints.
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
-from typing import Annotated  # Use Annotated for Depends in newer FastAPI versions
+from typing import Annotated
+from pydantic import BaseModel
 
 from models import (
     User,
     UserCreate,
-)  # Import User for response model, UserCreate for registration
+)
 from services import AuthService
 from core.security import create_access_token
-from db.connection import get_connection  # To get DB connection for repo
-from db.repositories import UserRepository
 
-# Import the dependency function (will be created in step 6)
-from api.dependencies.dependencies import get_current_active_user
+# Import dependency functions from dependencies.py
+from api.dependencies.dependencies import (
+    get_current_active_user,
+    get_auth_service,
+)
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
-
-
-# Dependency to get AuthService instance
-async def get_auth_service(conn=Depends(get_connection)) -> AuthService:
-    user_repo = UserRepository(conn)
-    return AuthService(user_repo)
 
 
 # Pydantic model for the token response

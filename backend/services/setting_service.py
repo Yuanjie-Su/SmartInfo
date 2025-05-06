@@ -10,14 +10,13 @@ import json
 from typing import Dict, Any, List, Optional, Union
 
 # Import using backend package path
-from config import AppConfig  # Keep for default values, but user settings override
 from db.repositories.api_key_repository import ApiKeyRepository
-from db.repositories.system_config_repository import SystemConfigRepository
+from db.repositories.user_preference_repository import UserPreferenceRepository
 from models import (
     ApiKey,
     ApiKeyCreate,
-    SystemConfig,
-    SystemConfigBase,
+    UserPreference,
+    UserPreferenceBase,
     User,
 )  # Import relevant models
 
@@ -31,14 +30,12 @@ class SettingService:
 
     def __init__(
         self,
-        config: AppConfig,  # Keep config for defaults
         api_key_repo: ApiKeyRepository,
-        system_config_repo: SystemConfigRepository,
+        user_preference_repo: UserPreferenceRepository,
     ):
         """Initialize the setting service"""
-        self._config = config  # Used for default values
         self._api_key_repo = api_key_repo
-        self._system_config_repo = system_config_repo
+        self._user_preference_repo = user_preference_repo
 
     # --- API Key Management (User-Aware) ---
 
@@ -150,20 +147,13 @@ class SettingService:
         """Delete an API key by ID for a specific user."""
         return await self._api_key_repo.delete(api_id, user_id)
 
-    # --- System Settings Management (User-Aware) ---
+    # --- User Preference Management (User-Aware) ---
 
     async def get_all_settings(self, user_id: int) -> Dict[str, Any]:
-        """Get all application settings for a specific user, falling back to defaults."""
-        user_settings = await self._system_config_repo.get_all(user_id)
-
-        # Combine user settings with defaults, user settings take precedence
-        final_settings = {}
-        for key, default_value in self._config.DEFAULT_PERSISTENT_CONFIG.items():
-            final_settings[key] = user_settings.get(
-                key, default_value
-            )  # Use default if not set by user
-
-        return final_settings
+        """Get all application settings for a specific user."""
+        user_settings = await self._user_preference_repo.get_all(user_id)
+        # Return the dictionary fetched directly from the repo
+        return user_settings
 
     async def update_settings(
         self, settings: Dict[str, Any], user_id: int
@@ -172,23 +162,20 @@ class SettingService:
         if not settings:
             return await self.get_all_settings(user_id)
 
-        valid_keys = self._config.DEFAULT_PERSISTENT_CONFIG.keys()
-        invalid_keys = [k for k in settings if k not in valid_keys]
-        if invalid_keys:
-            raise ValueError(f"Invalid settings keys: {', '.join(invalid_keys)}")
+        # Note: With config simplified, we no longer have a list of valid persistent keys here.
+        # This means any key can be saved. If we need validation, we'd need a separate source
+        # of truth for valid user preference keys. For now, save whatever is provided.
 
         # Save each setting to the database for the user
         all_success = True
         for key, value in settings.items():
-            # Convert value to string for storage if necessary (repo expects string)
-            # Consider more robust type handling based on key if needed
+            # Convert value to string for storage (repo expects string)
             str_value = str(value)
-            success = await self._system_config_repo.set(
+            success = await self._user_preference_repo.set(
                 config_key=key,
                 config_value=str_value,
                 user_id=user_id,
-                # Optionally fetch description from defaults or pass None
-                description=self._config.DEFAULT_PERSISTENT_CONFIG_DESC.get(key),
+                description=None,  # No default descriptions available from config anymore
             )
             if not success:
                 all_success = False
@@ -205,20 +192,17 @@ class SettingService:
     async def reset_settings_to_defaults(self, user_id: int) -> Dict[str, Any]:
         """Reset application settings to defaults for a specific user."""
         # Clear existing settings for the user from the database
-        success = await self._system_config_repo.clear_all_for_user(user_id)
+        success = await self._user_preference_repo.clear_all_for_user(user_id)
 
         if not success:
             logger.error(
-                f"Failed to clear existing system config from DB for user {user_id} during reset."
+                f"Failed to clear existing user preferences from DB for user {user_id} during reset."
             )
             # Depending on requirements, might want to raise an error here
-            # raise RuntimeError(f"Failed to clear existing system config for user {user_id}")
+            # raise RuntimeError(f"Failed to clear existing user preferences for user {user_id}")
 
-        # Return the default settings (as no user-specific settings exist now)
-        default_settings = {}
-        for key, default_value in self._config.DEFAULT_PERSISTENT_CONFIG.items():
-            default_settings[key] = default_value
-        return default_settings
+        # Return an empty dictionary as there are no defaults managed by this service anymore
+        return {}
 
     # --- API Key Testing (User-Aware) ---
 
@@ -249,33 +233,15 @@ class SettingService:
             async with AsyncLLMClient(
                 base_url=base_url,
                 api_key=api_key,
-                timeout=10,
+                model=model,
+                max_output_tokens=max_output_tokens,
             ) as client:
-                response_content = await client.get_completion_content(
-                    messages=test_messages,
-                    model=model,
-                    max_tokens=min(10, max_output_tokens),
-                    temperature=0.7,
-                )
-
-                if response_content:
-                    return {
-                        "status": "success",
-                        "message": "Connection successful",
-                        "response_snippet": (
-                            f"{response_content[:50]}..."
-                            if len(response_content) > 50
-                            else response_content
-                        ),
-                    }
-                else:
-                    return {
-                        "status": "error",
-                        "message": "Connection test failed: No response received",
-                    }
-
+                response = await client.chat_completion(messages=test_messages)
+                response["status"] = "success"
+                return response
         except Exception as e:
-            logger.error(
-                f"API key test failed for ID {api_key_id} (User: {user_id}): {str(e)}"
-            )
-            return {"status": "error", "message": f"Connection test failed: {str(e)}"}
+            return {
+                "status": "error",
+                "error": str(e),
+                "message": f"Failed to connect to {base_url} with model {model}",
+            }

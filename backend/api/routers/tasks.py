@@ -9,11 +9,15 @@ Provides WebSocket connection for real-time task progress updates.
 import logging
 import asyncio
 from starlette.websockets import WebSocketState
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Path
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Path, Query, Depends
 from celery.result import AsyncResult
+from typing import Optional
 
 from core.ws_manager import ws_manager
 from background.tasks.news_tasks import process_source_url_task_celery
+from core.security import decode_access_token
+from db.repositories.user_repository import UserRepository
+from api.dependencies.dependencies import get_user_repository
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +30,10 @@ async def websocket_task_endpoint(
     task_group_id: str = Path(
         ..., description="Unique identifier for the task group to monitor"
     ),
+    token: Optional[str] = Query(
+        None, description="JWT access token for authentication"
+    ),
+    user_repo: UserRepository = Depends(get_user_repository),
 ):
     """
     WebSocket endpoint for monitoring task progress in real-time.
@@ -37,21 +45,50 @@ async def websocket_task_endpoint(
     Args:
         websocket: The WebSocket connection
         task_group_id: Unique identifier for the task group to monitor
+        token: JWT access token for authentication
+        user_repo: User repository for fetching user information
     """
     try:
-        # Accept and register the WebSocket connection
-        await ws_manager.connect(websocket, task_group_id)
-        logger.info(
-            f"WebSocket connection established for task_group_id: {task_group_id}"
-        )
+        # 验证令牌
+        if not token:
+            logger.warning(
+                f"WebSocket connection attempt without token: {task_group_id}"
+            )
+            await websocket.close(code=4001, reason="Authentication required")
+            return
 
-        # Send initial connection confirmation - REMOVED
-        # await websocket.send_json({"event": "connected", "task_group_id": task_group_id, "message": "WebSocket connection established. Starting task monitoring."})
+        # 解码令牌以验证身份
+        payload = decode_access_token(token)
+        if not payload:
+            logger.warning(
+                f"WebSocket connection attempt with invalid token: {task_group_id}"
+            )
+            await websocket.close(code=4001, reason="Invalid authentication token")
+            return
 
-        # Get task data for this task group
+        # 获取用户ID并验证用户存在
+        user_id = payload.get("sub")
+        if not user_id:
+            logger.warning(
+                f"WebSocket connection attempt with token missing user ID: {task_group_id}"
+            )
+            await websocket.close(code=4001, reason="Invalid authentication token")
+            return
+
+        # 验证用户存在
+        user = await user_repo.get_user_by_id(int(user_id))
+        if not user:
+            logger.warning(
+                f"WebSocket connection attempt with non-existent user ID: {user_id}"
+            )
+            await websocket.close(code=4001, reason="User not found")
+            return
+
+        # 获取任务数据并验证用户是否有权访问此任务组
         task_data = ws_manager.get_task_data(task_group_id)
-        if not task_data or not task_data.get("task_ids"):
+        if not task_data:
             logger.warning(f"No task data found for task_group_id: {task_group_id}")
+            await websocket.accept()  # 先接受连接，然后发送错误消息
             await websocket.send_json(
                 {
                     "event": "error",
@@ -59,7 +96,24 @@ async def websocket_task_endpoint(
                     "message": "No tasks found for the specified task group ID.",
                 }
             )
+            await websocket.close(code=4004, reason="Task group not found")
             return
+
+        # 验证任务所有权
+        task_user_id = task_data.get("user_id")
+        if task_user_id != int(user_id):
+            logger.warning(
+                f"Unauthorized WebSocket access attempt: User {user_id} tried to access tasks for user {task_user_id}"
+            )
+            await websocket.close(code=4003, reason="Unauthorized access to task group")
+            return
+
+        # 所有检查通过，接受WebSocket连接
+        await websocket.accept()
+        await ws_manager.connect(websocket, task_group_id)
+        logger.info(
+            f"WebSocket connection established for task_group_id: {task_group_id}, user_id: {user_id}"
+        )
 
         # Extract task IDs and source information
         task_ids = task_data.get("task_ids", [])

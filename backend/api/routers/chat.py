@@ -23,8 +23,9 @@ from models.schemas.chat import (
     MessageCreate,
     ChatAnswer,
     Question,
-    User,  # Import User schema
 )
+
+from models.schemas.user import User
 
 # Import the service class type hint
 from services.chat_service import ChatService

@@ -12,6 +12,7 @@ import asyncio
 import logging
 import os
 from typing import Optional
+from db.repositories.api_key_repository import ApiKeyRepository
 from dotenv import load_dotenv
 
 # Load environment variables FIRST
@@ -39,7 +40,7 @@ from db.connection import DatabaseConnectionManager, init_db_connection
 from db.repositories import (
     NewsRepository,
     NewsSourceRepository,
-    SystemConfigRepository,
+    UserPreferenceRepository,
 )
 from core.llm import AsyncLLMClient  # Corrected import path
 from config import config
@@ -48,16 +49,16 @@ from config import config
 # These will hold instances unique to each worker process.
 # They are initialized to None and set by worker_process_init.
 _process_db_manager: Optional[DatabaseConnectionManager] = None
-_process_llm_client: Optional[AsyncLLMClient] = None
 _process_news_repo: Optional[NewsRepository] = None
 _process_source_repo: Optional[NewsSourceRepository] = None
+_process_api_key_repo: Optional[ApiKeyRepository] = None  # Add ApiKeyRepository
 
 # --- Async Setup/Cleanup Functions ---
 
 
 async def _setup_process_dependencies_async():
     """Asynchronously initializes resources for a single worker process."""
-    global _process_db_manager, _process_llm_client, _process_news_repo, _process_source_repo
+    global _process_db_manager, _process_news_repo, _process_source_repo, _process_api_key_repo
     pid = os.getpid()
     logger.info(f"[PID:{pid}] Setting up dependencies for worker process...")
 
@@ -67,70 +68,11 @@ async def _setup_process_dependencies_async():
         _process_db_manager = await init_db_connection()
         logger.info(f"[PID:{pid}] Database connection initialized.")
 
-        # 2. Load Configuration (needs DB access)
-        # Config might already be loaded by main process, but reload ensures
-        # process-specific DB access is confirmed.
-        sys_config_repo = (
-            SystemConfigRepository()
-        )  # Uses the process's connection via get_db_connection
-        await config.set_db_repo(sys_config_repo)
-        logger.info(f"[PID:{pid}] Configuration loaded/verified.")
-
-        # 3. Initialize Repositories (use the process's connection implicitly)
+        # 2. Initialize Repositories (use the process's connection implicitly)
         _process_news_repo = NewsRepository()
         _process_source_repo = NewsSourceRepository()
+        _process_api_key_repo = ApiKeyRepository()  # Initialize ApiKeyRepository
         logger.info(f"[PID:{pid}] Repositories initialized.")
-
-        # 4. Initialize LLM Client (process-specific)
-        # Use config values (env > db > defaults) loaded above
-        api_key = config.get("LLM_API_KEY")
-        base_url = config.get("LLM_BASE_URL")
-        model = config.get("LLM_MODEL")
-        # Get context window, attempt conversion to int, provide default
-        context_window_val = config.get("LLM_CONTEXT_WINDOW", 8100)
-        try:
-            context_window = int(context_window_val)
-        except (ValueError, TypeError):
-            pid = os.getpid()  # Get pid for logging if needed here
-            logger.warning(
-                f"[PID:{pid}] Invalid value '{context_window_val}' for LLM_CONTEXT_WINDOW. Using default 8100."
-            )
-            context_window = 8100  # Default integer value
-
-        # Get max tokens, attempt conversion to int, provide default
-        max_output_tokens_val = config.get("LLM_MAX_OUTPUT_TOKENS", 4000)
-        try:
-            max_output_tokens = int(max_output_tokens_val)
-        except (ValueError, TypeError):
-            pid = os.getpid()  # Get pid for logging if needed here
-            logger.warning(
-                f"[PID:{pid}] Invalid value '{max_output_tokens_val}' for LLM_MAX_OUTPUT_TOKENS. Using default 4000."
-            )
-            max_output_tokens = 4000  # Default integer value
-        timeout = 60  # Or get from config if needed
-        max_retries = 3  # Or get from config if needed
-
-        if not api_key or not base_url or not model:
-            logger.error(
-                f"[PID:{pid}] LLM configuration incomplete (API Key, Base URL, or Model missing). Cannot create LLM Client."
-            )
-            # Decide if worker process should exit or continue without LLM
-            # For now, we'll let it continue but log the error. Tasks needing LLM will fail.
-            _process_llm_client = None
-        else:
-            # NOTE: Changed from LLMClientPool to single AsyncLLMClient per process
-            # If pooling is still desired *within* a process (less common), adjust here.
-            _process_llm_client = AsyncLLMClient(
-                base_url=base_url,
-                api_key=api_key,
-                model=model,
-                context_window=context_window,
-                max_output_tokens=max_output_tokens,
-                timeout=timeout,
-                max_retries=max_retries,
-            )
-            # Note: AsyncLLMClient does not need explicit async init, client created on first use.
-            logger.info(f"[PID:{pid}] AsyncLLMClient configured (Model: {model}).")
 
         logger.info(f"[PID:{pid}] Worker process dependencies setup complete.")
 
@@ -145,22 +87,15 @@ async def _setup_process_dependencies_async():
 
 async def _cleanup_process_dependencies_async():
     """Asynchronously cleans up resources for a single worker process."""
-    global _process_db_manager, _process_llm_client, _process_news_repo, _process_source_repo
+    global _process_db_manager, _process_news_repo, _process_source_repo, _process_api_key_repo
     pid = os.getpid()
     logger.info(f"[PID:{pid}] Cleaning up dependencies for worker process...")
 
-    # Close LLM Client
-    if _process_llm_client:
-        try:
-            logger.info(f"[PID:{pid}] Closing LLM client...")
-            await _process_llm_client.close()
-            logger.info(f"[PID:{pid}] LLM client closed.")
-        except Exception as e:
-            logger.error(f"[PID:{pid}] Error closing LLM client: {e}", exc_info=True)
-        finally:
-            _process_llm_client = None
-
     # Repositories don't typically need explicit closing, they use the connection manager.
+    # Clear repo references (optional, good practice)
+    _process_news_repo = None
+    _process_source_repo = None
+    _process_api_key_repo = None  # Clear ApiKeyRepository reference
 
     # Close Database Connection
     if _process_db_manager:
@@ -176,10 +111,6 @@ async def _cleanup_process_dependencies_async():
             )
         finally:
             _process_db_manager = None  # Important to clear the reference
-
-    # Clear repo references (optional, good practice)
-    _process_news_repo = None
-    _process_source_repo = None
 
     logger.info(f"[PID:{pid}] Worker process dependencies cleanup complete.")
 

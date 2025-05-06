@@ -26,9 +26,9 @@ from api.dependencies import (
 
 # Import schemas from the main models package
 from models import (  # Import models directly
-    NewsItem,
-    NewsItemCreate,
-    NewsItemUpdate,
+    News,
+    NewsCreate,
+    NewsUpdate,
     NewsSource,
     NewsSourceCreate,
     NewsSourceUpdate,
@@ -57,7 +57,7 @@ router = APIRouter()
 
 @router.get(
     "/items",
-    response_model=List[NewsItem],
+    response_model=List[News],
     summary="List user's news items",
     description="Retrieve a paginated list of news items belonging to the current user, optionally filtered.",
 )
@@ -104,7 +104,7 @@ async def get_filtered_news_items(
 
 @router.get(
     "/items/{news_id}",
-    response_model=NewsItem,
+    response_model=News,
     summary="Get a specific news item",
 )
 async def get_news_item_by_id(
@@ -128,13 +128,13 @@ async def get_news_item_by_id(
 
 @router.post(
     "/items",
-    response_model=NewsItem,
+    response_model=News,
     status_code=status.HTTP_201_CREATED,
     summary="Create a news item",
     description="Manually create a new news item for the current user.",
 )
 async def create_news_item(
-    news_item_data: NewsItemCreate,
+    news_item_data: NewsCreate,
     current_user: Annotated[User, Depends(get_current_active_user)],
     news_service: Annotated[NewsService, Depends(get_news_service)],
 ):
@@ -214,13 +214,13 @@ async def create_news_item(
 
 @router.put(
     "/items/{news_id}",
-    response_model=NewsItem,
+    response_model=News,
     summary="Update a news item",
     description="Update details of an existing news item belonging to the current user.",
 )
 async def update_news_item(
     news_id: int,
-    news_item_data: NewsItemUpdate,
+    news_item_data: NewsUpdate,
     current_user: Annotated[User, Depends(get_current_active_user)],
     news_service: Annotated[NewsService, Depends(get_news_service)],
 ):

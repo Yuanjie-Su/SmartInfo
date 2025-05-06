@@ -88,8 +88,9 @@ const LoginPage: React.FC = () => {
                             </Button>
                         </Form.Item>
 
-                        {/* Optional: Link to Signup page */}
-                        {/* Or <a href="/signup">register now!</a> */}
+                        <div style={{ textAlign: 'center', marginTop: '12px' }}>
+                            没有账号？ <a href="/register">立即注册</a>
+                        </div>
                     </Form>
                 </Card>
             </Spin>

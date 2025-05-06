@@ -15,10 +15,11 @@ from db.repositories import (
     NewsRepository,
     NewsSourceRepository,
     NewsCategoryRepository,
+    ApiKeyRepository,  # Import ApiKeyRepository
 )
 
 # Client to interact with the LLM API
-from core.llm import LLMClientPool
+from core.llm.client import AsyncLLMClient  # Import AsyncLLMClient
 
 # WebSocket manager for real-time updates
 from core.ws_manager import ws_manager
@@ -27,15 +28,15 @@ from core.ws_manager import ws_manager
 from background.tasks.news_tasks import process_source_url_task_celery
 
 from utils.prompt import SYSTEM_PROMPT_ANALYZE_CONTENT
-from models import NewsSourceCreate, NewsCategoryCreate, User  # Import Pydantic models
+from models import (
+    NewsSourceCreate,
+    NewsCategoryCreate,
+    User,  # Import Pydantic models
+    ApiKey,  # Import ApiKey model
+)
 
 # Configure module-level logger
 logger = logging.getLogger(__name__)
-
-# Constants for LLM model and token limits
-DEFAULT_MODEL = "deepseek-v3-250324"
-MAX_OUTPUT_TOKENS = 16384
-MAX_INPUT_TOKENS = 131072 - 2 * MAX_OUTPUT_TOKENS
 
 
 class NewsService:
@@ -55,16 +56,12 @@ class NewsService:
         news_repo: NewsRepository,
         source_repo: NewsSourceRepository,
         category_repo: NewsCategoryRepository,
+        api_key_repo: ApiKeyRepository,  # Add ApiKeyRepository dependency
     ):
         self._news_repo = news_repo
         self._source_repo = source_repo
         self._category_repo = category_repo
-        self._llm_pool: Optional[LLMClientPool] = None
-
-    def set_llm_pool(self, llm_pool: LLMClientPool):
-        """Set the LLM client pool after initialization"""
-        self._llm_pool = llm_pool
-        logger.info("LLM client pool set for NewsService")
+        self._api_key_repo = api_key_repo  # Store ApiKeyRepository
 
     # -------------------------------------------------------------------------
     # Public CRUD Methods (User-Aware)
@@ -419,8 +416,9 @@ class NewsService:
         """
         Analyzes a specific news item belonging to a user and streams the results.
         """
-        if not self._llm_pool:
-            yield "Error: LLM client pool not initialized"
+        llm_client = await self._get_user_llm_client(user_id)
+        if llm_client is None:
+            yield "Error: No valid LLM API key found for your account."
             return
 
         logger.info(f"Stream analyzing news item ID: {news_id} for user {user_id}")
@@ -452,7 +450,7 @@ class NewsService:
                 """
 
             full_analysis = ""
-            stream = await self._llm_pool.stream_completion_content(
+            stream = await llm_client.stream_completion_content(
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT_ANALYZE_CONTENT},
                     {"role": "user", "content": user_prompt},
@@ -464,6 +462,8 @@ class NewsService:
             async for chunk in stream:
                 full_analysis += chunk
                 yield chunk
+
+            await llm_client.close()
 
             if full_analysis:
                 try:
@@ -484,3 +484,46 @@ class NewsService:
                 f"Error in stream_analysis_for_news_item (User: {user_id}): {e}"
             )
             yield f"Error during analysis: {str(e)}"
+
+    async def _get_user_llm_client(self, user_id: int) -> Optional[AsyncLLMClient]:
+        """
+        Fetches user's API key configuration and instantiates an AsyncLLMClient.
+        Returns None if no valid key is found.
+        """
+        api_keys_data = await self._api_key_repo.get_all(user_id)
+
+        if not api_keys_data:
+            logger.warning(f"No API keys found for user {user_id}.")
+            return None
+
+        # Use the first valid API key found
+        for key_data in api_keys_data:
+            try:
+                api_key = ApiKey.model_validate(key_data)
+                logger.info(
+                    f"Using API key ID {api_key.id} for user {user_id} (Provider: {api_key.provider})."
+                )
+                # Instantiate AsyncLLMClient with user-specific config
+                # Note: AsyncLLMClient expects base_url, api_key, model, etc.
+                # These should come from the ApiKey model fields.
+                # Assuming ApiKey model has fields like base_url, api_key, model, etc.
+                # You might need to map ApiKey fields to AsyncLLMClient parameters
+                # based on the specific LLM provider (api_key.provider).
+                # For simplicity, assuming generic fields match AsyncLLMClient params.
+                # You might need more complex logic here based on provider.
+                return AsyncLLMClient(
+                    base_url=api_key.base_url,
+                    api_key=api_key.api_key,
+                    model=api_key.model,
+                    context=api_key.context,
+                    max_output_tokens=api_key.max_output_tokens,
+                )
+            except Exception as e:
+                logger.error(
+                    f"Failed to validate or instantiate LLM client for API key data: {key_data}. Error: {e}",
+                    exc_info=True,
+                )
+                continue  # Try the next key
+
+        logger.warning(f"No valid API key configuration found for user {user_id}.")
+        return None

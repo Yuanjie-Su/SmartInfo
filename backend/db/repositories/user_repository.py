@@ -8,6 +8,7 @@ Handles database operations related to users.
 
 from typing import Optional
 import asyncpg
+import logging
 
 from .base_repository import BaseRepository
 from models import UserInDB  # Assuming UserInDB includes id, username, hashed_password
@@ -17,6 +18,8 @@ from db.schema_constants import (
     USERS_USERNAME,
     USERS_HASHED_PASSWORD,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class UserRepository(BaseRepository):
@@ -41,14 +44,13 @@ class UserRepository(BaseRepository):
             RETURNING {USERS_ID}, {USERS_USERNAME}, {USERS_HASHED_PASSWORD}
         """
         try:
-            record = await self.conn.fetchrow(query, username, hashed_password)
-            return UserInDB(**record) if record else None
+            record = await self._fetchone(query, (username, hashed_password))
+            return UserInDB(**dict(record)) if record else None
         except asyncpg.UniqueViolationError:
-            # Handle username conflict if necessary, maybe raise an exception or return None
-            print(f"Username '{username}' already exists.")
+            logger.warning(f"Username '{username}' already exists.")
             return None
         except Exception as e:
-            print(f"Error adding user: {e}")  # Basic error logging
+            logger.error(f"Error adding user: {e}")
             return None
 
     async def get_user_by_username(self, username: str) -> Optional[UserInDB]:
@@ -66,8 +68,12 @@ class UserRepository(BaseRepository):
             FROM {USERS_TABLE}
             WHERE {USERS_USERNAME} = $1
         """
-        record = await self.conn.fetchrow(query, username)
-        return UserInDB(**record) if record else None
+        try:
+            record = await self._fetchone(query, (username,))
+            return UserInDB(**dict(record)) if record else None
+        except Exception as e:
+            logger.error(f"Error getting user by username: {e}")
+            return None
 
     async def get_user_by_id(self, user_id: int) -> Optional[UserInDB]:
         """
@@ -84,5 +90,9 @@ class UserRepository(BaseRepository):
             FROM {USERS_TABLE}
             WHERE {USERS_ID} = $1
         """
-        record = await self.conn.fetchrow(query, user_id)
-        return UserInDB(**record) if record else None
+        try:
+            record = await self._fetchone(query, (user_id,))
+            return UserInDB(**dict(record)) if record else None
+        except Exception as e:
+            logger.error(f"Error getting user by id: {e}")
+            return None

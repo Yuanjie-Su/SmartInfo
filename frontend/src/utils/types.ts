@@ -140,8 +140,8 @@ export interface ApiKeyCreate {
   description?: string;
 }
 
-// System Config Types
-export interface SystemConfigUpdate {
+// User Preference Types
+export interface UserPreferenceUpdate {
   settings: Record<string, any>;
 }
 

@@ -23,7 +23,7 @@ from db.repositories import (
     NewsRepository,
     NewsCategoryRepository,
     NewsSourceRepository,
-    SystemConfigRepository,
+    UserPreferenceRepository,
     UserRepository,  # Import UserRepository
 )
 from models import User  # Import User model
@@ -31,11 +31,10 @@ from services import (
     ChatService,
     NewsService,
     SettingService,
+    AuthService,
 )
 
 # Import LLM Pool from its new location in core
-from core.llm import LLMClientPool
-
 # Import WebSocket manager
 from core.ws_manager import ws_manager
 
@@ -51,23 +50,6 @@ logger = logging.getLogger(__name__)
 # OAuth2 Scheme
 # The tokenUrl should point to the login endpoint created in auth.py
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/token")
-
-# Global instance for the LLM Pool (managed by lifespan in main.py)
-# This variable will be set by the lifespan event handlers in main.py
-_global_llm_pool: Optional[LLMClientPool] = None
-
-
-def set_global_llm_pool(pool: LLMClientPool):
-    """
-    Sets the global LLM pool instance. Called from main.py lifespan startup.
-    """
-    global _global_llm_pool
-    if _global_llm_pool is not None:
-        logger.warning(
-            "Global LLM pool is being reset. This should ideally happen only once."
-        )
-    _global_llm_pool = pool
-    logger.info("Global LLM pool has been set.")
 
 
 def get_ws_manager():
@@ -130,38 +112,23 @@ async def get_news_source_repository() -> NewsSourceRepository:
     return NewsSourceRepository()
 
 
-async def get_system_config_repository() -> SystemConfigRepository:
-    """Provides an instance of SystemConfigRepository."""
-    return SystemConfigRepository()
+async def get_user_preference_repository() -> UserPreferenceRepository:
+    """Provides an instance of UserPreferenceRepository."""
+    return UserPreferenceRepository()
 
 
 # --- Service Dependencies ---
 
 
-def get_llm_pool_dependency() -> LLMClientPool:
-    """
-    Dependency that provides the global LLM pool instance.
-    Raises an error if the pool has not been initialized by the application lifespan.
-    """
-    if _global_llm_pool is None:
-        logger.error(
-            "LLM Client Pool dependency requested but pool is not initialized."
-        )
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="LLM service is not available.",
-        )
-    return _global_llm_pool
-
-
 async def get_chat_service(
     chat_repo: ChatRepository = Depends(get_chat_repository),
     message_repo: MessageRepository = Depends(get_message_repository),
-    llm_pool: LLMClientPool = Depends(get_llm_pool_dependency),
+    api_key_repo: ApiKeyRepository = Depends(get_api_key_repository),
 ) -> ChatService:
     """Provides an instance of ChatService with its dependencies."""
-    service = ChatService(chat_repo=chat_repo, message_repo=message_repo)
-    service.set_llm_pool(llm_pool)  # Inject LLM pool after service creation
+    service = ChatService(
+        chat_repo=chat_repo, message_repo=message_repo, api_key_repo=api_key_repo
+    )
     return service
 
 
@@ -169,38 +136,39 @@ async def get_news_service(
     news_repo: NewsRepository = Depends(get_news_repository),
     source_repo: NewsSourceRepository = Depends(get_news_source_repository),
     category_repo: NewsCategoryRepository = Depends(get_news_category_repository),
-    llm_pool: LLMClientPool = Depends(get_llm_pool_dependency),
+    api_key_repo: ApiKeyRepository = Depends(get_api_key_repository),
     ws_manager=Depends(get_ws_manager),
 ) -> NewsService:
     """Provides an instance of NewsService with its dependencies."""
     service = NewsService(
-        news_repo=news_repo, source_repo=source_repo, category_repo=category_repo
+        news_repo=news_repo,
+        source_repo=source_repo,
+        category_repo=category_repo,
+        api_key_repo=api_key_repo,
     )
-    service.set_llm_pool(llm_pool)  # Inject LLM pool after service creation
     return service
 
 
 async def get_setting_service(
     api_key_repo: ApiKeyRepository = Depends(get_api_key_repository),
-    system_config_repo: SystemConfigRepository = Depends(get_system_config_repository),
+    user_preference_repo: UserPreferenceRepository = Depends(
+        get_user_preference_repository
+    ),
 ) -> SettingService:
     """Provides an instance of SettingService with its dependencies."""
-    # Requires the global 'config' instance from config
     return SettingService(
-        config=config,
-        api_key_repo=api_key_repo,
-        system_config_repo=system_config_repo,
+        api_key_repo=api_key_repo, user_preference_repo=user_preference_repo
     )
 
 
 # --- Authentication Dependency ---
 
 
-async def get_user_repository(conn=Depends(get_connection)) -> UserRepository:
+async def get_user_repository() -> UserRepository:
     """Provides an instance of UserRepository with a database connection."""
-    # Note: get_connection needs to be defined or imported correctly.
-    # Assuming get_connection provides an asyncpg.Connection
-    return UserRepository(conn)
+    # Using the repository pattern already established where repositories
+    # handle connection acquisition internally
+    return UserRepository()
 
 
 async def get_current_active_user(
@@ -243,3 +211,10 @@ async def get_current_active_user(
     #     raise HTTPException(status_code=400, detail="Inactive user")
 
     return user
+
+
+async def get_auth_service(
+    user_repo: Annotated[UserRepository, Depends(get_user_repository)],
+) -> AuthService:
+    """Provides an instance of AuthService with its dependencies."""
+    return AuthService(user_repo=user_repo)

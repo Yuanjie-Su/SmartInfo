@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useAuth } from '@/context/AuthContext'; // 导入认证上下文
 import {
   Typography,
   Select,
@@ -46,6 +47,9 @@ const { Title, Text, Paragraph } = Typography;
 const { Option } = Select;
 
 const NewsPage: React.FC = () => {
+  // 添加认证上下文
+  const { token } = useAuth();
+  
   // State
   const [news, setNews] = useState<NewsItem[]>([]);
   const [categories, setCategories] = useState<NewsCategory[]>([]);
@@ -148,12 +152,20 @@ const NewsPage: React.FC = () => {
       wsRef.current.close();
     }
 
-    // Construct WebSocket URL
+    // 验证是否有认证令牌
+    if (!token) {
+      console.error('No authentication token available. Cannot establish WebSocket connection.');
+      message.error('无法建立WebSocket连接：未登录或会话已过期');
+      return;
+    }
+
+    // Construct WebSocket URL with authentication token as a query parameter
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     // Use API_URL base but replace http/https with ws/wss and remove potential trailing slash
     const apiUrlBase = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/^http/, 'ws').replace(/\/$/, '');
-    const wsUrl = `${apiUrlBase}/api/tasks/ws/tasks/${groupId}`;
-    console.log('Connecting to WebSocket:', wsUrl);
+    // 添加token作为查询参数
+    const wsUrl = `${apiUrlBase}/api/tasks/ws/tasks/${groupId}?token=${encodeURIComponent(token)}`;
+    console.log('Connecting to WebSocket with auth token:', wsUrl);
 
     try {
         const ws = new WebSocket(wsUrl);
@@ -225,7 +237,7 @@ const NewsPage: React.FC = () => {
         message.error("Failed to initialize WebSocket connection.");
     }
 
-  }, []); // No dependencies needed
+  }, [token]); // 添加token作为依赖，确保当token变化时函数被重新创建
 
   // Effect to connect WebSocket when taskGroupId changes
   useEffect(() => {
