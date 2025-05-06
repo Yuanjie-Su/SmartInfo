@@ -5,7 +5,7 @@
 User Pydantic Schemas
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 
 
 # Shared properties
@@ -23,15 +23,14 @@ class UserInDBBase(UserBase):
     id: int
     hashed_password: str
 
-    class Config:
-        from_attributes = True  # Replaces orm_mode = True in Pydantic v2
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Additional properties to return via API
 class User(UserInDBBase):
-    pass  # No extra fields needed for now
+    model_config = ConfigDict(from_attributes=True)  # Adding model_config for User
 
 
 # Additional properties stored in DB
 class UserInDB(UserInDBBase):
-    pass  # No extra fields needed for now
+    model_config = ConfigDict(from_attributes=True)  # Adding model_config for UserInDB
