@@ -45,14 +45,14 @@ class SettingService:
         if not api_key_record:
             return None
         # Assuming ApiKey model includes user_id
-        return ApiKey.model_validate(api_key_record)  # Use model_validate
+        return ApiKey.model_validate(dict(api_key_record))  # Use model_validate
 
     async def get_all_api_keys(self, user_id: int) -> List[ApiKey]:
         """Get all API keys for a specific user."""
         api_keys_data = await self._api_key_repo.get_all(user_id)
         # Assuming ApiKey model includes user_id
         return [
-            ApiKey.model_validate(item) for item in api_keys_data
+            ApiKey.model_validate(dict(item)) for item in api_keys_data
         ]  # Use model_validate
 
     async def save_api_key(
@@ -225,7 +225,6 @@ class SettingService:
         model = api_key_dict["model"]
         base_url = api_key_dict["base_url"]
         api_key = api_key_dict["api_key"]
-        max_output_tokens = api_key_dict["max_output_tokens"]
 
         test_messages = [{"role": "user", "content": "hello"}]
 
@@ -234,10 +233,14 @@ class SettingService:
                 base_url=base_url,
                 api_key=api_key,
                 model=model,
-                max_output_tokens=max_output_tokens,
             ) as client:
-                response = await client.chat_completion(messages=test_messages)
-                response["status"] = "success"
+                response_content = await client.get_completion_content(
+                    messages=test_messages
+                )
+                if not response_content:
+                    raise ValueError("No response content received from API")
+
+                response = {"status": "success"}
                 return response
         except Exception as e:
             return {

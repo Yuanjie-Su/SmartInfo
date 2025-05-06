@@ -104,17 +104,30 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   // Load chat history on component mount
   useEffect(() => {
     const loadChats = async () => {
-      try {
-        const result = await chatService.getChats();
-        setChats(result);
-        setFilteredChats(result);
-      } catch (error) {
-        console.error('Failed to load chats:', error);
+      // Only attempt to load chats if authenticated
+      if (isAuthenticated) { // <-- Add this check
+        try {
+          const result = await chatService.getChats();
+          setChats(result);
+          setFilteredChats(result);
+        } catch (error) {
+          console.error('Failed to load chats:', error);
+          // Handle error appropriately, maybe clear chats
+          setChats([]);
+          setFilteredChats([]);
+        }
+      } else {
+         // Clear chat list if not authenticated
+         setChats([]);
+         setFilteredChats([]);
       }
     };
     
-    loadChats();
-  }, []);
+    // Only run the effect when the initial auth check is complete
+    if (!authLoading) { // <-- Add this check
+      loadChats();
+    }
+  }, [isAuthenticated, authLoading]); // Add dependencies
   
   // Filter chats when search text changes
   useEffect(() => {

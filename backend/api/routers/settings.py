@@ -19,8 +19,10 @@ from api.dependencies import (
 from models import (
     ApiKey,
     ApiKeyCreate,
+    ApiKeyUpdate,
     UserPreferenceUpdate,
     User,
+    ApiKeyResponse,
 )  # Import User schema
 
 # Import service type hint
@@ -35,7 +37,7 @@ router = APIRouter()
 
 @router.get(
     "/api_keys",
-    response_model=List[ApiKey],
+    response_model=List[ApiKeyResponse],  # Updated response model
     summary="List user's API keys",
     description="Retrieve all API keys configured by the current user.",
 )
@@ -54,7 +56,7 @@ async def get_all_api_keys(
 
 @router.get(
     "/api_keys/{api_key_id}",
-    response_model=ApiKey,
+    response_model=ApiKeyResponse,  # Updated response model
     summary="Get API key by ID",
     description="Retrieve a specific API key by its ID, ensuring it belongs to the user.",
 )
@@ -77,7 +79,7 @@ async def get_api_key_by_id(
 
 @router.post(
     "/api_keys",
-    response_model=ApiKey,
+    response_model=ApiKeyResponse,  # Updated response model
     status_code=status.HTTP_201_CREATED,
     summary="Create a new API key",
     description="Create a new API key for the current user.",
@@ -109,26 +111,23 @@ async def create_api_key(
 
 @router.put(
     "/api_keys/{api_key_id}",
-    response_model=ApiKey,
+    response_model=ApiKeyResponse,  # Updated response model
     summary="Update an API key",
     description="Update an existing API key belonging to the current user.",
 )
 async def update_api_key(
     api_key_id: int,
-    api_key_data: ApiKeyCreate,  # Use Create schema for update payload
+    api_key_data: ApiKeyUpdate,  # Use Update schema for update payload
     current_user: Annotated[User, Depends(get_current_active_user)],
     setting_service: Annotated[SettingService, Depends(get_setting_service)],
 ):
     """Update an existing API key owned by the current user."""
-    # Ensure the data is associated with the current user for validation
-    api_key_data_with_user = api_key_data.model_copy(
-        update={"user_id": current_user.id}
-    )
+    # The service layer will handle associating with the user_id
     try:
         updated_key = await setting_service.update_api_key(
             api_id=api_key_id,
-            user_id=current_user.id,
-            api_key_data=api_key_data_with_user,  # Pass the validated data
+            user_id=current_user.id,  # Pass user_id from dependency
+            api_key_data=api_key_data,  # Pass the validated data
         )
         if not updated_key:
             # Service returns None if not found/owned

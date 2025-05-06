@@ -91,7 +91,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     try {
       console.log(`Attempting login for user: ${username}`);
       // Call the actual API service
-      const { token: receivedToken, user: loggedInUser } = await loginUser({ username, password });
+      const { access_token: receivedToken, user: loggedInUser } = await loginUser({ username, password }); // Corrected destructuring
 
       localStorage.setItem('authToken', receivedToken);
       setToken(receivedToken);

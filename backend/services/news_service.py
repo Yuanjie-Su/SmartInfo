@@ -364,7 +364,7 @@ class NewsService:
                     continue
 
                 url = source["url"]
-                source_name = source["name"]
+                source_name = source["source_name"]
 
                 # Pass user_id to the Celery task if the task needs it
                 # Assuming the task signature is updated: process_source_url_task_celery(source_id, url, source_name, task_group_id, user_id)
@@ -499,18 +499,10 @@ class NewsService:
         # Use the first valid API key found
         for key_data in api_keys_data:
             try:
-                api_key = ApiKey.model_validate(key_data)
+                api_key = ApiKey.model_validate(dict(key_data))
                 logger.info(
                     f"Using API key ID {api_key.id} for user {user_id} (Provider: {api_key.provider})."
                 )
-                # Instantiate AsyncLLMClient with user-specific config
-                # Note: AsyncLLMClient expects base_url, api_key, model, etc.
-                # These should come from the ApiKey model fields.
-                # Assuming ApiKey model has fields like base_url, api_key, model, etc.
-                # You might need to map ApiKey fields to AsyncLLMClient parameters
-                # based on the specific LLM provider (api_key.provider).
-                # For simplicity, assuming generic fields match AsyncLLMClient params.
-                # You might need more complex logic here based on provider.
                 return AsyncLLMClient(
                     base_url=api_key.base_url,
                     api_key=api_key.api_key,

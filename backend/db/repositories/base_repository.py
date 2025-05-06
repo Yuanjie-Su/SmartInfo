@@ -156,7 +156,7 @@ class BaseRepository:
             Raises exceptions on database errors.
         """
         try:
-            async with self._get_connection_context() as conn:  # Removed await
+            async with self._get_connection_context() as conn:
                 return await conn.fetch(query, *params)
         except asyncpg.PostgresError as e:
             logger.error(

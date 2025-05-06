@@ -11,28 +11,37 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional, Any
 
 from jose import jwt, JWTError
-from passlib.context import CryptContext
-
-# Password Hashing Context
-# Using bcrypt as the default hashing scheme
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+import bcrypt
 
 # JWT Configuration
 # !! IMPORTANT: Replace this with a strong, randomly generated key !!
 # Consider loading from environment variables or a config file for production.
 SECRET_KEY = os.getenv("SECRET_KEY", "a_very_insecure_default_secret_key_replace_me")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30  # Token validity period
+ACCESS_TOKEN_EXPIRE_MINUTES = 6000  # Token validity period
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verifies a plain password against its hashed version."""
-    return pwd_context.verify(plain_password, hashed_password)
+    """Verifies a plain password against its hashed version using bcrypt."""
+    try:
+        plain_password_bytes = plain_password.encode("utf-8")
+        hashed_password_bytes = hashed_password.encode("utf-8")
+        return bcrypt.checkpw(plain_password_bytes, hashed_password_bytes)
+    except ValueError:
+        # Handles cases where the hash is potentially malformed for bcrypt
+        return False
+    except Exception:
+        # Log unexpected errors if necessary
+        # logger.exception("Error during password verification")
+        return False
 
 
 def get_password_hash(password: str) -> str:
-    """Hashes a plain password."""
-    return pwd_context.hash(password)
+    """Hashes a plain password using bcrypt."""
+    password_bytes = password.encode("utf-8")
+    salt = bcrypt.gensalt()
+    hashed_bytes = bcrypt.hashpw(password_bytes, salt)
+    return hashed_bytes.decode("utf-8")  # Store the hash as a string
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:

@@ -26,8 +26,17 @@ from models.schemas.news import (
     AnalyzeContentRequest,
     AnalysisResult,
     UpdateAnalysisRequest,
+    # Import News Response Schemas
+    NewsCategoryResponse,
+    NewsSourceResponse,
+    NewsResponse,
 )
-from models.schemas.api_key import ApiKey, ApiKeyCreate
+from models.schemas.api_key import (
+    ApiKey,
+    ApiKeyCreate,
+    ApiKeyUpdate,
+    ApiKeyResponse,
+)  # Import ApiKeyResponse
 from models.schemas.settings import (
     UserPreference,
     UserPreferenceBase,
@@ -40,6 +49,10 @@ from models.schemas.chat import (
     MessageCreate,
     ChatAnswer,
     Question,
+    # Import Chat Response Schemas
+    MessageResponse,
+    ChatResponse,
+    ChatListResponseItem,
 )
 
 # Import UserInDB if needed internally, but don't export typically
@@ -81,4 +94,12 @@ __all__ = [
     "MessageCreate",
     "ChatAnswer",
     "Question",
+    # Response Models
+    "NewsCategoryResponse",
+    "NewsSourceResponse",
+    "NewsResponse",
+    "ApiKeyResponse",
+    "MessageResponse",
+    "ChatResponse",
+    "ChatListResponseItem",
 ]

@@ -163,6 +163,21 @@ class NewsSourceRepository(BaseRepository):
             )
             return None
 
+    async def get_by_name(self, name: str, user_id: int) -> Optional[asyncpg.Record]:
+        """Gets a source by its name for a specific user."""
+        query_str = f"""
+            SELECT {NEWS_SOURCE_ID}, {NEWS_SOURCE_NAME}, {NEWS_SOURCE_URL}, {NEWS_SOURCE_CATEGORY_ID}, {NEWS_SOURCE_USER_ID}
+            FROM {NEWS_SOURCES_TABLE}
+            WHERE {NEWS_SOURCE_NAME} = $1 AND {NEWS_SOURCE_USER_ID} = $2
+        """
+        try:
+            return await self._fetchone(query_str, (name, user_id))
+        except Exception as e:
+            logger.error(
+                f"Error getting news source by name '{name}' for user {user_id}: {e}"
+            )
+            return None
+
     async def get_by_url(self, url: str, user_id: int) -> Optional[asyncpg.Record]:
         """Gets a source by its URL for a specific user."""
         query_str = f"""

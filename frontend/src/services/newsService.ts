@@ -144,25 +144,43 @@ export const analyzeContent = async (request: AnalyzeContentRequest): Promise<Re
     },
     body: JSON.stringify(request),
   });
-  
+
   if (!response.ok) {
     throw new Error(`Failed to analyze content: ${response.statusText}`);
   }
-  
+
   return response;
 };
 
-export const streamAnalysis = async (newsItemId: number, force: boolean = false): Promise<Response> => {
-  const response = await fetch(`${api.defaults.baseURL}${BASE_PATH}/items/${newsItemId}/analyze/stream?force=${force}`, {
+
+export const streamAnalysis = async (newsId: number, force: boolean = false): Promise<Response> => {
+  // --- 1. Get Authentication Token ---
+  // Replace this with your actual method of retrieving the stored token
+  const token = localStorage.getItem('authToken'); // Or sessionStorage, or from state manager (Pinia, Vuex, etc.)
+
+  if (!token) {
+    throw new Error("Authentication token not found.");
+  }
+
+  // --- 2. Prepare Request ---
+  // Ensure the base URL is correct if your API isn't served from the same origin
+  const apiUrl = `${BASE_PATH}/items/${newsId}/analyze/stream?force=${force}`;
+  const headers = {
+    'Authorization': `Bearer ${token}`,
+    'Accept': 'text/plain', // Optional: Indicate expected response type
+  };
+
+  // --- 3. Make Fetch Request ---
+  // IMPORTANT: Verify the method matches your backend endpoint definition (@router.post)
+  const response = await fetch(apiUrl, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    headers: headers,
+    cache: 'no-store', // Important for streaming to prevent caching issues
   });
-  
+
   if (!response.ok) {
     throw new Error(`Failed to stream analysis: ${response.statusText}`);
   }
-  
+
   return response;
 }; 

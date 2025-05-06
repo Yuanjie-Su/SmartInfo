@@ -107,7 +107,17 @@ class DatabaseConnectionManager:
     async def _initialize(
         self, db_connection_mode: str = "pool", min_size: int = 2, max_size: int = 2
     ):
-        """Initialize database connection resource (pool or single connection)."""
+        """
+        Initialize database connection resource (pool or single connection).
+
+        Args:
+            db_connection_mode: str = "pool" or "single"
+            min_size: int = 2
+            max_size: int = 2
+
+        Returns:
+            None
+        """
         if self._db_resource is not None:
             logger.warning("Database resource already initialized.")
             return
@@ -266,7 +276,7 @@ class DatabaseConnectionManager:
                             {NEWS_CATEGORY_ID} INTEGER,
                             {NEWS_SUMMARY} TEXT,
                             {NEWS_ANALYSIS} TEXT,
-                            {NEWS_DATE} TIMESTAMP WITH TIME ZONE,
+                            {NEWS_DATE} TEXT,
                             {NEWS_CONTENT} TEXT,
                             {NEWS_USER_ID} INTEGER NOT NULL REFERENCES {USERS_TABLE}({USERS_ID}) ON DELETE CASCADE,
                             FOREIGN KEY ({NEWS_SOURCE_ID}) REFERENCES {NEWS_SOURCES_TABLE}({NEWS_SOURCE_ID}) ON DELETE SET NULL,
@@ -458,12 +468,14 @@ _db_connection_manager: Optional[DatabaseConnectionManager] = None
 
 async def init_db_connection(
     db_connection_mode: str = "pool",
+    min_size: int = 2,
+    max_size: int = 2,
 ) -> DatabaseConnectionManager:
     """Initialize the database connection manager."""
     global _db_connection_manager
     if _db_connection_manager is None:
         _db_connection_manager = DatabaseConnectionManager()
-        await _db_connection_manager._initialize(db_connection_mode)
+        await _db_connection_manager._initialize(db_connection_mode, min_size, max_size)
     return _db_connection_manager
 
 

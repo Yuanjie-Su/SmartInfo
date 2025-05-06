@@ -6,12 +6,10 @@ Centralized dependencies for FastAPI route functions in API v1.
 Provides dependency injection for database connections, repositories, services, and the LLM pool.
 """
 
-import aiosqlite
 import logging
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer  # Import OAuth2PasswordBearer
 from typing import Optional, Annotated  # Import Annotated
-import asyncpg
 
 # Import components using absolute backend package path
 from config import config

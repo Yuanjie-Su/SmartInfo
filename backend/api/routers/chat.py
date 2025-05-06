@@ -17,12 +17,16 @@ from api.dependencies import (
 
 # Import schemas from the main models package
 from models.schemas.chat import (
-    Chat,
+    Chat,  # Keep for internal use if needed
     ChatCreate,
-    Message,
+    Message,  # Keep for internal use if needed
     MessageCreate,
     ChatAnswer,
     Question,
+    # Import Chat Response Schemas
+    MessageResponse,
+    ChatResponse,
+    ChatListResponseItem,
 )
 
 from models.schemas.user import User
@@ -37,7 +41,9 @@ router = APIRouter()
 # --- Chat Session Endpoints (User-Aware) ---
 
 
-@router.get("/", response_model=List[Chat], summary="List user's chat sessions")
+@router.get(
+    "/", response_model=List[ChatListResponseItem], summary="List user's chat sessions"
+)  # Updated response model
 async def get_all_chats(
     current_user: Annotated[User, Depends(get_current_active_user)],
     chat_service: Annotated[ChatService, Depends(get_chat_service)],
@@ -56,7 +62,55 @@ async def get_all_chats(
         )
 
 
-@router.get("/{chat_id}", response_model=Chat, summary="Get a specific chat session")
+from models.schemas.chat import (
+    Chat,  # Keep for internal use if needed
+    ChatCreate,
+    Message,  # Keep for internal use if needed
+    MessageCreate,
+    ChatAnswer,
+    Question,
+    # Import Chat Response Schemas
+    MessageResponse,
+    ChatResponse,
+    ChatListResponseItem,
+)
+
+from models.schemas.user import User
+
+# Import the service class type hint
+from services.chat_service import ChatService
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+# --- Chat Session Endpoints (User-Aware) ---
+
+
+@router.get(
+    "/", response_model=List[ChatListResponseItem], summary="List user's chat sessions"
+)  # Updated response model
+async def get_all_chats(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    chat_service: Annotated[ChatService, Depends(get_chat_service)],
+):
+    """
+    Retrieve a list of all chat sessions belonging to the current user.
+    """
+    try:
+        chats = await chat_service.get_all_chats(user_id=current_user.id)
+        return chats
+    except Exception as e:
+        logger.exception("Failed to retrieve user chats", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred while retrieving chats.",
+        )
+
+
+@router.get(
+    "/{chat_id}", response_model=ChatResponse, summary="Get a specific chat session"
+)  # Updated response model
 async def get_chat_by_id(
     chat_id: int,
     current_user: Annotated[User, Depends(get_current_active_user)],
@@ -77,7 +131,7 @@ async def get_chat_by_id(
 
 @router.post(
     "/",
-    response_model=Chat,
+    response_model=ChatResponse,  # Updated response model
     status_code=status.HTTP_201_CREATED,
     summary="Create a new chat session",
 )
@@ -110,7 +164,9 @@ async def create_chat(
         )
 
 
-@router.put("/{chat_id}", response_model=Chat, summary="Update a chat session title")
+@router.put(
+    "/{chat_id}", response_model=ChatResponse, summary="Update a chat session title"
+)  # Updated response model
 async def update_chat(
     chat_id: int,
     chat_data: ChatCreate,
@@ -163,7 +219,7 @@ async def delete_chat(
 
 @router.get(
     "/{chat_id}/messages",
-    response_model=List[Message],
+    response_model=List[MessageResponse],  # Updated response model
     summary="List messages in a chat",
 )
 async def get_messages_by_chat_id(
@@ -186,7 +242,9 @@ async def get_messages_by_chat_id(
 
 
 @router.get(
-    "/messages/{message_id}", response_model=Message, summary="Get a specific message"
+    "/messages/{message_id}",
+    response_model=MessageResponse,
+    summary="Get a specific message",  # Updated response model
 )
 async def get_message_by_id(
     message_id: int,
@@ -216,7 +274,7 @@ async def get_message_by_id(
 
 @router.post(
     "/messages",
-    response_model=Message,
+    response_model=MessageResponse,  # Updated response model
     status_code=status.HTTP_201_CREATED,
     summary="Add a message to a chat",
 )

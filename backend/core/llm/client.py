@@ -55,7 +55,7 @@ class LLMClientBase(abc.ABC):
         base_url: str,
         api_key: Optional[str],
         model: Optional[str] = None,
-        context_window: int = 4096,
+        context: int = 4096,
         max_output_tokens: int = 2048,
         timeout: int = 600,
         max_retries: int = 3,
@@ -80,9 +80,9 @@ class LLMClientBase(abc.ABC):
         self.base_url = base_url
         self.api_key = api_key
         self.default_model = model
-        self.context_window = context_window
+        self.context = context
         self.max_output_tokens = max_output_tokens
-        self.max_input_tokens = context_window - max_output_tokens
+        self.max_input_tokens = context - max_output_tokens
         self.timeout = timeout
         self.max_retries = max_retries
         self._client = None
@@ -613,7 +613,7 @@ def LLMClient(
     api_key: Optional[str],
     async_mode: bool = True,
     model: Optional[str] = None,
-    context_window: int = 4096,
+    context: int = 4096,
     max_output_tokens: int = 2048,
     timeout: int = 600,
     max_retries: int = 3,
@@ -637,7 +637,7 @@ def LLMClient(
             base_url=base_url,
             api_key=api_key,
             model=model,
-            context_window=context_window,
+            context=context,
             max_output_tokens=max_output_tokens,
             timeout=timeout,
             max_retries=max_retries,
@@ -647,7 +647,7 @@ def LLMClient(
             base_url=base_url,
             api_key=api_key,
             model=model,
-            context_window=context_window,
+            context=context,
             max_output_tokens=max_output_tokens,
             timeout=timeout,
             max_retries=max_retries,

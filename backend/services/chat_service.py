@@ -57,7 +57,7 @@ class ChatService:
         chats = await self._chat_repo.get_all(user_id=user_id)
         # Assuming Chat model now includes user_id
         return [
-            Chat.model_validate(chat) for chat in chats
+            Chat.model_validate(dict(chat)) for chat in chats
         ]  # Use model_validate for Pydantic v2
 
     async def get_chat_by_id(self, chat_id: int, user_id: int) -> Optional[Chat]:
@@ -72,7 +72,7 @@ class ChatService:
         # Assuming Chat model includes user_id and messages
         chat_data = dict(chat_record)
         chat_data["messages"] = messages
-        return Chat.model_validate(chat_data)  # Use model_validate
+        return Chat.model_validate(dict(chat_data))  # Use model_validate
 
     async def create_chat(self, chat_data: ChatCreate, user_id: int) -> Chat:
         """Create a new chat session for a specific user."""
@@ -122,14 +122,16 @@ class ChatService:
     async def get_messages_by_chat_id(self, chat_id: int) -> List[Message]:
         """Get all messages for a chat session"""
         messages = await self._message_repo.get_by_chat_id(chat_id)
-        return [Message.model_validate(msg) for msg in messages]  # Use model_validate
+        return [
+            Message.model_validate(dict(msg)) for msg in messages
+        ]  # Use model_validate
 
     async def get_message_by_id(self, message_id: int) -> Optional[Message]:
         """Get a message by ID"""
         message = await self._message_repo.get_by_id(message_id)
         if not message:
             return None
-        return Message.model_validate(message)  # Use model_validate
+        return Message.model_validate(dict(message))  # Use model_validate
 
     async def create_message(self, message: MessageCreate) -> Message:
         """Create a new message. User context is implicit via chat_id ownership check in process_question."""
@@ -148,7 +150,7 @@ class ChatService:
             raise ValueError(error_msg)
 
         # Assuming add returns a dict or record convertible by model_validate
-        return Message.model_validate(created_message_data)
+        return Message.model_validate(dict(created_message_data))
 
     async def delete_message(self, message_id: int) -> bool:
         """Delete a message. Add user context check if needed."""
@@ -290,10 +292,8 @@ class ChatService:
         # Use the first valid API key found
         for key_data in api_keys_data:
             try:
-                api_key = ApiKey.model_validate(key_data)
-                logger.info(
-                    f"Using API key ID {api_key.id} for user {user_id} (Provider: {api_key.provider})."
-                )
+                api_key = ApiKey.model_validate(dict(key_data))
+                logger.info(f"Using API key ID {api_key.id} for user {user_id}).")
                 # Instantiate AsyncLLMClient with user-specific config
                 # Note: AsyncLLMClient expects base_url, api_key, model, etc.
                 # These should come from the ApiKey model fields.
@@ -306,7 +306,7 @@ class ChatService:
                     base_url=api_key.base_url,
                     api_key=api_key.api_key,
                     model=api_key.model,
-                    # Add other parameters if needed, e.g., context_window, max_output_tokens
+                    # Add other parameters if needed, e.g., context, max_output_tokens
                     # These might also come from the ApiKey model or user preferences
                 )
             except Exception as e:

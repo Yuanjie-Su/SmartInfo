@@ -32,7 +32,7 @@ class LLMClientPool:
         pool_size: int,
         base_url: str,
         api_key: str,
-        context_window: int = 4096,
+        context: int = 4096,
         max_output_tokens: int = 2048,
         model: Optional[str] = DEFAULT_MODEL,
         timeout: int = 600,
@@ -56,7 +56,7 @@ class LLMClientPool:
         self._base_url = base_url
         self._api_key = api_key
         self._model = model
-        self._context_window = context_window
+        self._context = context
         self._max_output_tokens = max_output_tokens
         self._timeout = timeout
         self._max_retries_client = max_retries_client
@@ -88,7 +88,7 @@ class LLMClientPool:
                         base_url=self._base_url,
                         api_key=self._api_key,
                         model=self._model,
-                        context_window=self._context_window,
+                        context=self._context,
                         max_output_tokens=self._max_output_tokens,
                         timeout=self._timeout,
                         max_retries=self._max_retries_client,

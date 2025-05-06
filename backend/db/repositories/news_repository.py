@@ -143,7 +143,7 @@ class NewsRepository(BaseRepository):
                 item.get("analysis", ""),
                 item.get("date"),
                 item.get("content", ""),
-                user_id,  # Add user_id
+                user_id,
             )
             params_list.append(params)
             processed_urls_in_batch.add(url)

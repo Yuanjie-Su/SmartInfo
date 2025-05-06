@@ -26,13 +26,13 @@ from api.dependencies import (
 
 # Import schemas from the main models package
 from models import (  # Import models directly
-    News,
+    News,  # Keep for internal use if needed
     NewsCreate,
     NewsUpdate,
-    NewsSource,
+    NewsSource,  # Keep for internal use if needed
     NewsSourceCreate,
     NewsSourceUpdate,
-    NewsCategory,
+    NewsCategory,  # Keep for internal use if needed
     NewsCategoryCreate,
     NewsCategoryUpdate,
     FetchSourceRequest,
@@ -43,6 +43,10 @@ from models import (  # Import models directly
     UpdateAnalysisRequest,
     FetchSourceBatchRequest,
     User,  # Import User schema
+    # Import News Response Schemas
+    NewsCategoryResponse,
+    NewsSourceResponse,
+    NewsResponse,
 )
 
 # Import the service class type hint
@@ -57,7 +61,7 @@ router = APIRouter()
 
 @router.get(
     "/items",
-    response_model=List[News],
+    response_model=List[NewsResponse],  # Updated response model
     summary="List user's news items",
     description="Retrieve a paginated list of news items belonging to the current user, optionally filtered.",
 )
@@ -104,7 +108,7 @@ async def get_filtered_news_items(
 
 @router.get(
     "/items/{news_id}",
-    response_model=News,
+    response_model=NewsResponse,  # Updated response model
     summary="Get a specific news item",
 )
 async def get_news_item_by_id(
@@ -128,7 +132,7 @@ async def get_news_item_by_id(
 
 @router.post(
     "/items",
-    response_model=News,
+    response_model=NewsResponse,  # Updated response model
     status_code=status.HTTP_201_CREATED,
     summary="Create a news item",
     description="Manually create a new news item for the current user.",
@@ -214,7 +218,7 @@ async def create_news_item(
 
 @router.put(
     "/items/{news_id}",
-    response_model=News,
+    response_model=NewsResponse,  # Updated response model
     summary="Update a news item",
     description="Update details of an existing news item belonging to the current user.",
 )
@@ -347,7 +351,9 @@ async def clear_all_my_news_items(
 
 
 @router.get(
-    "/sources", response_model=List[NewsSource], summary="List user's news sources"
+    "/sources",
+    response_model=List[NewsSourceResponse],
+    summary="List user's news sources",  # Updated response model
 )
 async def get_all_news_sources(
     current_user: Annotated[User, Depends(get_current_active_user)],
@@ -355,8 +361,18 @@ async def get_all_news_sources(
 ):
     """Retrieve a list of all news sources configured by the current user."""
     try:
-        sources = await news_service.get_all_sources(user_id=current_user.id)
-        return sources
+        sources_data = await news_service.get_all_sources(user_id=current_user.id)
+        # Manually construct the list of dictionaries to match NewsSourceResponse schema
+        return [
+            {
+                "id": source["source_id"],
+                "name": source["source_name"],
+                "url": source["url"],
+                "category_id": source["category_id"],
+                "category_name": source["category_name"],
+            }
+            for source in sources_data
+        ]
     except Exception as e:
         logger.exception("Failed to retrieve user news sources", exc_info=True)
         raise HTTPException(status_code=500, detail="Error retrieving news sources.")
@@ -364,7 +380,7 @@ async def get_all_news_sources(
 
 @router.get(
     "/sources/category/{category_id}",
-    response_model=List[NewsSource],
+    response_model=List[NewsSourceResponse],  # Updated response model
     summary="List user's news sources by category",
 )
 async def get_sources_by_category(
@@ -401,7 +417,7 @@ async def get_sources_by_category(
 
 @router.get(
     "/sources/{source_id}",
-    response_model=NewsSource,
+    response_model=NewsSourceResponse,  # Updated response model
     summary="Get a specific news source",
 )
 async def get_news_source_by_id(
@@ -423,7 +439,7 @@ async def get_news_source_by_id(
 
 @router.post(
     "/sources",
-    response_model=NewsSource,
+    response_model=NewsSourceResponse,  # Updated response model
     status_code=status.HTTP_201_CREATED,
     summary="Create a news source",
 )
@@ -464,7 +480,24 @@ async def create_news_source(
                 raise HTTPException(
                     status_code=500, detail="Failed to create news source."
                 )
-        return created_source
+
+        # Manually construct the dictionary to match NewsSourceResponse schema
+        # Assuming created_source is a dictionary like {'source_id': ..., 'source_name': ..., 'url': ..., 'category_id': ..., 'user_id': ...}
+        # Need to fetch category_name separately if not included in created_source
+        category = await news_service.get_category_by_id(
+            created_source["category_id"], current_user.id
+        )
+        category_name = category["name"] if category else None
+
+        source_response_dict = {
+            "id": created_source["source_id"],
+            "name": created_source["source_name"],
+            "url": created_source["url"],
+            "category_id": created_source["category_id"],
+            "category_name": category_name,
+        }
+        return source_response_dict
+
     except ValueError as ve:  # Catch validation errors from service
         logger.error(f"Source creation validation error: {ve}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
@@ -477,7 +510,7 @@ async def create_news_source(
 
 @router.put(
     "/sources/{source_id}",
-    response_model=NewsSource,
+    response_model=NewsSourceResponse,  # Updated response model
     summary="Update a news source",
 )
 async def update_news_source(
@@ -586,7 +619,7 @@ async def delete_news_source(
 
 @router.get(
     "/categories",
-    response_model=List[NewsCategory],
+    response_model=List[NewsCategoryResponse],  # Updated response model
     summary="List user's news categories",
 )
 async def get_all_news_categories(
@@ -596,10 +629,18 @@ async def get_all_news_categories(
     """Retrieve a list of all news categories created by the current user."""
     try:
         # Use the method that includes source counts
-        categories = await news_service.get_all_categories_with_counts(
+        categories_data = await news_service.get_all_categories_with_counts(
             user_id=current_user.id
         )
-        return categories
+        # Manually construct the list of dictionaries to match NewsCategoryResponse schema
+        return [
+            {
+                "id": category["category_id"],
+                "name": category["category_name"],
+                "source_count": category["source_count"],
+            }
+            for category in categories_data
+        ]
     except Exception as e:
         logger.exception("Failed to retrieve user news categories", exc_info=True)
         raise HTTPException(status_code=500, detail="Error retrieving news categories.")
@@ -607,7 +648,7 @@ async def get_all_news_categories(
 
 @router.post(
     "/categories",
-    response_model=NewsCategory,
+    response_model=NewsCategoryResponse,  # Updated response model
     status_code=status.HTTP_201_CREATED,
     summary="Create a news category",
 )
@@ -639,12 +680,20 @@ async def create_news_category(
                 )
         # Need to fetch the full category object including potential source_count
         # Service create_category returns dict with id, name, user_id. Fetch full object.
-        full_category = await news_service.get_category_by_id(
+        full_category_record = await news_service.get_category_by_id(
             created_category["id"], current_user.id
         )
-        # Add source_count manually if needed, or adjust response model/service method
-        full_category_dict = dict(full_category) if full_category else {}
-        full_category_dict["source_count"] = 0  # Assume 0 for newly created
+        if not full_category_record:
+            raise HTTPException(
+                status_code=500, detail="Failed to retrieve created news category."
+            )
+
+        # Manually construct the dictionary to match NewsCategoryResponse schema
+        full_category_dict = {
+            "id": full_category_record["id"],
+            "name": full_category_record["name"],
+            "source_count": 0,  # Newly created category has 0 sources
+        }
         return full_category_dict
 
     except ValueError as ve:  # Catch validation errors from service
@@ -659,7 +708,7 @@ async def create_news_category(
 
 @router.put(
     "/categories/{category_id}",
-    response_model=NewsCategory,
+    response_model=NewsCategoryResponse,  # Updated response model
     summary="Update a news category",
 )
 async def update_news_category(
@@ -937,9 +986,7 @@ async def analyze_arbitrary_content(
 async def stream_news_item_analysis(
     news_id: int,
     current_user: Annotated[User, Depends(get_current_active_user)],
-    news_service: Annotated[
-        NewsService, Depends(get_news_service)
-    ],  # Moved Depends before Query
+    news_service: Annotated[NewsService, Depends(get_news_service)],
     force: bool = Query(False, description="Force re-analysis"),
 ):
     """Streams analysis for a specific news item belonging to the current user."""

@@ -9,12 +9,9 @@ interface LoginCredentials {
 
 // Define the expected shape of the login response (adjust based on backend)
 interface LoginResponse {
-    token: string;
-    user: {
-        id: string;
-        username: string;
-        // other user fields
-    };
+    access_token: string; // Changed from 'token' to 'access_token'
+    token_type: string; // Added token_type as per backend response
+    user: User; // Use the imported User type
 }
 
 // Define the expected shape of signup data (adjust based on backend)
@@ -47,10 +44,16 @@ export interface User {
  */
 export const loginUser = async (credentials: LoginCredentials): Promise<LoginResponse> => {
     try {
-        // TODO: Replace '/api/auth/login' with the actual backend endpoint
-        // Using a placeholder URL for now as the backend isn't specified
-        console.warn("Using placeholder API endpoint for login: /api/auth/login");
-        const response = await api.post<LoginResponse>('/api/auth/login', credentials);
+        // Send credentials as form data, as required by the backend's OAuth2PasswordRequestForm
+        const formData = new URLSearchParams();
+        formData.append('username', credentials.username);
+        formData.append('password', credentials.password);
+
+        const response = await api.post<LoginResponse>('/api/auth/token', formData, {
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded'
+            }
+        });
         return response.data;
     } catch (error) {
         // Use the centralized error handler
@@ -83,8 +86,6 @@ export const logoutUser = async (): Promise<void> => {
  */
 export const registerUser = async (userData: SignupData): Promise<SignupResponse> => {
     try {
-        // TODO: Replace '/api/auth/register' or '/api/auth/signup' with the actual backend endpoint
-        console.warn("Using placeholder API endpoint for registration: /api/auth/register");
         const response = await api.post<SignupResponse>('/api/auth/register', userData);
         return response.data;
     } catch (error) {

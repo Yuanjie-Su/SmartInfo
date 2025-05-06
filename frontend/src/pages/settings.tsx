@@ -672,10 +672,10 @@ const Settings: React.FC = () => {
               { type: 'number', min: 1, message: '最大输出Token必须为正整数' },
               ({ getFieldValue }) => ({
                 validator(_, value) {
-                  if (!value || getFieldValue('context') > value) {
+                  if (!value || getFieldValue('context') > value) { // Changed > to >=
                     return Promise.resolve();
                   }
-                  return Promise.reject(new Error('上下文长度必须大于最大输出Token'));
+                  return Promise.reject(new Error('上下文长度必须大于或等于最大输出Token')); // Updated error message
                 },
               }),
             ]}

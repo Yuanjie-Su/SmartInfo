@@ -22,7 +22,6 @@ api_router.include_router(chat_router, prefix="/chat", tags=["Chat"])
 api_router.include_router(news_router, prefix="/news", tags=["News"])
 api_router.include_router(settings_router, prefix="/settings", tags=["Settings"])
 api_router.include_router(tasks_router, prefix="/tasks", tags=["Tasks"])
-# Include the auth router - prefix is defined within auth.py
-api_router.include_router(auth_router)
+api_router.include_router(auth_router, prefix="/auth", tags=["Auth"])
 
 __all__ = ["api_router"]

@@ -26,11 +26,14 @@ class UserInDBBase(UserBase):
     model_config = ConfigDict(from_attributes=True)
 
 
-# Additional properties to return via API
-class User(UserInDBBase):
-    model_config = ConfigDict(from_attributes=True)  # Adding model_config for User
+# Additional properties to return via API (excludes sensitive fields)
+class User(UserBase):
+    id: int = Field(..., description="Unique identifier for the user")
+    # Excludes hashed_password
+
+    model_config = ConfigDict(from_attributes=True)
 
 
-# Additional properties stored in DB
+# Additional properties stored in DB (includes sensitive fields)
 class UserInDB(UserInDBBase):
-    model_config = ConfigDict(from_attributes=True)  # Adding model_config for UserInDB
+    model_config = ConfigDict(from_attributes=True)

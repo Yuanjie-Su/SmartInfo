@@ -24,13 +24,18 @@ from api.dependencies.dependencies import (
     get_auth_service,
 )
 
-router = APIRouter(prefix="/api/auth", tags=["Authentication"])
+router = APIRouter()
 
 
 # Pydantic model for the token response
 class Token(BaseModel):
     access_token: str
     token_type: str
+
+
+# Define a new response model including the user
+class TokenWithUser(Token):
+    user: User
 
 
 @router.post("/register", response_model=User, status_code=status.HTTP_201_CREATED)
@@ -51,13 +56,13 @@ async def register_user(
     return user
 
 
-@router.post("/token", response_model=Token)
+@router.post("/token", response_model=TokenWithUser)
 async def login_for_access_token(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
 ):
     """
-    Authenticate user and return JWT access token.
+    Authenticate user and return JWT access token and user details.
     Uses OAuth2PasswordRequestForm for standard form data input (username, password).
     """
     user = await auth_service.authenticate_user(form_data.username, form_data.password)
@@ -70,7 +75,8 @@ async def login_for_access_token(
     # Data to include in the JWT payload (subject: user identifier)
     access_token_data = {"sub": str(user.id)}  # Use user ID as subject
     access_token = create_access_token(data=access_token_data)
-    return {"access_token": access_token, "token_type": "bearer"}
+    # Return both the access token and the user object
+    return {"access_token": access_token, "token_type": "bearer", "user": user}
 
 
 @router.get("/users/me", response_model=User)

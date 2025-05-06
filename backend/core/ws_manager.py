@@ -36,7 +36,6 @@ class ConnectionManager:
             websocket: The WebSocket connection to accept and track
             task_group_id: Identifier for the task group this connection is monitoring
         """
-        await websocket.accept()
 
         # Create a new set if this is the first connection for this task_group_id
         if task_group_id not in self.active_connections:
