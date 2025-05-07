@@ -21,12 +21,6 @@ from db.repositories import (
 # Client to interact with the LLM API
 from core.llm.client import AsyncLLMClient  # Import AsyncLLMClient
 
-# WebSocket manager for real-time updates
-from core.ws_manager import ws_manager
-
-# Import Celery tasks for background processing
-from background.tasks.news_tasks import process_source_url_task_celery
-
 from utils.prompt import SYSTEM_PROMPT_ANALYZE_CONTENT
 from models import (
     NewsSourceCreate,
@@ -307,108 +301,6 @@ class NewsService:
         # Fetch the full source details including category name
         new_source = await self.get_source_by_id(source_id, user_id)
         return new_source  # Already a dict
-
-    async def fetch_sources_in_background(
-        self,
-        source_ids: List[int],
-        user_id: int,  # Add user_id
-        task_group_id: str,
-    ) -> Dict[str, List[str]]:
-        """
-        Schedule Celery tasks to fetch and process news from multiple sources for a specific user.
-        """
-        if not source_ids:
-            logger.warning(
-                f"No source IDs provided for task group {task_group_id} for user {user_id}"
-            )
-            return {"task_group_id": task_group_id, "task_ids": []}
-
-        await ws_manager.send_update(
-            task_group_id,
-            {
-                "task_group_id": task_group_id,
-                "status": "initializing",
-                "progress": 0,
-                "message": f"初始化 {len(source_ids)} 个数据源的抓取任务 (用户: {user_id})",
-                "total_sources": len(source_ids),
-                "completed_sources": 0,
-            },
-        )
-
-        logger.info(
-            f"Scheduling Celery tasks for {len(source_ids)} sources in task group {task_group_id} for user {user_id}"
-        )
-
-        task_ids = []
-        source_info = {}
-
-        for source_id in source_ids:
-            try:
-                # Get source details, ensuring it belongs to the user
-                source = await self._source_repo.get_by_id(source_id, user_id)
-                if not source:
-                    logger.error(
-                        f"Source ID {source_id} not found or not owned by user {user_id}"
-                    )
-                    await ws_manager.send_update(
-                        task_group_id,
-                        {
-                            "source_id": source_id,
-                            "source_name": f"Unknown Source (ID: {source_id})",
-                            "status": "error",
-                            "step": "error",
-                            "progress": 0,
-                            "message": f"源ID {source_id} 未找到或不属于用户 {user_id}",
-                        },
-                    )
-                    continue
-
-                url = source["url"]
-                source_name = source["source_name"]
-
-                # Pass user_id to the Celery task if the task needs it
-                # Assuming the task signature is updated: process_source_url_task_celery(source_id, url, source_name, task_group_id, user_id)
-                task = process_source_url_task_celery.delay(
-                    source_id, url, source_name, task_group_id, user_id  # Pass user_id
-                )
-
-                task_ids.append(task.id)
-                source_info[task.id] = {
-                    "source_id": source_id,
-                    "source_name": source_name,
-                    "user_id": user_id,  # Include user_id if needed by consumer
-                }
-
-                logger.info(
-                    f"Scheduled Celery task for source: {source_name} (ID: {source_id}, User: {user_id}), task ID: {task.id}"
-                )
-
-            except Exception as e:
-                logger.error(
-                    f"Failed to schedule task for source ID {source_id} (User: {user_id}): {e}",
-                    exc_info=True,
-                )
-                await ws_manager.send_update(
-                    task_group_id,
-                    {
-                        "source_id": source_id,
-                        "source_name": f"Unknown Source (ID: {source_id})",
-                        "status": "error",
-                        "step": "error",
-                        "progress": 0,
-                        "message": f"调度任务失败 (用户: {user_id}): {str(e)}",
-                    },
-                )
-
-        task_data = {
-            "task_group_id": task_group_id,
-            "task_ids": task_ids,
-            "source_info": source_info,
-            "user_id": user_id,  # Store user_id with task group data if needed
-        }
-        await ws_manager.store_task_data(task_group_id, task_data)
-
-        return {"task_group_id": task_group_id, "task_ids": task_ids}
 
     async def stream_analysis_for_news_item(
         self, news_id: int, user_id: int, force: bool = False  # Add user_id

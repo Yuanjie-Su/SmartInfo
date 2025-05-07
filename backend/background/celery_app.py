@@ -24,7 +24,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Get Redis URL from environment or use default
-BROKER_URL = os.getenv("REDIS_BROKER_URL", "redis://127.0.0.1:6379/0")
+BROKER_URL = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
 BACKEND_URL = os.getenv("REDIS_BACKEND_URL", "redis://127.0.0.1:6379/1")
 
 # Create the Celery app
@@ -32,7 +32,7 @@ celery_app = Celery(
     "background",
     broker=BROKER_URL,
     backend=BACKEND_URL,
-    include=["background.tasks.news_tasks"],
+    include=["background.tasks.news_tasks"],  # Corrected module path
 )
 
 # Configure Celery

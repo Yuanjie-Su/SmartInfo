@@ -16,12 +16,13 @@ import asyncpg
 from dotenv import load_dotenv
 import logging
 import argparse  # Add argparse for potential future direct script execution
+import redis.asyncio as redis
 
 # Load environment variable configuration
 load_dotenv()
 
 
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
@@ -50,9 +51,6 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 logger = logging.getLogger(__name__)
-logger.info(
-    f"Logging level set to: {logging.getLevelName(log_level)}"
-)  # Log the effective level
 
 
 # --- Core Application Imports ---
@@ -75,11 +73,11 @@ async def lifespan(app: FastAPI):
     Manages application startup and shutdown events.
     - Initializes Database Connection Manager & loads persistent config.
     - Initializes LLM Client Pool.
+    - Initializes Redis Connection Pool for WebSocket communication.
     - Sets global LLM pool for dependency injection.
     - Cleans up resources on shutdown.
     """
     logger.info("Application lifespan starting...")
-    db_manager = None
     db_manager = None
 
     # == Startup ==
@@ -90,11 +88,27 @@ async def lifespan(app: FastAPI):
         db_manager = await init_db_connection()
         logger.info("Database Connection Manager initialized successfully.")
 
+        # 2. Initialize Redis connection pool for WebSocket communication
+        logger.info("Initializing Redis connection pool...")
+        app.state.redis_pool = redis.ConnectionPool.from_url(
+            os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0"),
+            decode_responses=True,  # Decode responses for easier handling
+        )
+        app.state.redis_client = redis.Redis(connection_pool=app.state.redis_pool)
+        logger.info("Async Redis client initialized.")
+
     except Exception as e:
         logger.critical(f"Application startup failed: {e}", exc_info=True)
         # Perform cleanup even if startup fails partially
         if db_manager:
             await db_manager._cleanup()  # Use manager's async cleanup
+
+        # Cleanup Redis if it was initialized
+        if hasattr(app.state, "redis_client"):
+            await app.state.redis_client.close()
+        if hasattr(app.state, "redis_pool"):
+            await app.state.redis_pool.disconnect()
+
         raise RuntimeError("Application startup failed.") from e
 
     # Yield control to the running application
@@ -102,6 +116,21 @@ async def lifespan(app: FastAPI):
 
     # == Shutdown ==
     logger.info("Application lifespan shutting down...")
+
+    # Close Redis connection
+    if hasattr(app.state, "redis_client"):
+        try:
+            await app.state.redis_client.close()
+            logger.info("Async Redis client closed.")
+        except Exception as e:
+            logger.error(f"Error closing Redis client: {e}", exc_info=True)
+
+    if hasattr(app.state, "redis_pool"):
+        try:
+            await app.state.redis_pool.disconnect()
+            logger.info("Async Redis connection pool disconnected.")
+        except Exception as e:
+            logger.error(f"Error disconnecting Redis pool: {e}", exc_info=True)
 
     if db_manager:
         logger.info("Closing database connection...")
@@ -191,6 +220,53 @@ async def health_check(
     # API is considered 'healthy' if it's responding, even if DB has issues.
     # Clients can check the db_status field for dependency health.
     return {"api_status": "healthy", "database_status": db_status}
+
+
+@app.get("/redis-test", tags=["General"], summary="Redis Connection Test")
+async def redis_test(request: Request):
+    """
+    Test endpoint to verify the Redis connection is working correctly.
+    """
+    try:
+        # Get Redis client directly from app state
+        redis_client = request.app.state.redis_client
+
+        # Ping Redis to ensure connection is alive
+        await redis_client.ping()
+
+        # Try a simple publish/subscribe operation
+        test_channel = "redis_test_channel"
+        test_message = "Hello Redis!"
+
+        # Create a pubsub instance and subscribe to test channel
+        pubsub = redis_client.pubsub()
+        await pubsub.subscribe(test_channel)
+
+        # Publish a test message
+        await redis_client.publish(test_channel, test_message)
+
+        # Get the published message
+        message = await pubsub.get_message(
+            timeout=1.0
+        )  # First message is subscribe confirmation
+        message = await pubsub.get_message(
+            timeout=1.0
+        )  # Second message is our published message
+
+        # Clean up
+        await pubsub.unsubscribe(test_channel)
+        await pubsub.close()
+
+        # Return success result
+        return {
+            "redis_status": "connected",
+            "pubsub_test": (
+                "success" if message and message["data"] == test_message else "failed"
+            ),
+            "message_received": message["data"] if message else None,
+        }
+    except Exception as e:
+        return {"redis_status": "error", "error": str(e)}
 
 
 # --- Execution Entry Point ---

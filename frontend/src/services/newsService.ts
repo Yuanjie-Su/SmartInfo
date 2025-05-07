@@ -119,8 +119,8 @@ export const fetchNewsFromUrl = async (request: FetchUrlRequest): Promise<Record
   return response.data;
 };
 
-export const fetchNewsFromSourcesBatch = async (sourceIds: number[]): Promise<Record<string, string>> => {
-  const response = await api.post(`${BASE_PATH}/tasks/fetch/batch`, {
+export const fetchNewsFromSourcesBatchGroup = async (sourceIds: number[]): Promise<{ task_group_id: string; message: string; }> => {
+  const response = await api.post(`${BASE_PATH}/tasks/fetch/batch-group`, {
     source_ids: sourceIds
   });
   return response.data;
@@ -183,4 +183,4 @@ export const streamAnalysis = async (newsId: number, force: boolean = false): Pr
   }
 
   return response;
-}; 
+};

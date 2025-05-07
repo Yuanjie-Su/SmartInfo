@@ -58,6 +58,7 @@ class LLMClientPool:
         self._model = model
         self._context = context
         self._max_output_tokens = max_output_tokens
+        self._max_input_tokens = context - max_output_tokens
         self._timeout = timeout
         self._max_retries_client = max_retries_client
 

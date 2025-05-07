@@ -4,6 +4,7 @@ import time
 from typing import Callable, Dict, List, Optional, Tuple
 from urllib.parse import urljoin
 
+from core.llm.pool import LLMClientPool
 from utils.html_utils import (
     clean_and_format_html,
     extract_metadata_from_article_html,
@@ -20,7 +21,6 @@ from utils.prompt import (
 from utils.text_utils import get_chunks
 from utils.token_utils import get_token_size
 from ..crawler import AiohttpCrawler, PlaywrightCrawler
-from ..llm.client import AsyncLLMClient
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 async def fetch_news(
     url: str,
-    llm_client: AsyncLLMClient,
+    llm_pool: LLMClientPool,
     exclude_links: Optional[List[str]] = None,
     progress_callback: Optional[Callable[[str, float, str, int], None]] = None,
 ) -> List[Dict[str, str]]:
@@ -37,7 +37,7 @@ async def fetch_news(
 
     Args:
         url: The URL of the news to fetch.
-        llm_client: The LLM client to use for fetching the news.
+        llm_pool: The LLM pool to use for fetching the news.
         exclude_links: The links to exclude from the news.
         progress_callback: The callback to use for updating the progress of the news fetch.
             Accepts arguments: step, progress_percent, message, items_count=0
@@ -102,8 +102,8 @@ async def fetch_news(
 
     markdown_chunks = [cleaned_markdown]
     num_chunks = 1
-    if token_size > llm_client.max_input_tokens:
-        num_chunks = (token_size // llm_client.max_input_tokens) + 1
+    if token_size > llm_pool._max_input_tokens:
+        num_chunks = (token_size // llm_pool._max_input_tokens) + 1
         logger.debug(f"内容超出上下文窗口大小, 需要分块: {url}, 分为{num_chunks}块")
 
         if progress_callback:
@@ -152,7 +152,7 @@ async def fetch_news(
         # Link extraction and crawling
         logger.debug(f"开始提取和爬取链接: {url}, 块 {i+1}/{chunk_count}")
         sub_original_content_metadata_dict = await _extract_and_crawl_links(
-            url, chunk_content, llm_client
+            url, chunk_content, llm_pool
         )
 
         if not sub_original_content_metadata_dict:
@@ -185,7 +185,7 @@ async def fetch_news(
     summary_result = await summarize_content(
         url=url,
         original_content_metadata_dict=original_content_metadata_dict,
-        llm_client=llm_client,
+        llm_pool=llm_pool,
     )
 
     summary_count = len(summary_result) if summary_result else 0
@@ -304,7 +304,7 @@ def build_content_analysis_prompt(
 async def _extract_and_crawl_links(
     base_url: str,
     markdown_content: str,
-    llm_client: AsyncLLMClient,
+    llm_pool: LLMClientPool,
 ) -> Dict[str, Dict[str, str]]:
     """
     Extracts article links from Markdown using LLM and fetches sub-article content.
@@ -321,7 +321,7 @@ async def _extract_and_crawl_links(
         link_prompt = build_link_extraction_prompt(base_url, markdown_content)
 
         logger.debug(f"请求LLM识别页面中的文章链接: {base_url}")
-        links_str = await llm_client.get_completion_content(
+        links_str = await llm_pool.get_completion_content(
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT_EXTRACT_ARTICLE_LINKS},
                 {"role": "user", "content": link_prompt},
@@ -424,7 +424,7 @@ async def _extract_and_crawl_links(
 async def summarize_content(
     url: str,
     original_content_metadata_dict: Dict[str, Dict[str, str]],
-    llm_client: AsyncLLMClient,
+    llm_pool: LLMClientPool,
 ) -> List[Dict[str, str]]:
     """
     Args:
@@ -453,11 +453,11 @@ async def summarize_content(
 
     try:
         # If prompt size too large, split into smaller batches
-        if prompt_tokens > llm_client.max_input_tokens:
+        if prompt_tokens > llm_pool._max_input_tokens:
             logger.debug(
-                f"提示词超过上下文窗口限制 ({prompt_tokens} > {llm_client.max_input_tokens}), 需要分块处理"
+                f"提示词超过上下文窗口限制 ({prompt_tokens} > {llm_pool._max_input_tokens}), 需要分块处理"
             )
-            num_prompt_chunks = (prompt_tokens // llm_client.max_input_tokens) + 1
+            num_prompt_chunks = (prompt_tokens // llm_pool._max_input_tokens) + 1
             logger.debug(f"计划分为 {num_prompt_chunks} 个块进行处理")
 
             chunk_maps: List[Dict[str, Dict[str, str]]] = []
@@ -496,7 +496,7 @@ async def summarize_content(
             for i, p_chunk in enumerate(prompt_chunks):
                 logger.debug(f"开始处理提示词块 {i+1}/{len(prompt_chunks)}")
 
-                llm_result = await llm_client.get_completion_content(
+                llm_result = await llm_pool.get_completion_content(
                     messages=[
                         {
                             "role": "system",
@@ -504,7 +504,7 @@ async def summarize_content(
                         },
                         {"role": "user", "content": p_chunk},
                     ],
-                    max_tokens=llm_client.max_output_tokens,
+                    max_tokens=llm_pool._max_output_tokens,
                     temperature=0.8,
                 )
                 logger.debug(f"块 {i+1} LLM返回结果长度: {len(llm_result)}字节")
@@ -526,7 +526,7 @@ async def summarize_content(
 
         else:
             logger.debug(f"提示词在Token限制内，进行单次处理: {url}")
-            llm_result = await llm_client.get_completion_content(
+            llm_result = await llm_pool.get_completion_content(
                 messages=[
                     {
                         "role": "system",
@@ -534,7 +534,7 @@ async def summarize_content(
                     },
                     {"role": "user", "content": analysis_prompt},
                 ],
-                max_tokens=llm_client.max_output_tokens,
+                max_tokens=llm_pool._max_output_tokens,
                 temperature=0.8,
             )
             logger.debug(f"LLM返回结果长度: {len(llm_result)}字节")

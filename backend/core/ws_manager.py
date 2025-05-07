@@ -24,8 +24,8 @@ class ConnectionManager:
         """Initialize an empty connection manager."""
         # Maps task_group_id to a set of WebSocket connections
         self.active_connections: Dict[str, Set[WebSocket]] = {}
-        # Maps task_group_id to task data (task IDs and source info)
-        self.task_data: Dict[str, Dict[str, Any]] = {}
+        # Maps task_group_id to task group metadata (user_id, celery_task_ids, etc.)
+        self.task_group_metadata: Dict[str, Dict[str, Any]] = {}  # Renamed task_data
         logger.info("WebSocket ConnectionManager initialized")
 
     async def connect(self, websocket: WebSocket, task_group_id: str):
@@ -36,7 +36,7 @@ class ConnectionManager:
             websocket: The WebSocket connection to accept and track
             task_group_id: Identifier for the task group this connection is monitoring
         """
-
+        # Remove the redundant websocket.accept() call
         # Create a new set if this is the first connection for this task_group_id
         if task_group_id not in self.active_connections:
             self.active_connections[task_group_id] = set()
@@ -87,7 +87,8 @@ class ConnectionManager:
         disconnected_websockets = set()
 
         # Send message to all connected clients for this task group
-        for websocket in self.active_connections[task_group_id]:
+        # Iterate over a copy of the set in case disconnect is called during iteration
+        for websocket in set(self.active_connections[task_group_id]):
             try:
                 await websocket.send_json(data)
             except Exception as e:
@@ -98,39 +99,45 @@ class ConnectionManager:
         for websocket in disconnected_websockets:
             await self.disconnect(websocket, task_group_id)
 
-    async def store_task_data(self, task_group_id: str, data: Dict[str, Any]):
+    async def store_task_group_metadata(
+        self, task_group_id: str, data: Dict[str, Any]
+    ):  # Renamed method
         """
-        Store task data associated with a task group.
+        Store task group metadata associated with a task group.
 
         Args:
             task_group_id: The task group ID
-            data: Dictionary containing task IDs and source information
+            data: Dictionary containing metadata (user_id, celery_task_ids, etc.)
         """
-        self.task_data[task_group_id] = data
-        logger.info(f"Stored task data for task_group_id: {task_group_id}")
+        self.task_group_metadata[task_group_id] = data  # Use renamed dictionary
+        logger.info(f"Stored task group metadata for task_group_id: {task_group_id}")
 
-    def get_task_data(self, task_group_id: str) -> Optional[Dict[str, Any]]:
+    def get_task_group_metadata(
+        self, task_group_id: str
+    ) -> Optional[Dict[str, Any]]:  # Renamed method
         """
-        Retrieve task data for a task group.
+        Retrieve task group metadata for a task group.
 
         Args:
             task_group_id: The task group ID
 
         Returns:
-            Dictionary containing task data or None if not found
+            Dictionary containing task group metadata or None if not found
         """
-        return self.task_data.get(task_group_id)
+        return self.task_group_metadata.get(task_group_id)  # Use renamed dictionary
 
-    def cleanup_task_data(self, task_group_id: str):
+    def cleanup_task_group_data(self, task_group_id: str):  # Renamed method
         """
-        Remove task data for a completed task group.
+        Remove task group metadata for a completed task group.
 
         Args:
             task_group_id: The task group ID to clean up
         """
-        if task_group_id in self.task_data:
-            del self.task_data[task_group_id]
-            logger.info(f"Cleaned up task data for task_group_id: {task_group_id}")
+        if task_group_id in self.task_group_metadata:  # Use renamed dictionary
+            del self.task_group_metadata[task_group_id]  # Use renamed dictionary
+            logger.info(
+                f"Cleaned up task group metadata for task_group_id: {task_group_id}"
+            )
 
 
 # Global instance of the connection manager

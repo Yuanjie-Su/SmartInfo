@@ -8,51 +8,113 @@ Provides WebSocket connection for real-time task progress updates.
 
 import logging
 import asyncio
+import json
 from starlette.websockets import WebSocketState
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Path, Query, Depends
 from celery.result import AsyncResult
 from typing import Optional
+import redis.asyncio as redis
 
 from core.ws_manager import ws_manager
-from background.tasks.news_tasks import process_source_url_task_celery
 from core.security import decode_access_token
 from db.repositories.user_repository import UserRepository
-from api.dependencies.dependencies import get_user_repository
+from api.dependencies.dependencies import get_user_repository, get_redis_client
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
 
-@router.websocket("/ws/tasks/{task_group_id}")
-async def websocket_task_endpoint(
+async def redis_message_listener(
+    websocket: WebSocket, pubsub: redis.client.PubSub, task_group_id: str
+):
+    """
+    Continuously listen for messages from Redis PubSub channel and forward them to WebSocket clients.
+
+    Args:
+        websocket: The WebSocket connection object
+        pubsub: Redis PubSub instance already subscribed to the channel
+        task_group_id: Task group ID for logging and identifying the connection
+    """
+    try:
+        while True:
+            # Wait for messages with a timeout to prevent blocking forever
+            message = await pubsub.get_message(timeout=1.0)
+            if message is not None and message["type"] == "message":
+                try:
+                    # Parse the JSON message from Redis
+                    update_data = json.loads(message["data"])
+                    # Forward the message to all WebSocket clients through ws_manager
+                    await ws_manager.send_update(task_group_id, update_data)
+                except json.JSONDecodeError:
+                    logger.error(
+                        f"Failed to decode JSON message from Redis for {task_group_id}: {message['data']}"
+                    )
+                except Exception as send_err:
+                    logger.error(
+                        f"Error sending WebSocket update for {task_group_id}: {send_err}"
+                    )
+
+            # Short sleep to prevent CPU spinning
+            await asyncio.sleep(0.01)
+
+    except asyncio.CancelledError:
+        logger.info(f"Redis listener for {task_group_id} cancelled.")
+    except redis.RedisError as redis_err:
+        logger.error(f"Redis error in listener for {task_group_id}: {redis_err}")
+    except Exception as e:
+        logger.exception(f"Unexpected error in Redis listener for {task_group_id}: {e}")
+    finally:
+        logger.info(f"Exiting Redis listener loop for {task_group_id}.")
+
+
+@router.websocket("/ws/tasks/group/{task_group_id}")
+async def websocket_task_group_endpoint(
     websocket: WebSocket,
-    task_group_id: str = Path(
-        ..., description="Unique identifier for the task group to monitor"
-    ),
+    task_group_id: str = Path(..., description="Task group ID to monitor"),
     token: Optional[str] = Query(
         None, description="JWT access token for authentication"
     ),
-    user_repo: UserRepository = Depends(get_user_repository),
 ):
     """
-    WebSocket endpoint for monitoring task progress in real-time.
+    WebSocket endpoint for monitoring task group progress in real-time.
 
     Clients connect to this endpoint with a task_group_id and receive
-    progress updates for all tasks associated with that group ID.
-    This endpoint polls Celery task states and sends updates to the client.
+    progress updates for all tasks within that group via Redis Pub/Sub.
 
     Args:
         websocket: The WebSocket connection
-        task_group_id: Unique identifier for the task group to monitor
+        task_group_id: Task group ID to monitor
         token: JWT access token for authentication
-        user_repo: User repository for fetching user information
     """
+    pubsub = None
+    listener_task = None
+    channel_name = f"task_progress:{task_group_id}"
+
     try:
+        # Accept the connection immediately
+        await websocket.accept()
+
+        # Get dependencies manually since FastAPI's dependency injection might
+        # not handle WebSocket context correctly
+        user_repo = await get_user_repository()
+
+        # Get Redis client from app state
+        app = websocket.scope["app"]
+        if not hasattr(app.state, "redis_client"):
+            logger.error("Redis client not available in app state")
+            await websocket.send_json(
+                {"event": "error", "message": "Redis client not available"}
+            )
+            await websocket.close(code=1011, reason="Internal server error")
+            return
+
+        redis_client = app.state.redis_client
+
         # 验证令牌
         if not token:
             logger.warning(
-                f"WebSocket connection attempt without token: {task_group_id}"
+                f"WebSocket connection attempt without token for task_group_id: {task_group_id}"
             )
             await websocket.close(code=4001, reason="Authentication required")
             return
@@ -61,7 +123,7 @@ async def websocket_task_endpoint(
         payload = decode_access_token(token)
         if not payload:
             logger.warning(
-                f"WebSocket connection attempt with invalid token: {task_group_id}"
+                f"WebSocket connection attempt with invalid token for task_group_id: {task_group_id}"
             )
             await websocket.close(code=4001, reason="Invalid authentication token")
             return
@@ -70,7 +132,7 @@ async def websocket_task_endpoint(
         user_id = payload.get("sub")
         if not user_id:
             logger.warning(
-                f"WebSocket connection attempt with token missing user ID: {task_group_id}"
+                f"WebSocket connection attempt with token missing user ID for task_group_id: {task_group_id}"
             )
             await websocket.close(code=4001, reason="Invalid authentication token")
             return
@@ -79,217 +141,105 @@ async def websocket_task_endpoint(
         user = await user_repo.get_user_by_id(int(user_id))
         if not user:
             logger.warning(
-                f"WebSocket connection attempt with non-existent user ID: {user_id}"
+                f"WebSocket connection attempt with non-existent user ID: {user_id} for task_group_id: {task_group_id}"
             )
             await websocket.close(code=4001, reason="User not found")
             return
 
-        # 获取任务数据并验证用户是否有权访问此任务组
-        task_data = ws_manager.get_task_data(task_group_id)
-        if not task_data:
-            logger.warning(f"No task data found for task_group_id: {task_group_id}")
-            await websocket.accept()  # 先接受连接，然后发送错误消息
+        # Get task group metadata and verify user has access
+        task_group_metadata = ws_manager.get_task_group_metadata(
+            task_group_id
+        )  # Use new ws_manager method
+        if not task_group_metadata:
+            logger.warning(
+                f"No task group metadata found for task_group_id: {task_group_id}"
+            )
             await websocket.send_json(
                 {
                     "event": "error",
                     "task_group_id": task_group_id,
-                    "message": "No tasks found for the specified task group ID.",
+                    "message": "No task group found for the specified ID.",
                 }
             )
             await websocket.close(code=4004, reason="Task group not found")
             return
 
-        # 验证任务所有权
-        task_user_id = task_data.get("user_id")
-        if task_user_id != int(user_id):
+        # Verify task group ownership
+        group_user_id = task_group_metadata.get("user_id")
+        if group_user_id != int(user_id):
             logger.warning(
-                f"Unauthorized WebSocket access attempt: User {user_id} tried to access tasks for user {task_user_id}"
+                f"Unauthorized WebSocket access attempt: User {user_id} tried to access task group for user {group_user_id} (task_group_id: {task_group_id})"
             )
             await websocket.close(code=4003, reason="Unauthorized access to task group")
             return
 
-        # 所有检查通过，接受WebSocket连接
-        await websocket.accept()
+        # All checks passed, register the WebSocket connection with the manager
         await ws_manager.connect(websocket, task_group_id)
         logger.info(
             f"WebSocket connection established for task_group_id: {task_group_id}, user_id: {user_id}"
         )
 
-        # Extract task IDs and source information
-        task_ids = task_data.get("task_ids", [])
-        source_info = task_data.get("source_info", {})
+        # Initialize Redis PubSub and subscribe to the channel
+        pubsub = redis_client.pubsub(ignore_subscribe_messages=True)
+        await pubsub.subscribe(channel_name)
+        logger.info(f"Subscribed to Redis channel: {channel_name}")
 
-        logger.info(
-            f"Monitoring {len(task_ids)} tasks for task_group_id: {task_group_id}"
+        # Start the background listener task
+        listener_task = asyncio.create_task(
+            redis_message_listener(websocket, pubsub, task_group_id)
         )
+        logger.info(f"Started Redis listener task for {task_group_id}")
 
-        # Task tracking
-        active_tasks = set(task_ids)
-        completed_tasks = set()
-        failed_tasks = set()
-
-        # Keep the connection alive and periodically check task states
+        # Keep the connection alive until disconnected
         try:
-            while (
-                active_tasks and websocket.client_state != WebSocketState.DISCONNECTED
-            ):
-                logger.info(
-                    f"Task group {task_group_id}: Checking {len(active_tasks)} active tasks..."
-                )
-                # Check each active task's state
-                for task_id in list(active_tasks):
-                    try:
-                        logger.debug(f"Checking task ID: {task_id}")
-                        # Get task result object
-                        task_result = AsyncResult(task_id)
-                        task_state = task_result.state
-                        task_info = task_result.info
-                        logger.debug(
-                            f"Task {task_id} state: {task_state}, info: {task_info}"
-                        )
-
-                        # Get source info for this task
-                        source_id = source_info.get(task_id, {}).get("source_id", None)
-                        source_name = source_info.get(task_id, {}).get(
-                            "source_name", "Unknown Source"
-                        )
-
-                        # Process based on task state
-                        if task_state in ("PROGRESS", "STARTED") and isinstance(
-                            task_info, dict
-                        ):
-                            # Task is still running, get progress info
-                            # Include source information with the update
-                            update_data = {
-                                "source_id": source_id,
-                                "source_name": source_name,
-                                "status": "processing",
-                                "step": task_info.get("step", "processing"),
-                                "progress": task_info.get("progress", 0),
-                                "message": task_info.get("message", "Processing..."),
-                            }
-
-                            # Add items_saved if available
-                            if "items_saved" in task_info:
-                                update_data["items_saved"] = task_info["items_saved"]
-
-                            # Send update to client
-                            logger.debug(
-                                f"Sending update for task {task_id}: {update_data}"
-                            )
-                            await websocket.send_json(update_data)
-                            logger.debug(f"Update sent for task {task_id}")
-
-                        elif task_state == "SUCCESS":
-                            # Task completed successfully
-                            task_result_data = task_result.get() or {}
-
-                            # Format completion message
-                            update_data = {
-                                "source_id": source_id,
-                                "source_name": source_name,
-                                "status": "complete",
-                                "step": "complete",
-                                "progress": 100,
-                                "message": task_result_data.get(
-                                    "message", "Task completed successfully."
-                                ),
-                            }
-
-                            # Add items_saved if available
-                            if "items_saved" in task_result_data:
-                                update_data["items_saved"] = task_result_data[
-                                    "items_saved"
-                                ]
-
-                            # Send final update
-                            logger.debug(
-                                f"Sending SUCCESS update for task {task_id}: {update_data}"
-                            )
-                            await websocket.send_json(update_data)
-                            logger.debug(f"SUCCESS Update sent for task {task_id}")
-
-                            # Mark task as completed
-                            active_tasks.remove(task_id)
-                            completed_tasks.add(task_id)
-
-                        elif task_state in ("FAILURE", "REVOKED"):
-                            # Task failed
-                            error_message = "Task failed"
-                            if hasattr(task_result, "traceback"):
-                                error_message = f"Task failed: {task_result.traceback}"
-
-                            # Send error update
-                            update_data = {
-                                "source_id": source_id,
-                                "source_name": source_name,
-                                "status": "error",
-                                "step": "error",
-                                "progress": 0,
-                                "message": error_message,
-                            }
-
-                            logger.debug(
-                                f"Sending FAILURE update for task {task_id}: {update_data}"
-                            )
-                            await websocket.send_json(update_data)
-                            logger.debug(f"FAILURE Update sent for task {task_id}")
-
-                            # Mark task as failed
-                            active_tasks.remove(task_id)
-                            failed_tasks.add(task_id)
-
-                    except Exception as loop_error:
-                        logger.error(
-                            f"Error processing task {task_id} in WS loop: {loop_error}",
-                            exc_info=True,
-                        )
-                        # 决定是否将错误通知前端或直接断开
-                        await websocket.send_json(
-                            {
-                                "event": "error",
-                                "task_id": task_id,
-                                "message": f"Internal server error while monitoring task {task_id}.",
-                            }
-                        )
-                        # 可以选择移除任务或继续监控其他任务
-                        if task_id in active_tasks:
-                            active_tasks.remove(task_id)
-                        failed_tasks.add(task_id)  # 标记为失败
-
-                # If all tasks are done, send final summary - REMOVED
-                if not active_tasks:
-                    logger.info(f"All tasks completed for group {task_group_id}.")
-                    # await websocket.send_json({"event": "group_complete", "task_group_id": task_group_id, "total_sources": total_tasks, "successful": len(completed_tasks), "failed": len(failed_tasks), "message": f"All tasks completed. {len(completed_tasks)} successful, {len(failed_tasks)} failed."})
-                    # Clean up task data
-                    ws_manager.cleanup_task_data(task_group_id)
-                    break
-
-                # Wait before checking again (1 second)
-                await asyncio.sleep(1)
-                logger.debug(f"Task group {task_group_id}: Loop finished iteration.")
-
+            while websocket.client_state != WebSocketState.DISCONNECTED:
+                await asyncio.sleep(
+                    60
+                )  # Keep connection alive, check state periodically
         except WebSocketDisconnect:
             logger.info(
                 f"WebSocket client disconnected explicitly from task_group_id: {task_group_id}"
             )
-        except Exception as e:
-            logger.error(
-                f"Unhandled exception in websocket_task_endpoint for {task_group_id}: {e}",
-                exc_info=True,
-            )
-        finally:
-            logger.warning(
-                f"Executing finally block for task_group_id: {task_group_id}. Cleaning up connection."
-            )
-            # Ensure we clean up the connection when it ends
-            await ws_manager.disconnect(websocket, task_group_id)
 
     except Exception as e:
-        logger.error(f"Error handling WebSocket connection: {e}", exc_info=True)
-        # Attempt to disconnect if we haven't already
+        logger.error(
+            f"Unhandled exception in websocket_task_group_endpoint for {task_group_id}: {e}",
+            exc_info=True,
+        )
+        # Attempt to send a final error message before closing
         try:
-            await ws_manager.disconnect(websocket, task_group_id)
+            await websocket.send_json(
+                {
+                    "event": "error",
+                    "task_group_id": task_group_id,
+                    "message": f"Internal server error: {str(e)}",
+                }
+            )
         except Exception:
-            # Ignore errors in cleanup during an error
-            pass
+            pass  # Ignore errors sending error message
+
+    finally:
+        logger.warning(
+            f"Executing finally block for task_group_id: {task_group_id}. Cleaning up connection."
+        )
+
+        # Cancel the listener task if it's running
+        if listener_task:
+            try:
+                listener_task.cancel()
+                await asyncio.shield(listener_task)
+                logger.info(f"Redis listener task for {task_group_id} cancelled")
+            except Exception as e:
+                logger.error(f"Error cancelling Redis listener task: {e}")
+
+        # Unsubscribe and close PubSub
+        if pubsub:
+            try:
+                await pubsub.unsubscribe(channel_name)
+                await pubsub.close()
+                logger.info(f"Unsubscribed from Redis channel: {channel_name}")
+            except Exception as e:
+                logger.error(f"Error closing Redis PubSub: {e}")
+
+        # Disconnect from the WebSocket manager
+        await ws_manager.disconnect(websocket, task_group_id)

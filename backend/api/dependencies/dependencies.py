@@ -7,9 +7,10 @@ Provides dependency injection for database connections, repositories, services, 
 """
 
 import logging
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer  # Import OAuth2PasswordBearer
 from typing import Optional, Annotated  # Import Annotated
+import redis.asyncio as redis  # Import Redis async client
 
 # Import components using absolute backend package path
 from config import config
@@ -75,6 +76,41 @@ async def get_db_connection_context_dependency():
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Database connection is not available.",
         )
+
+
+async def get_redis_client(request: Request = None) -> redis.Redis:
+    """
+    Dependency function that provides the Redis client from the app state.
+    Works with both regular HTTP requests and WebSocket connections.
+
+    Args:
+        request: The FastAPI request object (optional, injected by FastAPI)
+
+    Returns:
+        The Redis client instance from app state
+
+    Raises:
+        HTTPException: If Redis client is not available
+    """
+    # If we're in a normal request context, request will be provided by FastAPI
+    if request:
+        if not hasattr(request.app.state, "redis_client"):
+            logger.error("Redis client not available in app state")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Redis client not available",
+            )
+        return request.app.state.redis_client
+
+    # For WebSockets and other contexts, we'll need to get it from the app state manually
+    # This part will be handled in the specific endpoint
+
+    # If we can't determine the context, raise an error
+    logger.error("Could not get app from request context")
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Could not access application context",
+    )
 
 
 # --- Repository Dependencies ---

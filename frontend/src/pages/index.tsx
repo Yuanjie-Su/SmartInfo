@@ -49,7 +49,7 @@ const { Option } = Select;
 const NewsPage: React.FC = () => {
   // 添加认证上下文
   const { token } = useAuth();
-  
+
   // State
   const [news, setNews] = useState<NewsItem[]>([]);
   const [categories, setCategories] = useState<NewsCategory[]>([]);
@@ -92,7 +92,7 @@ const NewsPage: React.FC = () => {
       setError(null);
       const newsData = await newsService.getNewsItems(params);
       setNews(newsData);
-      setTotal(100);
+      setTotal(100); // Assuming total is fixed for now or fetched separately
     } catch (error) {
       handleApiError(error, 'Failed to load news');
       setError('Cannot load news content, please try again later');
@@ -145,7 +145,7 @@ const NewsPage: React.FC = () => {
   };
 
   // Function to establish WebSocket connection
-  const connectWebSocket = useCallback((groupId: string) => {
+  const connectWebSocket = useCallback((taskGroupId: string) => { // Updated parameter name
     // Close existing connection if any
     if (wsRef.current) {
       console.log('Closing previous WebSocket connection.');
@@ -163,8 +163,8 @@ const NewsPage: React.FC = () => {
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     // Use API_URL base but replace http/https with ws/wss and remove potential trailing slash
     const apiUrlBase = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/^http/, 'ws').replace(/\/$/, '');
-    // 添加token作为查询参数
-    const wsUrl = `${apiUrlBase}/api/tasks/ws/tasks/${groupId}?token=${encodeURIComponent(token)}`;
+    // 添加token作为查询参数, use the new endpoint path
+    const wsUrl = `${apiUrlBase}/api/tasks/ws/tasks/group/${taskGroupId}?token=${encodeURIComponent(token)}`; // Updated URL path
     console.log('Connecting to WebSocket with auth token:', wsUrl);
 
     try {
@@ -172,44 +172,103 @@ const NewsPage: React.FC = () => {
         wsRef.current = ws; // Store the instance
 
         ws.onopen = () => {
-          console.log(`WebSocket connected for task group: ${groupId}`);
-          message.success(`Connected to real-time progress updates (Group: ${groupId.substring(0, 6)}...)`);
+          console.log(`WebSocket connected for task group ID: ${taskGroupId}`);
+          message.success(`Connected to real-time progress updates (Group ID: ${taskGroupId.substring(0, 6)}...)`);
         };
 
         ws.onmessage = (event) => {
           try {
               const taskUpdate = JSON.parse(event.data);
               console.log('Received task update:', taskUpdate);
-              
-              // 只处理包含source_id的消息
-              if (taskUpdate.source_id === undefined) {
-                  console.log('Received message without source_id (ignoring for task list):', taskUpdate);
-                  return;
-              }
-              
-              // 更新特定source任务的状态
-              setTasksToMonitor(prevTasks => {
-                  const taskIndex = prevTasks.findIndex(t => t.sourceId === taskUpdate.source_id);
-  
-                  if (taskIndex === -1) {
-                      console.warn(`Received update for source ID ${taskUpdate.source_id}, but task not found in monitor list.`);
-                      return prevTasks;
-                  }
 
-                  const updatedTasks = [...prevTasks];
-                  const taskToUpdate = { ...updatedTasks[taskIndex] };
-  
-                  // 根据接收到的消息更新字段
-                  taskToUpdate.status = taskUpdate.status || taskUpdate.step || taskToUpdate.status;
-                  taskToUpdate.progress = taskUpdate.progress !== undefined ? taskUpdate.progress : taskToUpdate.progress;
-                  taskToUpdate.message = taskUpdate.message || taskToUpdate.message;
-                  if (taskUpdate.items_saved !== undefined) {
-                      taskToUpdate.items_saved = taskUpdate.items_saved;
+              // Handle Batch Task Failure Event (from a single batch task within the group)
+              if (taskUpdate.event === "batch_task_failed") {
+                  console.log(`Batch Celery task ${taskUpdate.task_id} failed in group ${taskGroupId}: ${taskUpdate.message}`);
+                  // Display a global error message indicating a batch failed
+                  message.error(`A batch of fetch tasks failed: ${taskUpdate.message}`, 5);
+
+                  if (taskUpdate.affected_source_ids && Array.isArray(taskUpdate.affected_source_ids)) {
+                      setTasksToMonitor(prevTasks => prevTasks.map(task => {
+                          // Update only tasks that were part of this failed batch and haven't completed yet
+                          if (taskUpdate.affected_source_ids.includes(task.sourceId) && (task.progress ?? 0) < 100) {
+                              return { ...task, status: 'error', progress: 100, message: 'Batch failed; this source did not complete.' };
+                          }
+                          return task;
+                      }));
                   }
-  
-                  updatedTasks[taskIndex] = taskToUpdate;
-                  return updatedTasks;
-              });
+                  // Do NOT close the WebSocket here, other batches might still be running.
+                  return; // Stop processing as an individual source update
+              }
+
+              // Check if this is an overall batch group completion event
+              if (taskUpdate.event === "overall_batch_completed") { // Assuming backend sends this event
+                  console.log(`Overall batch group ${taskGroupId} has finished with status: ${taskUpdate.overall_status}`);
+                  // Handle overall batch completion (e.g., show global message)
+                  if (taskUpdate.overall_status === "SUCCESS") {
+                      message.success(`All fetch tasks completed successfully: ${taskUpdate.message}`, 5);
+                      // Refresh news list here as all tasks are done
+                      loadNews(filters);
+                  } else if (taskUpdate.overall_status === "PARTIAL_SUCCESS") {
+                       message.warning(`Batch group completed with some errors: ${taskUpdate.message}`, 5);
+                       loadNews(filters); // Refresh even with partial success
+                  } else if (taskUpdate.overall_status === "MONITORING_ERROR") {
+                       message.info(`Batch group monitoring ended with an error: ${taskUpdate.message}`, 5);
+                  }
+                   // Note: Individual batch failures are handled by "batch_task_failed" event
+
+                  // Close the WebSocket connection after receiving the overall completion event
+                  if (wsRef.current) {
+                      console.log('Closing WebSocket after overall batch completion event.');
+                      wsRef.current.close();
+                      wsRef.current = null;
+                  }
+                  setTaskGroupId(null); // Reset task group ID
+
+                  return; // Stop processing
+              }
+
+
+              // If not a batch event, process as an individual source progress update
+              if (taskUpdate.event === "source_progress" && taskUpdate.source_id !== undefined) {
+                  // This is a progress update for a single source within a batch
+                  setTasksToMonitor(prevTasks => {
+                      const taskIndex = prevTasks.findIndex(t => t.sourceId === taskUpdate.source_id);
+
+                      if (taskIndex === -1) {
+                          console.warn(`Received update for source ID ${taskUpdate.source_id}, but task not found in monitor list.`);
+                          return prevTasks;
+                      }
+
+                      const updatedTasks = [...prevTasks];
+                      const taskToUpdate = { ...updatedTasks[taskIndex] };
+
+                      // 根据接收到的消息更新字段
+                      taskToUpdate.status = taskUpdate.status || taskUpdate.step || taskToUpdate.status;
+                      taskToUpdate.progress = taskUpdate.progress !== undefined ? taskUpdate.progress : taskToUpdate.progress;
+                      taskToUpdate.message = taskUpdate.message || taskToUpdate.message;
+                      if (taskUpdate.items_saved !== undefined) {
+                          taskToUpdate.items_saved = taskUpdate.items_saved;
+                      }
+
+                      // Specifically handle individual source errors reported via progress callback
+                      if (taskUpdate.status === 'error' || taskUpdate.step === 'error') {
+                          taskToUpdate.status = 'error';
+                          taskToUpdate.progress = 100; // Mark as complete with error
+                      } else if (taskUpdate.progress === 100 && taskToUpdate.status !== 'error') {
+                           // Mark as complete if progress reaches 100 and it's not an error
+                           taskToUpdate.status = 'complete';
+                      }
+
+
+                      updatedTasks[taskIndex] = taskToUpdate;
+                      return updatedTasks;
+                  });
+                  return; // Stop processing
+              }
+
+              console.log('Received unhandled WebSocket message:', taskUpdate);
+
+
           } catch (e) {
               console.error('Failed to parse or process WebSocket message:', e);
           }
@@ -224,7 +283,7 @@ const NewsPage: React.FC = () => {
         };
 
         ws.onclose = (event) => {
-          console.log(`WebSocket closed for task group: ${groupId}. Code: ${event.code}, Reason: ${event.reason}`);
+          console.log(`WebSocket closed for task group ID: ${taskGroupId}. Code: ${event.code}, Reason: ${event.reason}`);
           // Clear the ref when closed, unless it was intentionally closed to open a new one
           if (wsRef.current === ws) {
              wsRef.current = null;
@@ -237,7 +296,7 @@ const NewsPage: React.FC = () => {
         message.error("Failed to initialize WebSocket connection.");
     }
 
-  }, [token]); // 添加token作为依赖，确保当token变化时函数被重新创建
+  }, [token, loadNews, filters]); // Add loadNews and filters as dependencies
 
   // Effect to connect WebSocket when taskGroupId changes
   useEffect(() => {
@@ -253,7 +312,7 @@ const NewsPage: React.FC = () => {
         wsRef.current = null;
       }
     };
-  }, [taskGroupId, connectWebSocket]);
+  }, [taskGroupId, connectWebSocket]); // Updated dependency
 
   // Load initial data
   useEffect(() => {
@@ -358,15 +417,15 @@ const NewsPage: React.FC = () => {
     setIsTaskDrawerVisible(true); // Open the drawer immediately
 
     try {
-      // Call the backend API to start batch fetch
+      // Call the backend API to start batch fetch group
       message.loading('Initiating fetch tasks...', 1);
-      const response = await newsService.fetchNewsFromSourcesBatch(selectedSourceIds);
+      const response = await newsService.fetchNewsFromSourcesBatchGroup(selectedSourceIds); // Use the new service function
 
       // Store the task_group_id for WebSocket connection
-      const taskGroupId = response.task_group_id;
+      const taskGroupId = response.task_group_id; // Get the task_group_id
       setTaskGroupId(taskGroupId); // This will trigger the useEffect to connect
 
-      message.success(`Fetch tasks initiated successfully (Group ID: ${taskGroupId?.substring(0, 6)}...).`, 3);
+      message.success(`Fetch task group initiated successfully (Group ID: ${taskGroupId?.substring(0, 6)}...).`, 3);
     } catch (error) {
       // Handle API errors
       handleApiError(error, 'Failed to start news fetch tasks');
@@ -509,17 +568,17 @@ const NewsPage: React.FC = () => {
                         <Space size={16} wrap>
                           <Space size={4}>
                             <CalendarOutlined style={{ color: '#8c8c8c' }} />
-                            <Text type="secondary" style={{ fontSize: '12px' }}>{formatDate(item.date)}</Text>
+                            <Text type="secondary" style={{ fontSize: 12 }}>{formatDate(item.date)}</Text>
                           </Space>
                           <Space size={4}>
                             <GlobalOutlined style={{ color: '#8c8c8c' }} />
-                            <Text type="secondary" style={{ fontSize: '12px' }}>{item.source_name}</Text>
+                            <Text type="secondary" style={{ fontSize: 12 }}>{item.source_name}</Text>
                           </Space>
                           {/* --- Start modification for Category and Link --- */}
                           {/* Category */}
                           <Space size={4}>
                             <TagOutlined style={{ color: '#8c8c8c' }} />
-                            <Text type="secondary" style={{ fontSize: '12px' }}>{item.category_name}</Text>
+                            <Text type="secondary" style={{ fontSize: 12 }}>{item.category_name}</Text>
                           </Space>
                           {/* Original URL Link */}
                           {item.url && ( // Conditionally render link if URL exists

@@ -17,6 +17,7 @@ from typing import (
     Annotated,
 )  # Import Annotated
 import uuid
+import math  # Import math for batching
 
 # Import dependencies from the centralized dependencies module
 from api.dependencies import (
@@ -51,6 +52,12 @@ from models import (  # Import models directly
 
 # Import the service class type hint
 from services.news_service import NewsService
+
+# Import ws_manager and the new Celery task
+from core.ws_manager import ws_manager
+from background.tasks.news_tasks import (
+    process_single_batch_task,
+)  # Assuming this is the new task name
 
 logger = logging.getLogger(__name__)
 
@@ -812,65 +819,87 @@ async def delete_news_category(
 
 
 @router.post(
-    "/tasks/fetch/batch",
+    "/tasks/fetch/batch-group",  # Renamed endpoint
     status_code=status.HTTP_202_ACCEPTED,
-    summary="Start fetching news from user's sources",
+    summary="Start fetching news from user's sources in batches",
     response_model=Dict[str, str],
 )
-async def trigger_fetch_batch_sources(
+async def trigger_fetch_batch_group(  # Renamed function
     request: FetchSourceBatchRequest,
     current_user: Annotated[User, Depends(get_current_active_user)],
-    news_service: Annotated[NewsService, Depends(get_news_service)],
+    news_service: Annotated[
+        NewsService, Depends(get_news_service)
+    ],  # Keep news_service dependency if needed elsewhere in the router
 ):
     """
-    Start Celery tasks to fetch news from multiple sources belonging to the current user.
+    Start a group of Celery tasks to fetch news from multiple selected sources belonging to the current user,
+    dispatched in smaller batches.
     """
     try:
         if not request.source_ids:
             raise HTTPException(status_code=400, detail="No source IDs provided.")
 
-        # Validate that all source IDs belong to the user before scheduling
-        valid_source_ids = []
-        for source_id in request.source_ids:
-            source = await news_service.get_source_by_id(
-                source_id=source_id, user_id=current_user.id
-            )
-            if not source:
-                logger.warning(
-                    f"Skipping source ID {source_id} in batch fetch request for user {current_user.id} as it's not found or not owned."
-                )
-                # Optionally raise error, or just skip non-owned sources
-                # raise HTTPException(status_code=403, detail=f"Source ID {source_id} not owned by user.")
-            else:
-                valid_source_ids.append(source_id)
+        task_group_id = str(uuid.uuid4())  # Generate unique group ID
+        batch_size = 4  # Define batch size
+        source_ids = request.source_ids
+        total_sources = len(source_ids)
+        num_batches = math.ceil(total_sources / batch_size)
 
-        if not valid_source_ids:
-            raise HTTPException(
-                status_code=400,
-                detail="None of the provided source IDs belong to the user.",
-            )
-
-        task_group_id = str(uuid.uuid4())
-        result = await news_service.fetch_sources_in_background(
-            source_ids=valid_source_ids,
-            user_id=current_user.id,  # Pass user_id
-            task_group_id=task_group_id,
-        )
+        dispatched_celery_task_ids = []
 
         logger.info(
-            f"Scheduled Celery tasks for {len(valid_source_ids)} sources for user {current_user.id} with task_group_id: {task_group_id}"
+            f"Starting batch fetch group {task_group_id} for user {current_user.id} with {total_sources} sources in {num_batches} batches."
         )
+
+        for i in range(num_batches):
+            start_index = i * batch_size
+            end_index = min((i + 1) * batch_size, total_sources)
+            batch_source_ids = source_ids[start_index:end_index]
+
+            if not batch_source_ids:
+                continue  # Skip empty batches
+
+            # Dispatch the new Celery task for this batch
+            celery_task_instance = (
+                process_single_batch_task.delay(  # Use the new task name
+                    source_ids=batch_source_ids,
+                    user_id=current_user.id,  # Pass user_id
+                    task_group_id=task_group_id,  # Pass the group ID
+                )
+            )
+            dispatched_celery_task_ids.append(celery_task_instance.id)
+            logger.info(
+                f"Dispatched Celery task {celery_task_instance.id} for batch {i+1}/{num_batches} ({len(batch_source_ids)} sources) in group {task_group_id}"
+            )
+
+        # Store metadata for the task group using ws_manager
+        await ws_manager.store_task_group_metadata(  # Use the new ws_manager method
+            task_group_id,
+            {
+                "user_id": current_user.id,
+                "celery_task_ids": dispatched_celery_task_ids,
+                "total_sources": total_sources,  # Store total sources for potential frontend use
+                "completed_sources": 0,  # Initialize completed count
+            },
+        )
+        logger.info(
+            f"Stored task group metadata for group_id: {task_group_id}, user_id: {current_user.id}, celery_task_ids: {dispatched_celery_task_ids}"
+        )
+
         return {
-            "task_group_id": task_group_id,
-            "message": f"Fetch tasks scheduled for {len(valid_source_ids)} sources.",
+            "task_group_id": task_group_id,  # Return the group ID
+            "message": f"Batch fetch group scheduled for {total_sources} sources in {num_batches} batches.",
         }
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Error scheduling batch source fetch", exc_info=True)
+        logger.exception(
+            "Error dispatching batch source fetch group task", exc_info=True
+        )
         raise HTTPException(
-            status_code=500, detail=f"Failed to schedule batch fetch: {str(e)}"
+            status_code=500,
+            detail=f"Failed to dispatch batch fetch group task: {str(e)}",
         )
 
 
