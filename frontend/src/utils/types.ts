@@ -82,15 +82,23 @@ export interface NewsFilterParams {
 export interface FetchTaskItem {
   sourceId: number;       // Source ID
   sourceName: string;     // Source Name
-  status: 'pending' | 'fetching' | 'processing' | 'crawling' | 'analyzing' | 'saving' | 'complete' | 'error' | 'initializing';
-  progress?: number;     //  Progress percentage (0-100)
-  message?: string;      //  For displaying error messages
-  items_saved?: number;  // Add this based on backend message format
+  status: string;         // Status string derived from step code
+  progress?: number;      // Progress percentage (0-100)
+  error?: boolean;        // Error flag when status === 'Error'
+  items_saved?: number;   // Included only for completed tasks
 }
 
 export interface FetchTaskResponse {
   task_id: string;
   message: string;
+}
+
+// New interface for overall task status display
+export interface OverallStatusInfo {
+  status: 'SUCCESS' | 'PARTIAL_SUCCESS' | 'FAILURE';
+  successful: number;
+  failed: number;
+  saved: number;
 }
 
 export interface UpdateAnalysisRequest {

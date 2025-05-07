@@ -32,9 +32,11 @@ import {
   ExperimentOutlined,
   DownloadOutlined,
   BarsOutlined,
-  LinkOutlined
+  LinkOutlined,
+  CheckCircleOutlined,
+  CloseCircleOutlined
 } from '@ant-design/icons';
-import { NewsItem, NewsCategory, NewsSource, NewsFilterParams, FetchTaskItem } from '@/utils/types';
+import { NewsItem, NewsCategory, NewsSource, NewsFilterParams, FetchTaskItem, OverallStatusInfo } from '@/utils/types';
 import * as newsService from '@/services/newsService';
 import { handleApiError } from '@/utils/apiErrorHandler';
 import Link from 'next/link';
@@ -45,6 +47,33 @@ import withAuth from '@/components/auth/withAuth'; // Import the HOC
 
 const { Title, Text, Paragraph } = Typography;
 const { Option } = Select;
+
+// Step codes enum - must match backend codes
+enum TaskStep {
+  Preparing = 1,
+  Crawling = 2,
+  ExtractingLinks = 3,
+  Analyzing = 4,
+  Saving = 5,
+  Complete = 6,
+  Error = 7,
+  Skipped = 8,
+}
+
+// Helper to map step code to display string
+const getStepDisplayString = (stepCode: TaskStep | number): string => {
+  switch (stepCode) {
+    case TaskStep.Preparing: return 'Preparing';
+    case TaskStep.Crawling: return 'Crawling';
+    case TaskStep.ExtractingLinks: return 'Extracting Links';
+    case TaskStep.Analyzing: return 'Analyzing';
+    case TaskStep.Saving: return 'Saving';
+    case TaskStep.Complete: return 'Complete';
+    case TaskStep.Error: return 'Error';
+    case TaskStep.Skipped: return 'Skipped';
+    default: return 'Unknown';
+  }
+};
 
 const NewsPage: React.FC = () => {
   // 添加认证上下文
@@ -76,6 +105,7 @@ const NewsPage: React.FC = () => {
   // Task progress drawer state
   const [isTaskDrawerVisible, setIsTaskDrawerVisible] = useState<boolean>(false);
   const [tasksToMonitor, setTasksToMonitor] = useState<FetchTaskItem[]>([]);
+  const [overallTaskStatus, setOverallTaskStatus] = useState<OverallStatusInfo | null>(null);
 
   // Analysis modal state
   const [analysisModalVisible, setAnalysisModalVisible] = useState<boolean>(false);
@@ -173,7 +203,6 @@ const NewsPage: React.FC = () => {
 
         ws.onopen = () => {
           console.log(`WebSocket connected for task group ID: ${taskGroupId}`);
-          message.success(`Connected to real-time progress updates (Group ID: ${taskGroupId.substring(0, 6)}...)`);
         };
 
         ws.onmessage = (event) => {
@@ -184,49 +213,46 @@ const NewsPage: React.FC = () => {
               // Handle Batch Task Failure Event (from a single batch task within the group)
               if (taskUpdate.event === "batch_task_failed") {
                   console.log(`Batch Celery task ${taskUpdate.task_id} failed in group ${taskGroupId}: ${taskUpdate.message}`);
-                  // Display a global error message indicating a batch failed
-                  message.error(`A batch of fetch tasks failed: ${taskUpdate.message}`, 5);
-
+                  
                   if (taskUpdate.affected_source_ids && Array.isArray(taskUpdate.affected_source_ids)) {
                       setTasksToMonitor(prevTasks => prevTasks.map(task => {
                           // Update only tasks that were part of this failed batch and haven't completed yet
                           if (taskUpdate.affected_source_ids.includes(task.sourceId) && (task.progress ?? 0) < 100) {
-                              return { ...task, status: 'error', progress: 100, message: 'Batch failed; this source did not complete.' };
+                              return { ...task, status: 'Error', progress: 100, message: 'Batch failed; this source did not complete.' };
                           }
                           return task;
                       }));
                   }
-                  // Do NOT close the WebSocket here, other batches might still be running.
                   return; // Stop processing as an individual source update
               }
 
               // Check if this is an overall batch group completion event
-              if (taskUpdate.event === "overall_batch_completed") { // Assuming backend sends this event
-                  console.log(`Overall batch group ${taskGroupId} has finished with status: ${taskUpdate.overall_status}`);
-                  // Handle overall batch completion (e.g., show global message)
-                  if (taskUpdate.overall_status === "SUCCESS") {
-                      message.success(`All fetch tasks completed successfully: ${taskUpdate.message}`, 5);
-                      // Refresh news list here as all tasks are done
-                      loadNews(filters);
-                  } else if (taskUpdate.overall_status === "PARTIAL_SUCCESS") {
-                       message.warning(`Batch group completed with some errors: ${taskUpdate.message}`, 5);
-                       loadNews(filters); // Refresh even with partial success
-                  } else if (taskUpdate.overall_status === "MONITORING_ERROR") {
-                       message.info(`Batch group monitoring ended with an error: ${taskUpdate.message}`, 5);
-                  }
-                   // Note: Individual batch failures are handled by "batch_task_failed" event
-
-                  // Close the WebSocket connection after receiving the overall completion event
-                  if (wsRef.current) {
-                      console.log('Closing WebSocket after overall batch completion event.');
-                      wsRef.current.close();
-                      wsRef.current = null;
-                  }
-                  setTaskGroupId(null); // Reset task group ID
+              if (taskUpdate.event === "overall_batch_completed") { 
+                  console.log(`Overall batch group ${taskGroupId} has finished with status: ${taskUpdate.status}`);
+                  
+                  // Store the overall status for display in the drawer
+                  setOverallTaskStatus({
+                      status: taskUpdate.status,
+                      successful: taskUpdate.successful,
+                      failed: taskUpdate.failed,
+                      saved: taskUpdate.saved,
+                  });
+                  
+                  // Refresh news list
+                  loadNews(filters);
+                  
+                  // Close WebSocket connection after receiving the overall completion event
+                  setTimeout(() => {
+                      if (wsRef.current) {
+                          console.log('Closing WebSocket after overall completion event.');
+                          wsRef.current.close();
+                          wsRef.current = null;
+                      }
+                      setTaskGroupId(null); // Reset task group ID for next fetch
+                  }, 1000); // Small delay to ensure message is processed
 
                   return; // Stop processing
               }
-
 
               // If not a batch event, process as an individual source progress update
               if (taskUpdate.event === "source_progress" && taskUpdate.source_id !== undefined) {
@@ -242,23 +268,26 @@ const NewsPage: React.FC = () => {
                       const updatedTasks = [...prevTasks];
                       const taskToUpdate = { ...updatedTasks[taskIndex] };
 
-                      // 根据接收到的消息更新字段
-                      taskToUpdate.status = taskUpdate.status || taskUpdate.step || taskToUpdate.status;
-                      taskToUpdate.progress = taskUpdate.progress !== undefined ? taskUpdate.progress : taskToUpdate.progress;
-                      taskToUpdate.message = taskUpdate.message || taskToUpdate.message;
+                      // Map step code to status string for display purposes
+                      taskToUpdate.status = getStepDisplayString(taskUpdate.step);
+                      taskToUpdate.progress = taskUpdate.progress ?? taskToUpdate.progress;
+                      
+                      // Handle error flag - now a boolean
+                      if (taskUpdate.step === TaskStep.Error) {
+                          taskToUpdate.error = true;
+                      }
+                      
+                      // Only store items_saved if present (for completed tasks)
                       if (taskUpdate.items_saved !== undefined) {
                           taskToUpdate.items_saved = taskUpdate.items_saved;
                       }
 
-                      // Specifically handle individual source errors reported via progress callback
-                      if (taskUpdate.status === 'error' || taskUpdate.step === 'error') {
-                          taskToUpdate.status = 'error';
-                          taskToUpdate.progress = 100; // Mark as complete with error
-                      } else if (taskUpdate.progress === 100 && taskToUpdate.status !== 'error') {
-                           // Mark as complete if progress reaches 100 and it's not an error
-                           taskToUpdate.status = 'complete';
+                      // Determine final state based on step code
+                      if (taskUpdate.step === TaskStep.Error || taskUpdate.step === TaskStep.Skipped) {
+                          taskToUpdate.progress = 100; // Mark as 'done' visually
+                      } else if (taskUpdate.step === TaskStep.Complete) {
+                          taskToUpdate.progress = 100;
                       }
-
 
                       updatedTasks[taskIndex] = taskToUpdate;
                       return updatedTasks;
@@ -267,8 +296,6 @@ const NewsPage: React.FC = () => {
               }
 
               console.log('Received unhandled WebSocket message:', taskUpdate);
-
-
           } catch (e) {
               console.error('Failed to parse or process WebSocket message:', e);
           }
@@ -284,11 +311,9 @@ const NewsPage: React.FC = () => {
 
         ws.onclose = (event) => {
           console.log(`WebSocket closed for task group ID: ${taskGroupId}. Code: ${event.code}, Reason: ${event.reason}`);
-          // Clear the ref when closed, unless it was intentionally closed to open a new one
+          // Clear the ref when closed
           if (wsRef.current === ws) {
              wsRef.current = null;
-             // Optionally reset taskGroupId if connection is lost unexpectedly
-             // setTaskGroupId(null);
           }
         };
     } catch (err) {
@@ -411,6 +436,9 @@ const NewsPage: React.FC = () => {
       progress: 0,
     }));
 
+    // Reset overall status when starting a new fetch
+    setOverallTaskStatus(null);
+    
     // Update UI state first for responsiveness
     setTasksToMonitor(prevTasks => [...prevTasks, ...newTasks]); // Append new tasks
     setIsFetchModalVisible(false);
@@ -418,14 +446,11 @@ const NewsPage: React.FC = () => {
 
     try {
       // Call the backend API to start batch fetch group
-      message.loading('Initiating fetch tasks...', 1);
-      const response = await newsService.fetchNewsFromSourcesBatchGroup(selectedSourceIds); // Use the new service function
+      const response = await newsService.fetchNewsFromSourcesBatchGroup(selectedSourceIds);
 
       // Store the task_group_id for WebSocket connection
-      const taskGroupId = response.task_group_id; // Get the task_group_id
+      const taskGroupId = response.task_group_id;
       setTaskGroupId(taskGroupId); // This will trigger the useEffect to connect
-
-      message.success(`Fetch task group initiated successfully (Group ID: ${taskGroupId?.substring(0, 6)}...).`, 3);
     } catch (error) {
       // Handle API errors
       handleApiError(error, 'Failed to start news fetch tasks');
@@ -443,17 +468,17 @@ const NewsPage: React.FC = () => {
 
   // Helper function for status colors in task drawer
   const getStatusColor = (status: FetchTaskItem['status']) => {
-    switch (status) {
+    switch (status.toLowerCase()) {
       case 'pending': return 'default'; // Grey
-      case 'fetching':
-      case 'processing':
+      case 'preparing':
       case 'crawling':
+      case 'extracting links':
       case 'analyzing':
       case 'saving':
-      case 'initializing':
         return 'processing'; // Blue
       case 'complete': return 'success'; // Green
-      case 'error': return 'error'; // Red
+      case 'error': 
+      case 'skipped': return 'error'; // Red
       default: return 'default';
     }
   };
@@ -695,12 +720,41 @@ const NewsPage: React.FC = () => {
       <Drawer
         title="Task Progress"
         placement="right"
-        width={500}
+        width={350}
         onClose={() => setIsTaskDrawerVisible(false)}
         open={isTaskDrawerVisible}
         mask={false}
         closable={true}
       >
+        {/* Overall Status Display - show only when task is completed */}
+        {overallTaskStatus && (
+          <>
+            <div style={{ 
+              marginBottom: 16, 
+              padding: 16, 
+              borderRadius: 4, 
+              backgroundColor: overallTaskStatus.status === 'SUCCESS' 
+                ? '#f6ffed' 
+                : overallTaskStatus.status === 'PARTIAL_SUCCESS' 
+                  ? '#fffbe6' 
+                  : '#fff2f0'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
+                {overallTaskStatus.status === 'SUCCESS' && <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 20, marginRight: 8 }} />}
+                {overallTaskStatus.status === 'PARTIAL_SUCCESS' && <ExperimentOutlined style={{ color: '#faad14', fontSize: 20, marginRight: 8 }} />}
+                {overallTaskStatus.status === 'FAILURE' && <CloseCircleOutlined style={{ color: '#f5222d', fontSize: 20, marginRight: 8 }} />}
+                <Text strong>Fetch Status</Text>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', marginBottom: 4 }}>
+                <span><CheckCircleOutlined style={{ color: 'green' }} /> {overallTaskStatus.successful}</span>
+                <span style={{ marginLeft: '16px' }}><CloseCircleOutlined style={{ color: 'red' }} /> {overallTaskStatus.failed}</span>
+              </div>
+              <Text type="secondary">Total items saved: {overallTaskStatus.saved}</Text>
+            </div>
+            <Divider style={{ margin: '0 0 16px 0' }} />
+          </>
+        )}
+        
         <List
           itemLayout="horizontal"
           dataSource={tasksToMonitor}
@@ -712,29 +766,41 @@ const NewsPage: React.FC = () => {
                 description={
                   <Space direction="vertical" size={2}>
                     <Tag color={getStatusColor(item.status)}>{item.status?.toUpperCase()}</Tag>
-                    {item.message && <Text type="secondary" style={{ fontSize: 12 }}>{item.message}</Text>}
                   </Space>
                 }
               />
-              <div style={{ width: 150, textAlign: 'right' }}>
+              <div style={{ width: 120, textAlign: 'right' }}>
                 <Progress
                   percent={item.progress || 0}
-                  status={item.status === 'error' ? 'exception' : item.status === 'complete' ? 'success' : 'active'}
+                  status={item.status === 'Error' ? 'exception' : item.status === 'Complete' ? 'success' : 'active'}
                   size="small"
                   showInfo={item.status !== 'pending'}
                 />
-                {item.items_saved !== undefined && item.status === 'complete' && (
-                     <Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
-                         Saved: {item.items_saved}
-                     </Text>
+                {/* Display items saved only on complete status */}
+                {item.items_saved !== undefined && item.status === 'Complete' && (
+                  <Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
+                    Saved: {item.items_saved}
+                  </Text>
                 )}
               </div>
             </List.Item>
           )}
         />
         <Divider style={{ margin: '16px 0', borderColor: '#f5f5f5' }}/>
-        <Button onClick={() => setTasksToMonitor([])} disabled={!tasksToMonitor.some(t => t.status === 'complete' || t.status === 'error')} type="text">
-            清除已完成/错误的任务
+        <Button 
+          onClick={() => {
+            // Only remove completed or error tasks
+            setTasksToMonitor(prev => prev.filter(t => 
+              t.status !== 'Complete' && t.status !== 'Error' && t.status !== 'Skipped'
+            ))
+          }}
+          disabled={!tasksToMonitor.some(t => 
+            t.status === 'Complete' || t.status === 'Error' || t.status === 'Skipped'
+          )} 
+          type="text"
+          icon={<BarsOutlined />}
+        >
+          Clear Completed Tasks
         </Button>
       </Drawer>
 

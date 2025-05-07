@@ -44,8 +44,25 @@ async def redis_message_listener(
                 try:
                     # Parse the JSON message from Redis
                     update_data = json.loads(message["data"])
-                    # Forward the message to all WebSocket clients through ws_manager
-                    await ws_manager.send_update(task_group_id, update_data)
+
+                    # Check connection state before sending
+                    if websocket.client_state == WebSocketState.CONNECTED:
+                        # Forward the message to WebSocket clients
+                        await ws_manager.send_update(task_group_id, update_data)
+                    else:
+                        logger.warning(
+                            f"WebSocket for {task_group_id} disconnected before sending update: {update_data.get('event')}"
+                        )
+                        break  # Exit the loop if WebSocket is disconnected
+
+                    # Cleanup task group data after sending the final message
+                    if update_data.get("event") == "overall_batch_completed":
+                        logger.info(
+                            f"Overall completion message received for {task_group_id}. Cleaning up metadata."
+                        )
+                        ws_manager.cleanup_task_group_data(task_group_id)
+                        # Note: We continue the listener to handle any disconnection gracefully
+
                 except json.JSONDecodeError:
                     logger.error(
                         f"Failed to decode JSON message from Redis for {task_group_id}: {message['data']}"
@@ -193,9 +210,7 @@ async def websocket_task_group_endpoint(
         # Keep the connection alive until disconnected
         try:
             while websocket.client_state != WebSocketState.DISCONNECTED:
-                await asyncio.sleep(
-                    60
-                )  # Keep connection alive, check state periodically
+                await asyncio.sleep(10)  # Check state less frequently
         except WebSocketDisconnect:
             logger.info(
                 f"WebSocket client disconnected explicitly from task_group_id: {task_group_id}"
@@ -224,11 +239,17 @@ async def websocket_task_group_endpoint(
         )
 
         # Cancel the listener task if it's running
-        if listener_task:
+        if listener_task and not listener_task.done():
             try:
                 listener_task.cancel()
-                await asyncio.shield(listener_task)
-                logger.info(f"Redis listener task for {task_group_id} cancelled")
+                try:
+                    await listener_task  # Wait for cancellation
+                except asyncio.CancelledError:
+                    logger.info(
+                        f"Redis listener task for {task_group_id} successfully cancelled."
+                    )
+                except Exception as e:
+                    logger.error(f"Error waiting for listener task cancellation: {e}")
             except Exception as e:
                 logger.error(f"Error cancelling Redis listener task: {e}")
 
@@ -243,3 +264,11 @@ async def websocket_task_group_endpoint(
 
         # Disconnect from the WebSocket manager
         await ws_manager.disconnect(websocket, task_group_id)
+        logger.info(f"WebSocket disconnected from manager for {task_group_id}")
+
+        # Ensure metadata cleanup if final message wasn't received
+        if ws_manager.get_task_group_metadata(task_group_id):
+            logger.warning(
+                f"WebSocket for {task_group_id} disconnected before cleanup triggered by final message. Cleaning up metadata now."
+            )
+            ws_manager.cleanup_task_group_data(task_group_id)

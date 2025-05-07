@@ -819,8 +819,6 @@ async def delete_news_category(
 
 # --- News Fetching and Processing Endpoints (User-Aware) ---
 
-# Note: fetch_single_url is removed as it wasn't user-aware and less practical.
-
 
 @router.post(
     "/tasks/fetch/batch-group",
@@ -831,9 +829,6 @@ async def delete_news_category(
 async def trigger_fetch_batch_group(
     request: FetchSourceBatchRequest,
     current_user: Annotated[User, Depends(get_current_active_user)],
-    news_service: Annotated[
-        NewsService, Depends(get_news_service)
-    ],  # Keep news_service dependency if needed elsewhere in the router
 ):
     """
     Start a group of Celery tasks to fetch news from multiple selected sources belonging to the current user,
@@ -928,9 +923,6 @@ async def trigger_fetch_batch_group(
 
 
 # --- News Analysis Endpoints (User-Aware) ---
-
-# Note: analyze_all_news_background needs modification in service to be user-specific
-# Assuming it's modified or removed for now.
 
 
 @router.post(

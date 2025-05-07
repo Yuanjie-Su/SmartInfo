@@ -1,7 +1,7 @@
 import json
 import logging
 import time
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple, Union
 from urllib.parse import urljoin
 
 from core.llm.pool import LLMClientPool
@@ -23,6 +23,15 @@ from utils.text_utils import get_chunks
 from utils.token_utils import get_token_size
 from ..crawler import AiohttpCrawler, PlaywrightCrawler
 from urllib.parse import urlparse
+from background.tasks.step_codes import (
+    PREPARING,
+    CRAWLING,
+    EXTRACTING_LINKS,
+    ANALYZING,
+    SAVING,
+    COMPLETE,
+    ERROR,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +40,9 @@ async def fetch_news(
     url: str,
     llm_pool: LLMClientPool,
     exclude_links: Optional[List[str]] = None,
-    progress_callback: Optional[Callable[[str, float, str, int], None]] = None,
+    progress_callback: Optional[
+        Callable[[Union[int, str], float, str, int], None]
+    ] = None,
 ) -> List[Dict[str, str]]:
     """
     Fetch news from a given URL using a crawler and an LLM client.
@@ -57,7 +68,7 @@ async def fetch_news(
 
     # 报告开始进行爬取操作
     if progress_callback:
-        await progress_callback("crawling", 10, f"正在爬取页面: {url}")
+        await progress_callback(CRAWLING, 10, f"正在爬取页面: {url}")
 
     # 1) Crawl html content (contains news content and links to other pages) from url
     # and format it to cleaned markdown
@@ -91,11 +102,11 @@ async def fetch_news(
 
     if not cleaned_markdown:
         logger.error(f"HTML清理失败: {url}")
-        raise ValueError("Failed to clean and prepare markdown")
+        return []
 
     # 2) Extract links from the cleaned markdown
     if progress_callback:
-        await progress_callback("extracting", 20, "正在从页面提取文章链接")
+        await progress_callback(EXTRACTING_LINKS, 20, "正在从页面提取文章链接")
 
     # 2a) Evaluate token size and chunk if exceeding context window
     token_size = get_token_size(cleaned_markdown)
@@ -109,7 +120,9 @@ async def fetch_news(
 
         if progress_callback:
             await progress_callback(
-                "chunking", 25, f"页面内容较大，正在分割为 {num_chunks} 个部分进行处理"
+                EXTRACTING_LINKS,
+                25,
+                f"页面内容较大，正在分割为 {num_chunks} 个部分进行处理",
             )
         try:
             # Split long Markdown into line-based chunks
@@ -123,7 +136,7 @@ async def fetch_news(
             num_chunks = 1
             if progress_callback:
                 await progress_callback(
-                    "warning", 25, f"内容分割失败，将作为单个块处理: {str(e)}"
+                    EXTRACTING_LINKS, 25, f"内容分割失败，将作为单个块处理: {str(e)}"
                 )
 
     # 2b) Extract content from each link from links in each chunk
@@ -145,7 +158,7 @@ async def fetch_news(
 
         if progress_callback and chunk_count > 1:
             await progress_callback(
-                "processing",
+                EXTRACTING_LINKS,
                 30 + (i * 10 / chunk_count),
                 f"正在处理页面分块 {i+1}/{chunk_count}",
             )
@@ -171,12 +184,12 @@ async def fetch_news(
 
     if not original_content_metadata_dict:
         logger.error(f"未找到任何有效内容: {url}")
-        raise ValueError("No original content metadata found")
+        return []
 
     # 报告即将进行内容总结
     if progress_callback:
         await progress_callback(
-            "analyzing",
+            ANALYZING,
             60,
             f"找到 {len(original_content_metadata_dict)} 个文章，正在进行分析和总结",
         )
@@ -194,7 +207,7 @@ async def fetch_news(
 
     if not summary_result:
         logger.error(f"摘要处理失败或结果为空: {url}")
-        raise ValueError("Failed to summarize the original content")
+        return []
 
     # 报告完成
     end_time = time.time()
@@ -205,7 +218,7 @@ async def fetch_news(
 
     if progress_callback:
         await progress_callback(
-            "formatting", 90, f"已完成 {len(summary_result)} 个文章的提取与总结"
+            SAVING, 90, f"已完成 {len(summary_result)} 个文章的提取与总结"
         )
 
     return summary_result

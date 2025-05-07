@@ -99,9 +99,7 @@ class ConnectionManager:
         for websocket in disconnected_websockets:
             await self.disconnect(websocket, task_group_id)
 
-    async def store_task_group_metadata(
-        self, task_group_id: str, data: Dict[str, Any]
-    ):  # Renamed method
+    async def store_task_group_metadata(self, task_group_id: str, data: Dict[str, Any]):
         """
         Store task group metadata associated with a task group.
 
@@ -109,12 +107,10 @@ class ConnectionManager:
             task_group_id: The task group ID
             data: Dictionary containing metadata (user_id, celery_task_ids, etc.)
         """
-        self.task_group_metadata[task_group_id] = data  # Use renamed dictionary
+        self.task_group_metadata[task_group_id] = data
         logger.info(f"Stored task group metadata for task_group_id: {task_group_id}")
 
-    def get_task_group_metadata(
-        self, task_group_id: str
-    ) -> Optional[Dict[str, Any]]:  # Renamed method
+    def get_task_group_metadata(self, task_group_id: str) -> Optional[Dict[str, Any]]:
         """
         Retrieve task group metadata for a task group.
 
@@ -124,17 +120,17 @@ class ConnectionManager:
         Returns:
             Dictionary containing task group metadata or None if not found
         """
-        return self.task_group_metadata.get(task_group_id)  # Use renamed dictionary
+        return self.task_group_metadata.get(task_group_id)
 
-    def cleanup_task_group_data(self, task_group_id: str):  # Renamed method
+    def cleanup_task_group_data(self, task_group_id: str):
         """
         Remove task group metadata for a completed task group.
 
         Args:
             task_group_id: The task group ID to clean up
         """
-        if task_group_id in self.task_group_metadata:  # Use renamed dictionary
-            del self.task_group_metadata[task_group_id]  # Use renamed dictionary
+        if task_group_id in self.task_group_metadata:
+            del self.task_group_metadata[task_group_id]
             logger.info(
                 f"Cleaned up task group metadata for task_group_id: {task_group_id}"
             )

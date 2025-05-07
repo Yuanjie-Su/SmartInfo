@@ -11,7 +11,7 @@ while reporting progress through Redis Pub/Sub mechanism.
 import logging
 import asyncio
 import json
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Union
 import os  # Import os to get pid for logging
 import redis.asyncio as redis  # Import Redis async client
 import redis as sync_redis  # Import synchronous Redis client for chord callback
@@ -35,6 +35,18 @@ from db.connection import init_db_connection, DatabaseConnectionManager
 
 # Import ws_manager
 from core.ws_manager import ws_manager
+
+# Import step codes for progress reporting
+from .step_codes import (
+    PREPARING,
+    CRAWLING,
+    EXTRACTING_LINKS,
+    ANALYZING,
+    SAVING,
+    COMPLETE,
+    ERROR,
+    SKIPPED,
+)
 
 # Configure module-level logger
 logger = logging.getLogger(__name__)
@@ -66,25 +78,31 @@ async def _run_batch_processing(
     # Define progress callback that publishes updates via Redis
     async def progress_callback(
         source_id: int,
-        source_name: str,
-        step: str,
+        source_name: str,  # Kept for internal logging but not included in update_data
+        step: Union[int, str],  # Use int for step codes
         progress: float,
-        details: str = "",
+        details: str = "",  # Mainly used for error messages
         items_count: int = 0,
     ):
         update_data = {
             "event": "source_progress",  # Event type for frontend
-            "task_id": task.request.id,  # Include Celery task ID for context
             "source_id": source_id,
-            "source_name": source_name,
             "step": step,
-            "progress": progress,
-            "message": details,
+            "progress": round(progress, 1),  # Round progress to one decimal
         }
-        if items_count > 0:
-            update_data["items_saved"] = items_count
 
-        # Publish update to Redis instead of using ws_manager directly
+        # Conditionally add optional fields
+        is_complete = step == COMPLETE
+        is_error = step == ERROR
+
+        if is_complete and items_count > 0:
+            update_data["items_saved"] = items_count
+        elif is_error:
+            update_data["error"] = (
+                True  # Simplified to boolean instead of detailed message
+            )
+
+        # Publish update to Redis
         channel = f"task_progress:{task_group_id}"
         if redis_client:
             try:
@@ -92,12 +110,21 @@ async def _run_batch_processing(
                 json_message = json.dumps(update_data)
                 # Publish to Redis channel
                 await redis_client.publish(channel, json_message)
-                logger.debug(f"Published progress update to Redis channel {channel}")
+                # Reduce logging frequency for non-error/completion updates
+                if is_complete or is_error:
+                    logger.info(
+                        f"[PID:{pid}] Task {task.request.id} (Group: {task_group_id}) Published final status for source {source_id}: {update_data}"
+                    )
+                else:
+                    logger.debug(
+                        f"[PID:{pid}] Task {task.request.id} (Group: {task_group_id}) Published progress update to {channel}: {update_data}"
+                    )
             except Exception as e:
                 logger.error(f"Failed to publish progress update to Redis: {e}")
         else:
             logger.warning("Redis client not available for progress updates")
 
+        # Log progress internally (unchanged)
         logger.info(
             f"[PID:{pid}] Task {task.request.id} (Group: {task_group_id}) Progress: Source {source_id} ({source_name}): {step} - {progress:.1f}% - {details}"
         )
@@ -136,7 +163,7 @@ async def _run_batch_processing(
                 await progress_callback(
                     source_id=source_id,
                     source_name=f"Unknown Source (ID: {source_id})",
-                    step="skipped",
+                    step=SKIPPED,
                     progress=100,
                     details=f"源ID {source_id} 未找到或不属于用户 {user_id}",
                 )
@@ -332,15 +359,18 @@ async def _process_single_source_concurrently(
 
     # Create a source-specific progress callback that wraps the batch callback
     async def source_progress_callback(
-        step: str, progress: float, details: str = "", items_count: int = 0
+        step: Union[int, str], progress: float, details: str = "", items_count: int = 0
     ):
+        # Only pass items_count when step is COMPLETE
+        items_to_send = items_count if step == COMPLETE else 0
+
         await progress_callback(
             source_id=source_id,
-            source_name=source_name,
+            source_name=source_name,  # Pass source_name for internal logging
             step=step,
             progress=progress,
             details=details,
-            items_count=items_count,
+            items_count=items_to_send,
         )
 
     async with semaphore:
@@ -348,7 +378,7 @@ async def _process_single_source_concurrently(
             f"[PID:{pid}] Task {task.request.id}: Starting processing for source {source_id} ({source_name}, User: {user_id})."
         )
         try:
-            await source_progress_callback("preparing", 5, "准备抓取数据...")
+            await source_progress_callback(PREPARING, 5, "准备抓取数据...")
 
             # Get existing URLs for this user to avoid duplicates
             exclude_links = await news_repo.get_all_urls(user_id)
@@ -370,7 +400,7 @@ async def _process_single_source_concurrently(
                 logger.exception(
                     f"[PID:{pid}] Task {task.request.id}: Source {source_id}: Error during fetch_news: {e}"
                 )
-                await source_progress_callback("error", 0, f"抓取和分析错误: {str(e)}")
+                await source_progress_callback(ERROR, 0, f"抓取和分析错误: {str(e)}")
                 return {
                     "source_id": source_id,
                     "status": "error",
@@ -380,7 +410,7 @@ async def _process_single_source_concurrently(
             # --- Process fetch_result ---
             if not fetch_result:
                 await source_progress_callback(
-                    "complete", 100, "完成处理，但未找到新内容"
+                    COMPLETE, 100, "完成处理，但未找到新内容"
                 )
                 return {
                     "source_id": source_id,
@@ -397,7 +427,7 @@ async def _process_single_source_concurrently(
                 result_item["category_id"] = category_id
 
             await source_progress_callback(
-                "saving",
+                SAVING,
                 95,
                 f"正在保存 {len(fetch_result)} 个新闻项...",
                 len(fetch_result),
@@ -408,10 +438,17 @@ async def _process_single_source_concurrently(
                 fetch_result, user_id
             )
 
+            # Update the message based on saved count
+            success_message = (
+                "成功处理并保存了 0 个新闻项，未找到有效内容或已有内容"
+                if saved_count == 0
+                else f"成功处理并保存了 {saved_count} 个新闻项，跳过了 {skipped_count} 个新闻项"
+            )
+
             await source_progress_callback(
-                "complete",
+                COMPLETE,
                 100,
-                f"成功处理并保存了 {saved_count} 个新闻项，跳过了 {skipped_count} 个新闻项",
+                success_message,
                 saved_count,
             )
 
@@ -433,7 +470,7 @@ async def _process_single_source_concurrently(
             )
             # Ensure error state is reported for this specific source
             try:
-                await source_progress_callback("error", 100, f"内部处理错误: {str(e)}")
+                await source_progress_callback(ERROR, 100, f"内部处理错误: {str(e)}")
             except Exception as cb_e:
                 logger.error(
                     f"[PID:{pid}] Task {task.request.id}: Source {source_id}: Failed to update error state via callback: {cb_e}"
@@ -576,6 +613,7 @@ def finalize_news_fetch_group(results, task_group_id: str, user_id: int):
         batch_statuses.append(batch_result.get("status", "UNKNOWN"))
 
     # Determine overall status
+    overall_status = "FAILURE"  # Default
     if all(status == "SUCCESS" for status in batch_statuses):
         overall_status = "SUCCESS"
     elif any(
@@ -583,23 +621,16 @@ def finalize_news_fetch_group(results, task_group_id: str, user_id: int):
         for status in batch_statuses
     ):
         overall_status = "PARTIAL_SUCCESS"
-    else:
-        overall_status = "FAILURE"
+    # else remains FAILURE
 
-    # Construct the final message
+    # Construct concise final message data
     final_message_data = {
         "event": "overall_batch_completed",
         "task_group_id": task_group_id,
-        "user_id": user_id,
-        "overall_status": overall_status,
-        "total_batches": total_batches,
-        "total_processed_sources": total_processed_sources,
-        "total_successful_sources": total_successful_sources,
-        "total_failed_sources": total_failed_sources,
-        "total_items_saved": total_items_saved,
-        "message": f"News fetch group completed. Overall status: {overall_status}. "
-        f"Processed {total_processed_sources} sources with {total_successful_sources} successful, "
-        f"{total_failed_sources} failed, and {total_items_saved} items saved.",
+        "status": overall_status,
+        "successful": total_successful_sources,
+        "failed": total_failed_sources,
+        "saved": total_items_saved,
     }
 
     # Publish to Redis using synchronous client
