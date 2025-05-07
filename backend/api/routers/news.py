@@ -487,7 +487,7 @@ async def create_news_source(
         category = await news_service.get_category_by_id(
             created_source["category_id"], current_user.id
         )
-        category_name = category["name"] if category else None
+        category_name = category["category_name"] if category else None
 
         source_response_dict = {
             "id": created_source["source_id"],
