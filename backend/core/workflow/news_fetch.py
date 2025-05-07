@@ -10,6 +10,7 @@ from utils.html_utils import (
     extract_metadata_from_article_html,
 )
 from utils.markdown_utils import (
+    strip_extra_links_from_markdown,
     strip_javascript_links,
     strip_image_links,
 )
@@ -246,10 +247,10 @@ def _clean_and_prepare_markdown(
         logger.debug(f"删除JavaScript链接: {url}")
         cleaned_markdown = strip_javascript_links(cleaned_markdown)
 
-        # # Remove or adjust any residual markdown links
-        # cleaned_markdown = clean_markdown_links(
-        #     markdown, exclude_urls=exclude_links, base_url=url
-        # )
+        # Remove or adjust any residual markdown links
+        cleaned_markdown = strip_extra_links_from_markdown(
+            cleaned_markdown, exclude_urls=exclude_links, base_url=url
+        )
 
         logger.debug(f"HTML清理完成: {url}")
         return cleaned_markdown

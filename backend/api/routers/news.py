@@ -25,6 +25,9 @@ from api.dependencies import (
     get_current_active_user,
 )  # Import user dependency
 
+# Import Celery primitives for chord
+from celery import group, chord
+
 # Import schemas from the main models package
 from models import (  # Import models directly
     News,  # Keep for internal use if needed
@@ -53,11 +56,12 @@ from models import (  # Import models directly
 # Import the service class type hint
 from services.news_service import NewsService
 
-# Import ws_manager and the new Celery task
+# Import ws_manager and Celery tasks
 from core.ws_manager import ws_manager
 from background.tasks.news_tasks import (
     process_single_batch_task,
-)  # Assuming this is the new task name
+    finalize_news_fetch_group,  # Import the new callback task
+)
 
 logger = logging.getLogger(__name__)
 
@@ -819,12 +823,12 @@ async def delete_news_category(
 
 
 @router.post(
-    "/tasks/fetch/batch-group",  # Renamed endpoint
+    "/tasks/fetch/batch-group",
     status_code=status.HTTP_202_ACCEPTED,
     summary="Start fetching news from user's sources in batches",
     response_model=Dict[str, str],
 )
-async def trigger_fetch_batch_group(  # Renamed function
+async def trigger_fetch_batch_group(
     request: FetchSourceBatchRequest,
     current_user: Annotated[User, Depends(get_current_active_user)],
     news_service: Annotated[
@@ -845,11 +849,12 @@ async def trigger_fetch_batch_group(  # Renamed function
         total_sources = len(source_ids)
         num_batches = math.ceil(total_sources / batch_size)
 
-        dispatched_celery_task_ids = []
-
         logger.info(
             f"Starting batch fetch group {task_group_id} for user {current_user.id} with {total_sources} sources in {num_batches} batches."
         )
+
+        # Create an array of header tasks (signatures)
+        header_tasks = []
 
         for i in range(num_batches):
             start_index = i * batch_size
@@ -859,31 +864,50 @@ async def trigger_fetch_batch_group(  # Renamed function
             if not batch_source_ids:
                 continue  # Skip empty batches
 
-            # Dispatch the new Celery task for this batch
-            celery_task_instance = (
-                process_single_batch_task.delay(  # Use the new task name
-                    source_ids=batch_source_ids,
-                    user_id=current_user.id,  # Pass user_id
-                    task_group_id=task_group_id,  # Pass the group ID
-                )
+            # Create a task signature instead of calling delay()
+            task_signature = process_single_batch_task.s(
+                source_ids=batch_source_ids,
+                user_id=current_user.id,
+                task_group_id=task_group_id,
             )
-            dispatched_celery_task_ids.append(celery_task_instance.id)
+            header_tasks.append(task_signature)
             logger.info(
-                f"Dispatched Celery task {celery_task_instance.id} for batch {i+1}/{num_batches} ({len(batch_source_ids)} sources) in group {task_group_id}"
+                f"Created task signature for batch {i+1}/{num_batches} ({len(batch_source_ids)} sources) in group {task_group_id}"
             )
 
+        # Handle the case when there are no valid tasks to run
+        if not header_tasks:
+            logger.warning(
+                f"No tasks to schedule for fetch batch group: {task_group_id} (User: {current_user.id})"
+            )
+            return {
+                "task_group_id": task_group_id,
+                "message": "No news sources provided or no tasks to schedule.",
+            }
+
+        # Create the callback signature
+        callback_task_signature = finalize_news_fetch_group.s(
+            task_group_id=task_group_id, user_id=current_user.id
+        )
+
+        # Dispatch the chord
+        chord_instance = chord(header_tasks)(callback_task_signature)
+        logger.info(
+            f"Chord dispatched for task_group_id: {task_group_id}. Callback task ID: {chord_instance.id}"
+        )
+
         # Store metadata for the task group using ws_manager
-        await ws_manager.store_task_group_metadata(  # Use the new ws_manager method
+        await ws_manager.store_task_group_metadata(
             task_group_id,
             {
                 "user_id": current_user.id,
-                "celery_task_ids": dispatched_celery_task_ids,
-                "total_sources": total_sources,  # Store total sources for potential frontend use
-                "completed_sources": 0,  # Initialize completed count
+                "celery_task_ids": [chord_instance.id],  # Store the callback task ID
+                "total_sources": total_sources,
+                "completed_sources": 0,
             },
         )
         logger.info(
-            f"Stored task group metadata for group_id: {task_group_id}, user_id: {current_user.id}, celery_task_ids: {dispatched_celery_task_ids}"
+            f"Stored task group metadata for group_id: {task_group_id}, user_id: {current_user.id}, callback_task_id: {chord_instance.id}"
         )
 
         return {

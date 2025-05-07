@@ -157,7 +157,7 @@ def clean_markdown_links(
         if not exclude_urls or full_url not in exclude_urls:
             filtered_links.append(f"[{text}]({full_url})")
         else:
-            break
+            continue
 
     if filtered_links:
         return "\n".join(filtered_links)
@@ -194,6 +194,38 @@ def strip_javascript_links(raw_text: str) -> str:
 
     # [学术君](javascript:;)
     return re.sub(r"\[[^\]]*\]\(javascript:;\)", "", raw_text)
+
+
+def strip_extra_links_from_markdown(
+    raw_text: str,
+    exclude_urls: Optional[List[str]] = None,
+    base_url: Optional[str] = None,
+) -> str:
+    """
+    Strip extra links from Markdown text based on the provided exclude_urls and base_url.
+    """
+    # Extract remaining Markdown links
+    link_pattern = r"\[([^\]]+)\]\(([^)]+)\)"
+    extracted_links = re.findall(link_pattern, raw_text)
+
+    # Filter out links with URLs in exclude_urls
+    filtered_links = []
+    for text, url in extracted_links:
+        full_url = urljoin(base_url, url)
+        if exclude_urls is None:
+            filtered_links.append(f"[{text}]({full_url})")
+            continue
+
+        # Check if the full URL is in the exclude_urls list
+        if not exclude_urls or full_url not in exclude_urls:
+            filtered_links.append(f"[{text}]({full_url})")
+        else:
+            continue
+
+    if filtered_links:
+        return "\n".join(filtered_links)
+    else:
+        return None
 
 
 def strip_markdown_links(raw_text: str) -> str:

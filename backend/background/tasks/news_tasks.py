@@ -14,6 +14,7 @@ import json
 from typing import Dict, Any, Optional, List
 import os  # Import os to get pid for logging
 import redis.asyncio as redis  # Import Redis async client
+import redis as sync_redis  # Import synchronous Redis client for chord callback
 
 from celery import shared_task
 
@@ -159,9 +160,14 @@ async def _run_batch_processing(
                 await redis_client.publish(channel, json.dumps(completion_data))
 
             return {
-                "status": "success",
+                "task_id": task.request.id,
+                "task_group_id": task_group_id,
+                "status": "SUCCESS",
+                "processed_sources_count": 0,
+                "successful_sources_count": 0,
+                "failed_sources_count": 0,
+                "items_saved_in_batch": 0,
                 "message": "No valid sources to process in this batch.",
-                "items_saved": 0,
             }
 
         # 4. Initialize a single LLM Client for the batch
@@ -214,8 +220,14 @@ async def _run_batch_processing(
             1 for r in results if isinstance(r, dict) and r.get("status") == "success"
         )
         error_count = len(results) - successful_count
+        items_saved = sum(
+            r.get("items_saved", 0)
+            for r in results
+            if isinstance(r, dict) and r.get("status") == "success"
+        )
+
         logger.info(
-            f"[PID:{pid}] Task {task.request.id} (Group: {task_group_id}): Batch processing summary - Successful: {successful_count}, Errors: {error_count}"
+            f"[PID:{pid}] Task {task.request.id} (Group: {task_group_id}): Batch processing summary - Successful: {successful_count}, Errors: {error_count}, Items saved: {items_saved}"
         )
 
         # Send a completion message for this batch via Redis
@@ -223,17 +235,23 @@ async def _run_batch_processing(
             "event": "batch_task_completed",
             "task_id": task.request.id,
             "message": f"Batch processing completed. Successful: {successful_count}, Errors: {error_count}",
-            "items_saved": successful_count,
+            "items_saved": items_saved,
             "affected_source_ids": source_ids,  # Report which sources were intended for this batch
         }
         channel = f"task_progress:{task_group_id}"
         if redis_client:
             await redis_client.publish(channel, json.dumps(completion_data))
 
+        # Return structured dictionary for chord callback
         return {
-            "status": "success" if error_count == 0 else "partial_success",
+            "task_id": task.request.id,
+            "task_group_id": task_group_id,
+            "status": "SUCCESS" if error_count == 0 else "COMPLETED_WITH_ERRORS",
+            "processed_sources_count": len(source_details_to_process),
+            "successful_sources_count": successful_count,
+            "failed_sources_count": error_count,
+            "items_saved_in_batch": items_saved,
             "message": f"Batch processing completed. Successful: {successful_count}, Errors: {error_count}",
-            "results": results,  # Include individual results for debugging/details
         }
 
     except Exception as e:
@@ -501,9 +519,7 @@ def process_single_batch_task(
                 task_group_id=task_group_id,  # Pass the group ID
             )
         )
-        # The final state (SUCCESS/FAILURE) for this individual Celery task
-        # is handled by Celery based on whether _run_batch_processing raises an exception.
-        # We return the result dict which might contain details for this batch.
+        # Return the structured result dict for the chord callback
         return result
     except Exception as e:
         # Error logging and sending the "batch_task_failed" event via Redis Pub/Sub
@@ -515,3 +531,103 @@ def process_single_batch_task(
         )
         # Re-raise so Celery marks this task as FAILED
         raise
+
+
+@shared_task(name="finalize_news_fetch_group")
+def finalize_news_fetch_group(results, task_group_id: str, user_id: int):
+    """
+    Chord callback task that runs after all batch tasks complete.
+    Aggregates results from all batches and sends the final completion event.
+
+    Args:
+        results: List of dictionaries returned by each batch task
+        task_group_id: The ID of the overall task group
+        user_id: ID of the user who owns the sources
+
+    Returns:
+        Dictionary with summary of overall task group results
+    """
+    pid = os.getpid()
+    logger.info(
+        f"[PID:{pid}] Executing chord callback for task_group_id: {task_group_id}, user_id: {user_id}"
+    )
+
+    # Initialize aggregated statistics
+    total_batches = len(results)
+    total_processed_sources = 0
+    total_successful_sources = 0
+    total_failed_sources = 0
+    total_items_saved = 0
+    batch_statuses = []
+
+    # Iterate through results and aggregate statistics
+    for batch_result in results:
+        # Check if result is a valid dictionary
+        if not isinstance(batch_result, dict):
+            logger.warning(
+                f"[PID:{pid}] Invalid batch result in task_group {task_group_id}: {batch_result}"
+            )
+            continue
+
+        total_processed_sources += batch_result.get("processed_sources_count", 0)
+        total_successful_sources += batch_result.get("successful_sources_count", 0)
+        total_failed_sources += batch_result.get("failed_sources_count", 0)
+        total_items_saved += batch_result.get("items_saved_in_batch", 0)
+        batch_statuses.append(batch_result.get("status", "UNKNOWN"))
+
+    # Determine overall status
+    if all(status == "SUCCESS" for status in batch_statuses):
+        overall_status = "SUCCESS"
+    elif any(
+        status == "SUCCESS" or status == "COMPLETED_WITH_ERRORS"
+        for status in batch_statuses
+    ):
+        overall_status = "PARTIAL_SUCCESS"
+    else:
+        overall_status = "FAILURE"
+
+    # Construct the final message
+    final_message_data = {
+        "event": "overall_batch_completed",
+        "task_group_id": task_group_id,
+        "user_id": user_id,
+        "overall_status": overall_status,
+        "total_batches": total_batches,
+        "total_processed_sources": total_processed_sources,
+        "total_successful_sources": total_successful_sources,
+        "total_failed_sources": total_failed_sources,
+        "total_items_saved": total_items_saved,
+        "message": f"News fetch group completed. Overall status: {overall_status}. "
+        f"Processed {total_processed_sources} sources with {total_successful_sources} successful, "
+        f"{total_failed_sources} failed, and {total_items_saved} items saved.",
+    }
+
+    # Publish to Redis using synchronous client
+    try:
+        redis_url = os.getenv("REDIS_URL", "redis://127.0.0.1:6379/0")
+        redis_client = sync_redis.Redis.from_url(redis_url, decode_responses=True)
+        channel = f"task_progress:{task_group_id}"
+
+        # Serialize and publish the message
+        json_message = json.dumps(final_message_data)
+        redis_client.publish(channel, json_message)
+
+        logger.info(
+            f"[PID:{pid}] Published overall completion message to Redis channel {channel} for task_group_id: {task_group_id}"
+        )
+
+        # Close Redis client
+        redis_client.close()
+    except Exception as e:
+        logger.exception(
+            f"[PID:{pid}] Failed to publish overall completion message to Redis for task_group_id: {task_group_id}: {e}"
+        )
+
+    # Return summary for Celery result backend
+    return {
+        "task_group_id": task_group_id,
+        "overall_status": overall_status,
+        "total_batches": total_batches,
+        "total_items_saved": total_items_saved,
+        "message": f"Task group {task_group_id} completed with status: {overall_status}",
+    }
