@@ -450,7 +450,7 @@ class NewsService:
                 """
 
             full_analysis = ""
-            stream = await llm_client.stream_completion_content(
+            llm_reponse_stream = llm_client.stream_completion_content(
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPT_ANALYZE_CONTENT},
                     {"role": "user", "content": user_prompt},
@@ -459,8 +459,9 @@ class NewsService:
                 temperature=0.7,
             )
 
-            async for chunk in stream:
+            async for chunk in llm_reponse_stream:
                 full_analysis += chunk
+                print(chunk, end="", flush=True)  # Debugging output
                 yield chunk
 
             await llm_client.close()
@@ -500,9 +501,7 @@ class NewsService:
         for key_data in api_keys_data:
             try:
                 api_key = ApiKey.model_validate(dict(key_data))
-                logger.info(
-                    f"Using API key ID {api_key.id} for user {user_id} (Provider: {api_key.provider})."
-                )
+                logger.info(f"Using API key ID {api_key.id} for user {user_id}.")
                 return AsyncLLMClient(
                     base_url=api_key.base_url,
                     api_key=api_key.api_key,

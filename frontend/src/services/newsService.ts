@@ -164,7 +164,7 @@ export const streamAnalysis = async (newsId: number, force: boolean = false): Pr
 
   // --- 2. Prepare Request ---
   // Ensure the base URL is correct if your API isn't served from the same origin
-  const apiUrl = `${BASE_PATH}/items/${newsId}/analyze/stream?force=${force}`;
+  const apiUrl = `${api.defaults.baseURL}${BASE_PATH}/items/${newsId}/analyze/stream?force=${force}`;
   const headers = {
     'Authorization': `Bearer ${token}`,
     'Accept': 'text/plain', // Optional: Indicate expected response type
