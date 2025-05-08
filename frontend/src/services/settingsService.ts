@@ -1,4 +1,5 @@
 import api from './api';
+import axios from 'axios'; // Import axios for error checking
 import { ApiKey, ApiKeyCreate, UserPreferenceUpdate } from '../utils/types';
 
 const BASE_PATH = '/api/settings';
@@ -31,9 +32,19 @@ export const createApiKey = async (apiKey: ApiKeyCreate): Promise<ApiKey> => {
   return response.data;
 };
 
-export const getApiKey = async (apiKeyId: number): Promise<ApiKey> => {
-  const response = await api.get(`${BASE_PATH}/api_keys/${apiKeyId}`);
-  return response.data;
+export const getApiKey = async (apiKeyId: number): Promise<ApiKey | null> => {
+  try {
+    const response = await api.get<ApiKey>(`${BASE_PATH}/api_keys/${apiKeyId}`);
+    return response.data;
+  } catch (error) {
+    if (axios.isAxiosError(error) && error.response?.status === 404) {
+      console.warn(`SettingsService: API Key with ID ${apiKeyId} not found (404).`);
+      return null; // Return null for not found
+    }
+    // Re-throw other errors (network, 5xx, etc.)
+    console.error(`SettingsService: Error fetching API Key ${apiKeyId}:`, error);
+    throw error;
+  }
 };
 
 export const updateApiKey = async (apiKeyId: number, apiKey: ApiKeyCreate): Promise<ApiKey> => {
@@ -55,4 +66,4 @@ export const testApiKey = async (apiKeyId: number): Promise<Record<string, any>>
 export const testLlmService = async (): Promise<Record<string, any>> => {
   const response = await api.get(`${BASE_PATH}/llm/test`);
   return response.data;
-}; 
+};

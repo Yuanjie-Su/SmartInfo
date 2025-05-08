@@ -10,7 +10,7 @@ from typing import List, Optional, Tuple, Dict, Any
 import asyncpg
 
 from db.schema_constants import NewsSource
-from models.schemas.news import NewsCategory
+from db.schema_constants import NewsCategory
 
 # Note: Assuming 'user_id' column exists conceptually in NEWS_SOURCES_TABLE
 NEWS_SOURCE_USER_ID = "user_id"

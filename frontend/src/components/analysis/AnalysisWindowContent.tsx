@@ -23,18 +23,22 @@ const AnalysisWindowContent: React.FC<AnalysisWindowContentProps> = ({ newsItemI
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [notFound, setNotFound] = useState<boolean>(false); // New state for not found
 
   useEffect(() => {
     const fetchNewsAndAnalyze = async () => {
       setIsLoading(true);
       setError(null);
+      setNotFound(false); // Reset not found state
       setAnalysisContent('');
 
       try {
-        const item = await newsService.getNewsById(newsItemId); // Excludes content by default now
-        if (!item) {
-          setError('News item not found.');
+        const item = await newsService.getNewsById(newsItemId); // Might return null now
+        if (item === null) { // Handle not found case specifically
+          setNotFound(true);
+          setNewsItem(null);
           setIsLoading(false);
+          setIsStreaming(false);
           return;
         }
         setNewsItem(item);
@@ -91,7 +95,7 @@ const AnalysisWindowContent: React.FC<AnalysisWindowContentProps> = ({ newsItemI
             setIsStreaming(false);
           }
         }
-      } catch (fetchError) {
+      } catch (fetchError) { // This catch will now only handle non-404 errors from getNewsById
         console.error("Failed to fetch news item:", fetchError);
         handleApiError(fetchError, 'Failed to load news item');
         setError('Failed to load news item details.');
@@ -108,7 +112,7 @@ const AnalysisWindowContent: React.FC<AnalysisWindowContentProps> = ({ newsItemI
   // --- Render Logic ---
 
   // Loading State (Initial fetch before content/analysis is known)
-  if (isLoading && !newsItem) {
+  if (isLoading && !newsItem && !notFound) { // Add notFound check
     return (
       <div style={{ height: FIXED_CONTENT_HEIGHT, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
         <Spin size="large" tip="Loading news item..." />
@@ -116,7 +120,7 @@ const AnalysisWindowContent: React.FC<AnalysisWindowContentProps> = ({ newsItemI
     );
   }
 
-  // Error State
+  // Error State (for non-404 errors)
   if (error) {
     return (
       <div style={{ height: FIXED_CONTENT_HEIGHT, padding: '20px' }}>
@@ -125,8 +129,17 @@ const AnalysisWindowContent: React.FC<AnalysisWindowContentProps> = ({ newsItemI
     );
   }
 
-  // No News Item Found State (Should ideally not happen if ID is valid, but good practice)
-  if (!newsItem) {
+  // Not Found State (for 404 errors handled in service)
+  if (notFound) { // Use the new notFound state
+    return (
+      <div style={{ height: FIXED_CONTENT_HEIGHT, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+        <Empty description="News item not found." />
+      </div>
+    );
+  }
+
+  // No News Item Found State (Should ideally not be reached if notFound is handled)
+  if (!newsItem) { // Keep as a fallback, though notFound should cover this for 404s
     return (
       <div style={{ height: FIXED_CONTENT_HEIGHT, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
         <Empty description="News item not found." />

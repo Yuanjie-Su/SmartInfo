@@ -184,10 +184,17 @@ const Settings: React.FC = () => {
   const showEditApiKeyModal = (record: ApiKey) => {
     setEditingApiKey(record);
     setEditingApiKeyId(record.id);
-    
+
     // Fetch the API key details including the actual key value
     settingsService.getApiKey(record.id)
       .then(apiKeyData => {
+        if (apiKeyData === null) { // Handle not found case
+          message.error('API密钥未找到或已删除');
+          setIsApiKeyModalVisible(false); // Ensure modal is closed
+          setEditingApiKey(null); // Clear editing state
+          setEditingApiKeyId(null);
+          return;
+        }
         apiKeyForm.setFieldsValue({
           model: apiKeyData.model,
           base_url: apiKeyData.base_url,
@@ -198,8 +205,11 @@ const Settings: React.FC = () => {
         });
         setIsApiKeyModalVisible(true);
       })
-      .catch(error => {
+      .catch(error => { // This catch will now only handle non-404 errors
         handleApiError(error, '加载API密钥详情失败');
+        setIsApiKeyModalVisible(false); // Ensure modal is closed on error
+        setEditingApiKey(null); // Clear editing state
+        setEditingApiKeyId(null);
       });
   };
   

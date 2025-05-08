@@ -374,8 +374,8 @@ async def get_all_news_sources(
         # Manually construct the list of dictionaries to match NewsSourceResponse schema
         return [
             {
-                "id": source["source_id"],
-                "name": source["source_name"],
+                "id": source["id"],
+                "name": source["name"],
                 "url": source["url"],
                 "category_id": source["category_id"],
                 "category_name": source["category_name"],
@@ -491,16 +491,15 @@ async def create_news_source(
                 )
 
         # Manually construct the dictionary to match NewsSourceResponse schema
-        # Assuming created_source is a dictionary like {'source_id': ..., 'source_name': ..., 'url': ..., 'category_id': ..., 'user_id': ...}
         # Need to fetch category_name separately if not included in created_source
         category = await news_service.get_category_by_id(
             created_source["category_id"], current_user.id
         )
-        category_name = category["category_name"] if category else None
+        category_name = category["name"] if category else None
 
         source_response_dict = {
-            "id": created_source["source_id"],
-            "name": created_source["source_name"],
+            "id": created_source["id"],
+            "name": created_source["name"],
             "url": created_source["url"],
             "category_id": created_source["category_id"],
             "category_name": category_name,

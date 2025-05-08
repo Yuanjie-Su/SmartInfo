@@ -1,4 +1,5 @@
 import api from './api';
+import axios from 'axios'; // Import axios for error checking
 import {
   NewsItem,
   NewsCategory,
@@ -51,9 +52,19 @@ export const getSourcesByCategory = async (categoryId: number): Promise<NewsSour
   return response.data;
 };
 
-export const getSource = async (sourceId: number): Promise<NewsSource> => {
-  const response = await api.get(`${BASE_PATH}/sources/${sourceId}`);
-  return response.data;
+export const getSource = async (sourceId: number): Promise<NewsSource | null> => {
+  try {
+    const response = await api.get<NewsSource>(`${BASE_PATH}/sources/${sourceId}`);
+    return response.data;
+  } catch (error) {
+    if (axios.isAxiosError(error) && error.response?.status === 404) {
+      console.warn(`NewsService: Source with ID ${sourceId} not found (404).`);
+      return null; // Return null for not found
+    }
+    // Re-throw other errors (network, 5xx, etc.)
+    console.error(`NewsService: Error fetching source ${sourceId}:`, error);
+    throw error;
+  }
 };
 
 export const createSource = async (source: NewsSourceCreate): Promise<NewsSource> => {
@@ -76,9 +87,19 @@ export const getNewsItems = async (params: NewsFilterParams): Promise<NewsItem[]
   return response.data;
 };
 
-export const getNewsById = async (id: number): Promise<NewsItem> => {
-  const response = await api.get(`${BASE_PATH}/items/${id}`);
-  return response.data;
+export const getNewsById = async (id: number): Promise<NewsItem | null> => {
+  try {
+    const response = await api.get<NewsItem>(`${BASE_PATH}/items/${id}`);
+    return response.data;
+  } catch (error) {
+    if (axios.isAxiosError(error) && error.response?.status === 404) {
+      console.warn(`NewsService: News item with ID ${id} not found (404).`);
+      return null; // Return null for not found
+    }
+    // Re-throw other errors (network, 5xx, etc.)
+    console.error(`NewsService: Error fetching news item ${id}:`, error);
+    throw error;
+  }
 };
 
 export const createNewsItem = async (news: NewsItemCreate): Promise<NewsItem> => {
