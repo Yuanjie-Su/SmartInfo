@@ -23,7 +23,8 @@ import {
   Progress,
   message,
   Tooltip,
-  DatePicker
+  DatePicker, // Keep if you plan to use it for history date selection
+  Badge
 } from 'antd';
 import {
   SearchOutlined,
@@ -36,7 +37,12 @@ import {
   LinkOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
-  StopOutlined
+  StopOutlined,
+  SyncOutlined,
+  LoadingOutlined,
+  HistoryOutlined,
+  DeleteOutlined,
+  ClockCircleOutlined
 } from '@ant-design/icons';
 import { NewsItem, NewsCategory, NewsSource, NewsFilterParams, FetchTaskItem, OverallStatusInfo, FetchHistoryItem } from '@/utils/types';
 import * as newsService from '@/services/newsService';
@@ -79,10 +85,8 @@ const getStepDisplayString = (stepCode: TaskStep | number): string => {
 };
 
 const NewsPage: React.FC = () => {
-  // 添加认证上下文
   const { token } = useAuth();
 
-  // State
   const [news, setNews] = useState<NewsItem[]>([]);
   const [categories, setCategories] = useState<NewsCategory[]>([]);
   const [sources, setSources] = useState<NewsSource[]>([]);
@@ -97,7 +101,6 @@ const NewsPage: React.FC = () => {
   });
   const [total, setTotal] = useState(0);
 
-  // New fetch settings modal state
   const [isFetchModalVisible, setIsFetchModalVisible] = useState<boolean>(false);
   const [selectedFetchCategory, setSelectedFetchCategory] = useState<number | undefined>(undefined);
   const [filteredFetchSources, setFilteredFetchSources] = useState<NewsSource[]>([]);
@@ -105,37 +108,41 @@ const NewsPage: React.FC = () => {
   const [selectAllSources, setSelectAllSources] = useState<boolean>(false);
   const [isIndeterminate, setIsIndeterminate] = useState<boolean>(false);
 
-  // Task progress drawer state
   const [isTaskDrawerVisible, setIsTaskDrawerVisible] = useState<boolean>(false);
   const [tasksToMonitor, setTasksToMonitor] = useState<FetchTaskItem[]>([]);
   const [overallTaskStatus, setOverallTaskStatus] = useState<OverallStatusInfo | null>(null);
 
-  // Analysis modal state
   const [analysisModalVisible, setAnalysisModalVisible] = useState<boolean>(false);
   const [selectedNewsItemId, setSelectedNewsItemId] = useState<number | null>(null);
 
-  // WebSocket state
   const [taskGroupId, setTaskGroupId] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
-  // NEW: Fetch today's completed history records
   const [todaysHistory, setTodaysHistory] = useState<FetchHistoryItem[]>([]);
   const [isHistoryLoading, setIsHistoryLoading] = useState<boolean>(false);
-
-  // NEW: Fetch history for a specific date
   const [historicalData, setHistoricalData] = useState<FetchHistoryItem[] | null>(null);
-
-  // NEW: Added for history filtering
   const [viewingDate, setViewingDate] = useState<'today' | 'history'>('today');
+  const [selectedHistoryDate, setSelectedHistoryDate] = useState<dayjs.Dayjs | null>(null);
 
-  // Load news data
+
   const loadNews = useCallback(async (params: NewsFilterParams) => {
     try {
       setLoading(true);
       setError(null);
       const newsData = await newsService.getNewsItems(params);
       setNews(newsData);
-      setTotal(100); // Assuming total is fixed for now or fetched separately
+      // Assuming total is fetched with newsData or a separate call
+      // For now, if newsData is an object with 'items' and 'total'
+      if (newsData && typeof newsData === 'object' && 'items' in newsData && 'total' in newsData) {
+        setNews((newsData as any).items);
+        setTotal((newsData as any).total);
+      } else if (Array.isArray(newsData)) { // Fallback if API returns just an array
+        setNews(newsData);
+        setTotal(newsData.length); // Or a default like 100 if pagination is not fully dynamic
+      } else {
+        setNews([]);
+        setTotal(0);
+      }
     } catch (error) {
       handleApiError(error, 'Failed to load news');
       setError('Cannot load news content, please try again later');
@@ -144,32 +151,27 @@ const NewsPage: React.FC = () => {
     }
   }, []);
 
-  // NEW: Fetch today's completed history records
   const fetchTodaysHistory = useCallback(async () => {
-    // Only fetch if drawer is potentially visible or needed
-    // if (!isTaskDrawerVisible && viewingDate !== 'today') return;
     setIsHistoryLoading(true);
     try {
       const todayStr = dayjs().format('YYYY-MM-DD');
       const history = await newsService.getFetchHistory({ date: todayStr });
       setTodaysHistory(history);
-      console.log("Fetched today's history:", history);
     } catch (error) {
       handleApiError(error, "Failed to load today's fetch history");
-      setTodaysHistory([]); // Clear on error
+      setTodaysHistory([]);
     } finally {
       setIsHistoryLoading(false);
     }
   }, []);
 
-  // NEW: Fetch history for a specific date
   const fetchHistoricalData = useCallback(async (date: string | null) => {
     if (!date) {
-      setHistoricalData(null); // Clear if no date
+      setHistoricalData(null);
       return;
     }
     setIsHistoryLoading(true);
-    setHistoricalData(null); // Clear previous history
+    setHistoricalData(null);
     try {
       const history = await newsService.getFetchHistory({ date });
       setHistoricalData(history);
@@ -180,7 +182,6 @@ const NewsPage: React.FC = () => {
     }
   }, []);
 
-  // Debounced search handler
   const debouncedSearch = useCallback(
     debounce((value: string) => {
       setFilters(prev => ({...prev, search_term: value, page: 1}));
@@ -188,11 +189,9 @@ const NewsPage: React.FC = () => {
     []
   );
 
-  // Handle filter changes
   const handleFilterChange = (key: keyof NewsFilterParams, value: any) => {
     setFilters(prev => {
       const updated = {...prev, [key]: value};
-      // Reset page number when filter conditions change
       if (key !== 'page') {
         updated.page = 1;
       }
@@ -200,58 +199,45 @@ const NewsPage: React.FC = () => {
     });
   };
 
-  // Handle category changes
   const handleCategoryChange = async (value: number | undefined) => {
     try {
-      // Update filters
       handleFilterChange('category_id', value);
-
-      // If a category is selected, get sources for that category
       if (value !== undefined) {
         const sourcesData = await newsService.getSourcesByCategory(value);
         setSources(sourcesData);
       } else {
-        // If "All" is selected, get all sources
         const sourcesData = await newsService.getSources();
         setSources(sourcesData);
       }
-
-      // Reset source filter
       handleFilterChange('source_id', undefined);
     } catch (error) {
       handleApiError(error, 'Cannot update source list for category');
     }
   };
 
-  // Function to establish WebSocket connection
-  const connectWebSocket = useCallback((taskGroupId: string) => { // Updated parameter name
-    // Close existing connection if any
+  const connectWebSocket = useCallback((currentTaskGroupId: string) => {
     if (wsRef.current) {
       console.log('Closing previous WebSocket connection.');
       wsRef.current.close();
     }
 
-    // 验证是否有认证令牌
     if (!token) {
       console.error('No authentication token available. Cannot establish WebSocket connection.');
       message.error('无法建立WebSocket连接：未登录或会话已过期');
       return;
     }
 
-    // Construct WebSocket URL with authentication token as a query parameter
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    // Use API_URL base but replace http/https with ws/wss and remove potential trailing slash
     const apiUrlBase = (process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/^http/, 'ws').replace(/\/$/, '');
-    // 添加token作为查询参数, use the new endpoint path
-    const wsUrl = `${apiUrlBase}/api/tasks/ws/tasks/group/${taskGroupId}?token=${encodeURIComponent(token)}`; // Updated URL path
+    const wsUrl = `${apiUrlBase}/api/tasks/ws/tasks/group/${currentTaskGroupId}?token=${encodeURIComponent(token)}`;
     console.log('Connecting to WebSocket with auth token:', wsUrl);
 
     try {
         const ws = new WebSocket(wsUrl);
-        wsRef.current = ws; // Store the instance
+        wsRef.current = ws;
 
         ws.onopen = () => {
-          console.log(`WebSocket connected for task group ID: ${taskGroupId}`);
+          console.log(`WebSocket connected for task group ID: ${currentTaskGroupId}`);
         };
 
         ws.onmessage = (event) => {
@@ -259,91 +245,68 @@ const NewsPage: React.FC = () => {
               const taskUpdate = JSON.parse(event.data);
               console.log('Received task update:', taskUpdate);
 
-              // Handle Batch Task Failure Event (from a single batch task within the group)
               if (taskUpdate.event === "batch_task_failed") {
-                  console.log(`Batch Celery task ${taskUpdate.task_id} failed in group ${taskGroupId}: ${taskUpdate.message}`);
-                  
+                  console.log(`Batch Celery task ${taskUpdate.task_id} failed in group ${currentTaskGroupId}: ${taskUpdate.message}`);
                   if (taskUpdate.affected_source_ids && Array.isArray(taskUpdate.affected_source_ids)) {
                       setTasksToMonitor(prevTasks => prevTasks.map(task => {
-                          // Update only tasks that were part of this failed batch and haven't completed yet
                           if (taskUpdate.affected_source_ids.includes(task.sourceId) && (task.progress ?? 0) < 100) {
                               return { ...task, status: 'Error', progress: 100, message: 'Batch failed; this source did not complete.' };
                           }
                           return task;
                       }));
                   }
-                  return; // Stop processing as an individual source update
+                  return;
               }
 
-              // Check if this is an overall batch group completion event
-              if (taskUpdate.event === "overall_batch_completed") { 
-                  console.log(`Overall batch group ${taskGroupId} has finished with status: ${taskUpdate.status}`);
-                  
-                  // Store the overall status for display in the drawer
+              if (taskUpdate.event === "overall_batch_completed") {
+                  console.log(`Overall batch group ${currentTaskGroupId} has finished with status: ${taskUpdate.status}`);
                   setOverallTaskStatus({
                       status: taskUpdate.status,
                       successful: taskUpdate.successful,
                       failed: taskUpdate.failed,
                       saved: taskUpdate.saved,
                   });
-                  
-                  // Refresh news list
                   loadNews(filters);
-                  
-                  // Close WebSocket connection after receiving the overall completion event
+                  fetchTodaysHistory(); // Refresh today's history after completion
                   setTimeout(() => {
                       if (wsRef.current) {
                           console.log('Closing WebSocket after overall completion event.');
                           wsRef.current.close();
                           wsRef.current = null;
                       }
-                      setTaskGroupId(null); // Reset task group ID for next fetch
-                  }, 1000); // Small delay to ensure message is processed
-
-                  return; // Stop processing
+                      setTaskGroupId(null);
+                  }, 1000);
+                  return;
               }
 
-              // If not a batch event, process as an individual source progress update
               if (taskUpdate.event === "source_progress" && taskUpdate.source_id !== undefined) {
-                  // This is a progress update for a single source within a batch
                   setTasksToMonitor(prevTasks => {
                       const taskIndex = prevTasks.findIndex(t => t.sourceId === taskUpdate.source_id);
-
                       if (taskIndex === -1) {
                           console.warn(`Received update for source ID ${taskUpdate.source_id}, but task not found in monitor list.`);
                           return prevTasks;
                       }
-
                       const updatedTasks = [...prevTasks];
                       const taskToUpdate = { ...updatedTasks[taskIndex] };
-
-                      // Map step code to status string for display purposes
                       taskToUpdate.status = getStepDisplayString(taskUpdate.step);
                       taskToUpdate.progress = taskUpdate.progress ?? taskToUpdate.progress;
-                      
-                      // Handle error flag - now a boolean
                       if (taskUpdate.step === TaskStep.Error) {
                           taskToUpdate.error = true;
                       }
-                      
-                      // Only store items_saved if present (for completed tasks)
                       if (taskUpdate.items_saved !== undefined) {
                           taskToUpdate.items_saved = taskUpdate.items_saved;
+                          taskToUpdate.items_saved_this_run = taskUpdate.items_saved; // Store for badge
                       }
-
-                      // Determine final state based on step code
                       if (taskUpdate.step === TaskStep.Error || taskUpdate.step === TaskStep.Skipped) {
-                          taskToUpdate.progress = 100; // Mark as 'done' visually
+                          taskToUpdate.progress = 100;
                       } else if (taskUpdate.step === TaskStep.Complete) {
                           taskToUpdate.progress = 100;
                       }
-
                       updatedTasks[taskIndex] = taskToUpdate;
                       return updatedTasks;
                   });
-                  return; // Stop processing
+                  return;
               }
-
               console.log('Received unhandled WebSocket message:', taskUpdate);
           } catch (e) {
               console.error('Failed to parse or process WebSocket message:', e);
@@ -353,42 +316,37 @@ const NewsPage: React.FC = () => {
         ws.onerror = (error) => {
           console.error('WebSocket error:', error);
           message.error('WebSocket connection error.');
-          // Optionally attempt to reconnect or clear the connection ref
           wsRef.current = null;
-          setTaskGroupId(null); // Reset task group ID so user can try again
+          setTaskGroupId(null);
         };
 
         ws.onclose = (event) => {
-          console.log(`WebSocket closed for task group ID: ${taskGroupId}. Code: ${event.code}, Reason: ${event.reason}`);
-          // Clear the ref when closed
+          console.log(`WebSocket closed for task group ID: ${currentTaskGroupId}. Code: ${event.code}, Reason: ${event.reason}`);
           if (wsRef.current === ws) {
              wsRef.current = null;
           }
+          // Do not reset taskGroupId here if closure was due to overall_batch_completed
+          // as it's already reset in that handler.
         };
     } catch (err) {
         console.error("Failed to create WebSocket:", err);
         message.error("Failed to initialize WebSocket connection.");
     }
+  }, [token, loadNews, filters, fetchTodaysHistory]);
 
-  }, [token, loadNews, filters]); // Add loadNews and filters as dependencies
-
-  // Effect to connect WebSocket when taskGroupId changes
   useEffect(() => {
     if (taskGroupId) {
       connectWebSocket(taskGroupId);
     }
-
-    // Cleanup function to close WebSocket when component unmounts or taskGroupId changes
     return () => {
       if (wsRef.current) {
-        console.log('Closing WebSocket connection on cleanup.');
+        console.log('Closing WebSocket connection on cleanup (taskGroupId change or unmount).');
         wsRef.current.close();
         wsRef.current = null;
       }
     };
-  }, [taskGroupId, connectWebSocket]); // Updated dependency
+  }, [taskGroupId, connectWebSocket]);
 
-  // Load initial data
   useEffect(() => {
     const loadInitialData = async () => {
       try {
@@ -397,12 +355,9 @@ const NewsPage: React.FC = () => {
           newsService.getCategories(),
           newsService.getSources()
         ]);
-
         setCategories(categoriesData);
         setSources(sourcesData);
-        setFilteredFetchSources(sourcesData); // Initialize filtered sources for fetch modal
-        
-        // Fetch today's history initially
+        setFilteredFetchSources(sourcesData);
         fetchTodaysHistory();
       } catch (error) {
         handleApiError(error, 'Failed to load initial data');
@@ -411,46 +366,36 @@ const NewsPage: React.FC = () => {
         setLoading(false);
       }
     };
-
     loadInitialData();
-  }, [fetchTodaysHistory]); // Add fetchTodaysHistory as dependency
+  }, [fetchTodaysHistory]);
 
-  // Load news when filters change
   useEffect(() => {
     loadNews(filters);
   }, [filters, loadNews]);
 
-  // Format date display
   const formatDate = (dateString?: string) => {
     if (!dateString) return 'Unknown date';
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-US');
+    return dayjs(dateString).format('YYYY-MM-DD'); // Consistent date format
   };
 
-  // Show fetch modal
   const showFetchModal = () => {
-    // Reset internal modal state
-    setSelectedFetchCategory(undefined); // Default to 'All Categories'
-    setFilteredFetchSources(sources); // Show all sources initially
+    setSelectedFetchCategory(undefined);
+    setFilteredFetchSources(sources);
     setSelectedSourceIds([]);
     setSelectAllSources(false);
     setIsIndeterminate(false);
-    // Open the modal
     setIsFetchModalVisible(true);
   };
 
-  // Handle fetch category change in modal
   const handleFetchCategoryChange = (value: number | undefined) => {
     setSelectedFetchCategory(value);
     const newFilteredSources = value === undefined ? sources : sources.filter(s => s.category_id === value);
     setFilteredFetchSources(newFilteredSources);
-    // Reset source selection and select-all state
     setSelectedSourceIds([]);
     setSelectAllSources(false);
     setIsIndeterminate(false);
   };
 
-  // Handle source selection change in modal
   const handleSourceSelectionChange = (checkedValues: any[]) => {
     const numberValues = checkedValues as number[];
     setSelectedSourceIds(numberValues);
@@ -461,7 +406,6 @@ const NewsPage: React.FC = () => {
     setIsIndeterminate(indeterminate);
   };
 
-  // Handle select all checkbox change in modal
   const handleSelectAllChange = (e: CheckboxChangeEvent) => {
     const isChecked = e.target.checked;
     const allVisibleSourceIds = filteredFetchSources.map(s => s.id);
@@ -470,50 +414,42 @@ const NewsPage: React.FC = () => {
     setIsIndeterminate(false);
   };
 
-  // Handle fetch confirmation (OK button in modal)
   const handleFetchConfirm = async () => {
     if (selectedSourceIds.length === 0) {
       message.warning('Please select at least one news source.');
       return;
     }
 
-    // Find the full source objects from the main 'sources' list
     const selectedSourcesDetails = sources.filter(s => selectedSourceIds.includes(s.id));
-
-    // Create the new task items
     const newTasks: FetchTaskItem[] = selectedSourcesDetails.map(source => ({
       sourceId: source.id,
       sourceName: source.name,
-      status: 'Pending', // Initial status for live monitoring
+      status: 'Pending',
       progress: 0,
     }));
 
-    // Reset overall status and potentially clear old monitored tasks
     setOverallTaskStatus(null);
-    setTasksToMonitor(prevTasks => [...prevTasks, ...newTasks]); // Append new tasks
+    // Clear only non-pending/non-running tasks from monitor before adding new ones
+    setTasksToMonitor(prevTasks => [
+        ...prevTasks.filter(t => t.status !== 'Complete' && t.status !== 'Error' && t.status !== 'Skipped'), 
+        ...newTasks
+    ]);
 
-    // Reset history view
     setViewingDate('today');
     setHistoricalData(null);
-    fetchTodaysHistory(); // Fetch latest completed for today
+    fetchTodaysHistory();
 
     setIsFetchModalVisible(false);
-    setIsTaskDrawerVisible(true); // Open the drawer immediately
+    setIsTaskDrawerVisible(true);
 
     try {
-      // Call the backend API to start batch fetch group
       const response = await newsService.fetchNewsFromSourcesBatchGroup(selectedSourceIds);
-
-      // Store the task_group_id for WebSocket connection
-      const taskGroupId = response.task_group_id;
-      setTaskGroupId(taskGroupId); // This will trigger the useEffect to connect
+      const newGroupId = response.task_group_id;
+      setTaskGroupId(newGroupId);
     } catch (error) {
-      // Handle API errors
       handleApiError(error, 'Failed to start news fetch tasks');
-      // Remove the newly added pending tasks if API call failed
       setTasksToMonitor(prevTasks => prevTasks.filter(task => !selectedSourceIds.includes(task.sourceId)));
     } finally {
-      // Reset selections in the settings modal for next time
       setSelectedSourceIds([]);
       setSelectedFetchCategory(undefined);
       setFilteredFetchSources(sources);
@@ -522,84 +458,49 @@ const NewsPage: React.FC = () => {
     }
   };
 
-  // Helper function for status colors in task drawer
-  const getStatusColor = (status: FetchTaskItem['status'] | undefined) => {
-    if (!status) return 'default'; // Handle undefined status
-    
-    switch (status.toLowerCase()) {
-      case 'pending': return 'default'; // Grey
-      case 'preparing':
-      case 'crawling':
-      case 'extracting links':
-      case 'analyzing':
-      case 'saving':
-        return 'processing'; // Blue
-      case 'complete': return 'success'; // Green
-      case 'error': 
-      case 'skipped': return 'error'; // Red
-      default: return 'default';
-    }
-  };
-
-  // Open analysis modal with the selected news item
   const openAnalysisModal = (newsItemId: number) => {
     setSelectedNewsItemId(newsItemId);
     setAnalysisModalVisible(true);
   };
 
-  // Close analysis modal
   const closeAnalysisModal = () => {
     setAnalysisModalVisible(false);
     setSelectedNewsItemId(null);
   };
 
-  // --- NEW: Prepare data for Drawer ---
   const getDisplayedTasks = () => {
     let displayed: (FetchTaskItem | FetchHistoryItem)[] = [];
     const processedSourceIds = new Set<number>();
 
-    // 1. Add active/just completed tasks from monitor
     tasksToMonitor.forEach(task => {
-      // Add running, pending, error, skipped tasks
-      if (task.status !== 'Complete' || task.items_saved_this_run === undefined) {
-         displayed.push(task);
-      } else if (task.items_saved_this_run !== undefined && task.items_saved_this_run > 0) {
-         // Add *just* completed tasks (with items_saved_this_run > 0) to show the +N
-         displayed.push(task);
-      }
+      // Add all monitored tasks, their status will determine rendering
+      displayed.push(task);
       processedSourceIds.add(task.sourceId);
     });
 
-    // 2. Add today's completed history, skipping duplicates already shown from monitor
     if (viewingDate === 'today') {
       todaysHistory.forEach(hist => {
         if (!processedSourceIds.has(hist.source_id)) {
           displayed.push(hist);
-          processedSourceIds.add(hist.source_id); // Should not be necessary but safe
+          // processedSourceIds.add(hist.source_id); // Not strictly needed if only adding non-duplicates
         }
       });
     } else if (historicalData) {
-      // 3. Or add historical data if viewing history
-      displayed = [...historicalData]; // Replace entirely if viewing history
+      // When viewing history, only show historical data, not live tasks
+      displayed = [...historicalData];
     }
 
-    // 4. Sort: Running/Pending first, then by completion/update time desc
     displayed.sort((a, b) => {
         const isALive = 'progress' in a && a.status !== 'Complete' && a.status !== 'Error' && a.status !== 'Skipped';
         const isBLive = 'progress' in b && b.status !== 'Complete' && b.status !== 'Error' && b.status !== 'Skipped';
 
-        if (isALive && !isBLive) return -1; // a (live) comes before b (completed)
-        if (!isALive && isBLive) return 1;  // b (live) comes before a (completed)
+        if (isALive && !isBLive) return -1;
+        if (!isALive && isBLive) return 1;
 
-        // If both are live or both are completed, sort by time (most recent first)
-        const timeA = 'last_updated_at' in a ? new Date(a.last_updated_at).getTime() : Date.now(); // Use current time for live tasks? Or keep order?
-        const timeB = 'last_updated_at' in b ? new Date(b.last_updated_at).getTime() : Date.now();
-        // For completed tasks, use last_updated_at. For live tasks, maybe keep insertion order or use a placeholder time.
-        // Let's prioritize completed by last_updated_at
-        const completedTimeA = 'last_updated_at' in a ? new Date(a.last_updated_at).getTime() : 0;
-        const completedTimeB = 'last_updated_at' in b ? new Date(b.last_updated_at).getTime() : 0;
-
-        return completedTimeB - completedTimeA; // Descending order
+        const timeA = 'last_updated_at' in a && a.last_updated_at ? new Date(a.last_updated_at).getTime() : ('sourceId' in a ? Date.now() : 0);
+        const timeB = 'last_updated_at' in b && b.last_updated_at ? new Date(b.last_updated_at).getTime() : ('sourceId' in b ? Date.now() : 0);
+        
+        return timeB - timeA;
     });
 
     return displayed;
@@ -607,7 +508,6 @@ const NewsPage: React.FC = () => {
 
   const displayedTasks = getDisplayedTasks();
 
-  // Add helper functions to safely access properties from both item types
   const getSourceId = (item: FetchTaskItem | FetchHistoryItem): number => {
     return 'sourceId' in item ? item.sourceId : item.source_id;
   };
@@ -618,25 +518,34 @@ const NewsPage: React.FC = () => {
 
   const getStatus = (item: FetchTaskItem | FetchHistoryItem): string => {
     if ('status' in item) return item.status;
-    // For FetchHistoryItem, return "Complete" as default status
-    return 'Complete';
+    return 'Complete'; // FetchHistoryItem is always complete
   };
 
   const getProgress = (item: FetchTaskItem | FetchHistoryItem): number => {
     if ('progress' in item) return item.progress || 0;
-    // For FetchHistoryItem, return 100 (completed)
-    return 100;
+    return 100; // FetchHistoryItem is always 100%
   };
 
-  const getItemsSaved = (item: FetchTaskItem | FetchHistoryItem): number | undefined => {
-    if ('items_saved' in item) return item.items_saved;
-    if ('items_saved_today' in item) return item.items_saved_today;
+  const getItemsSavedThisRun = (item: FetchTaskItem | FetchHistoryItem): number | undefined => {
+    if ('items_saved_this_run' in item) return item.items_saved_this_run; // From live task
+    if ('items_saved_today' in item) return item.items_saved_today; // From history item
     return undefined;
   };
 
+  const handleHistoryDateChange = (date: dayjs.Dayjs | null, dateString: string | string[]) => {
+    setSelectedHistoryDate(date);
+    if (dateString && typeof dateString === 'string') {
+      fetchHistoricalData(dateString);
+    } else if (Array.isArray(dateString) && dateString.length > 0) {
+      fetchHistoricalData(dateString[0]);
+    } else {
+      setHistoricalData(null); // Clear if date is cleared
+    }
+  };
+
+
   return (
     <div>
-      {/* Consolidated top controls in a single row */}
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }} align="middle">
         <Col xs={24} sm={12} md={5} lg={5}>
           <Select
@@ -645,6 +554,7 @@ const NewsPage: React.FC = () => {
             allowClear
             onChange={(value) => handleCategoryChange(value)}
             loading={loading && categories.length === 0}
+            value={filters.category_id}
           >
             {categories.map(category => (
               <Option key={category.id} value={category.id}>{category.name}</Option>
@@ -657,7 +567,9 @@ const NewsPage: React.FC = () => {
             style={{ width: '100%' }}
             allowClear
             onChange={(value) => handleFilterChange('source_id', value)}
-            loading={loading && sources.length === 0}
+            loading={loading && sources.length === 0 && !!filters.category_id} // Only show loading if category is selected
+            value={filters.source_id}
+            disabled={!filters.category_id && sources.every(s => s.category_id !== undefined)} // Disable if no category selected and sources are category-specific
           >
             {sources.map(source => (
               <Option key={source.id} value={source.id}>{source.name}</Option>
@@ -679,16 +591,15 @@ const NewsPage: React.FC = () => {
         </Col>
         <Col xs={12} sm={12} md={3} lg={3}>
           <Button icon={<BarsOutlined />} onClick={() => {
-              setViewingDate('today'); // Ensure drawer opens to today's view
-              fetchTodaysHistory(); // Refresh today's data when opening
+              setViewingDate('today');
+              fetchTodaysHistory();
               setIsTaskDrawerVisible(true);
             }} style={{ width: '100%' }}>
-            View Progress {tasksToMonitor.filter(t => t.status !== 'Complete' && t.status !== 'Error' && t.status !== 'Skipped').length > 0 ? `(${tasksToMonitor.filter(t => t.status !== 'Complete' && t.status !== 'Error' && t.status !== 'Skipped').length})` : ''}
+            Progress {tasksToMonitor.filter(t => t.status !== 'Complete' && t.status !== 'Error' && t.status !== 'Skipped').length > 0 ? `(${tasksToMonitor.filter(t => t.status !== 'Complete' && t.status !== 'Error' && t.status !== 'Skipped').length})` : ''}
           </Button>
         </Col>
       </Row>
 
-      {/* Error message */}
       {error && (
         <Alert
           message={error}
@@ -698,27 +609,18 @@ const NewsPage: React.FC = () => {
         />
       )}
 
-      {/* Loading state */}
-      {loading ? (
+      {loading && news.length === 0 ? ( // Show loading spinner only if news is empty
         <div style={{ textAlign: 'center', padding: '50px 0' }}>
-          <Spin size="large" tip="Loading..." />
+          <Spin size="large" tip="Loading news..." />
         </div>
-      ) : news.length === 0 ? (
-        <Empty description="No news found" />
+      ) : !loading && news.length === 0 && !error ? ( // Show empty state only if not loading and no error
+        <Empty description="No news found. Try adjusting filters or fetching new articles." />
       ) : (
         <>
-          {/* News list */}
           <List
-            grid={{
-              gutter: 16,
-              xs: 1,
-              sm: 1,
-              md: 2,
-              lg: 3,
-              xl: 3,
-              xxl: 4,
-            }}
+            grid={{ gutter: 16, xs: 1, sm: 1, md: 2, lg: 3, xl: 3, xxl: 4 }}
             dataSource={news}
+            loading={loading && news.length > 0} // Show list loading indicator if news already exists
             renderItem={(item) => (
               <List.Item>
                 <Card hoverable style={{ borderRadius: '4px', boxShadow: 'none', border: '1px solid #f0f0f0' }}>
@@ -732,52 +634,30 @@ const NewsPage: React.FC = () => {
                     }
                     description={
                       <Space direction="vertical" size={8} style={{ width: '100%' }}>
-                        {/* Date, Source, Category on one line */}
                         <Space size={16} wrap>
-                          <Space size={4}>
-                            <CalendarOutlined style={{ color: '#8c8c8c' }} />
-                            <Text type="secondary" style={{ fontSize: 12 }}>{formatDate(item.date)}</Text>
-                          </Space>
-                          <Space size={4}>
-                            <GlobalOutlined style={{ color: '#8c8c8c' }} />
-                            <Text type="secondary" style={{ fontSize: 12 }}>{item.source_name}</Text>
-                          </Space>
-                          {/* --- Start modification for Category and Link --- */}
-                          {/* Category */}
-                          <Space size={4}>
-                            <TagOutlined style={{ color: '#8c8c8c' }} />
-                            <Text type="secondary" style={{ fontSize: 12 }}>{item.category_name}</Text>
-                          </Space>
-                          {/* Original URL Link */}
-                          {item.url && ( // Conditionally render link if URL exists
+                          <Space size={4}><CalendarOutlined style={{ color: '#8c8c8c' }} /><Text type="secondary" style={{ fontSize: 12 }}>{formatDate(item.date)}</Text></Space>
+                          <Space size={4}><GlobalOutlined style={{ color: '#8c8c8c' }} /><Text type="secondary" style={{ fontSize: 12 }}>{item.source_name}</Text></Space>
+                          <Space size={4}><TagOutlined style={{ color: '#8c8c8c' }} /><Text type="secondary" style={{ fontSize: 12 }}>{item.category_name}</Text></Space>
+                          {item.url && (
                             <Space size={4}>
-                            <Tooltip title="查看原文">
+                            <Tooltip title="View Original">
                               <a href={item.url} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', display: 'inline-flex', alignItems: 'center' }}>
-                              <LinkOutlined style={{ color: '#8c8c8c' }} />
+                              <LinkOutlined style={{ color: '#1890ff' }} />
                               </a>
                             </Tooltip>
                             </Space>
                           )}
-                          {/* --- End modification --- */}
                         </Space>
-
-                        {/* Summary with ellipsis */}
                         {item.summary && (
                           <Tooltip title={item.summary}>
-                            <Paragraph ellipsis={{ rows: 3 }} style={{ marginBottom: '8px', color: '#595959' }}>
+                            <Paragraph ellipsis={{ rows: 3 }} style={{ marginBottom: '8px', color: '#595959', minHeight: '60px' /* Ensure consistent height */ }}>
                               {item.summary}
                             </Paragraph>
                           </Tooltip>
                         )}
-
-                        {/* Analysis button at bottom right - MODIFY HERE */}
                         <div style={{ textAlign: 'right' }}>
                           <Tooltip title="Analyze">
-                            <Button
-                              type="link"
-                              icon={<ExperimentOutlined />}
-                              onClick={() => openAnalysisModal(item.id)}
-                            />
+                            <Button type="link" icon={<ExperimentOutlined />} onClick={() => openAnalysisModal(item.id)} />
                           </Tooltip>
                         </div>
                       </Space>
@@ -787,8 +667,6 @@ const NewsPage: React.FC = () => {
               </List.Item>
             )}
           />
-
-          {/* Pagination - centered with more info */}
           <div style={{ textAlign: 'center', marginTop: 24, display: 'flex', justifyContent: 'center' }}>
             <Pagination
               current={filters.page}
@@ -796,14 +674,16 @@ const NewsPage: React.FC = () => {
               total={total}
               onChange={(page) => handleFilterChange('page', page)}
               showSizeChanger
-              onShowSizeChange={(_, size) => handleFilterChange('page_size', size)}
-              showTotal={(total) => `Total ${total} items`}
+              onShowSizeChange={(_, size) => {
+                handleFilterChange('page_size', size);
+                handleFilterChange('page', 1); // Reset to page 1 on size change
+              }}
+              showTotal={(totalItems, range) => `${range[0]}-${range[1]} of ${totalItems} items`}
             />
           </div>
         </>
       )}
 
-      {/* Fetch Settings Modal */}
       <Modal
         title="News Fetch Settings"
         open={isFetchModalVisible}
@@ -815,7 +695,6 @@ const NewsPage: React.FC = () => {
       >
         <Spin spinning={loading && categories.length === 0}>
           <Form layout="vertical">
-            {/* Category Filter */}
             <Form.Item label="Step 1: Filter News Categories (Optional)">
               <Select
                 placeholder="Select category to filter sources below"
@@ -830,8 +709,6 @@ const NewsPage: React.FC = () => {
                 ))}
               </Select>
             </Form.Item>
-
-            {/* Source Multi-Select */}
             <Form.Item label="Step 2: Select News Sources to Fetch">
               <Checkbox
                 indeterminate={isIndeterminate}
@@ -851,7 +728,7 @@ const NewsPage: React.FC = () => {
                     onChange={handleSourceSelectionChange}
                   />
                 ) : (
-                  <Text type="secondary">Please select a category. No sources found for this category, or sources are not yet loaded.</Text>
+                  <Text type="secondary">No sources found for this filter or sources are not yet loaded.</Text>
                 )}
               </div>
             </Form.Item>
@@ -859,7 +736,6 @@ const NewsPage: React.FC = () => {
         </Spin>
       </Modal>
 
-      {/* Task Progress Drawer */}
       <Drawer
         title="Task Progress"
         placement="right"
@@ -868,86 +744,193 @@ const NewsPage: React.FC = () => {
         open={isTaskDrawerVisible}
         mask={false}
         closable={true}
+        footer={
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+            <Tooltip title="Clear Completed & Errored Tasks">
+              <Button 
+                onClick={() => {
+                  setTasksToMonitor(prev => prev.filter(t => 
+                    t.status !== 'Complete' && t.status !== 'Error' && t.status !== 'Skipped'
+                  ));
+                  setOverallTaskStatus(null); // Clear overall status when clearing tasks
+                }}
+                disabled={!tasksToMonitor.some(t => 
+                  t.status === 'Complete' || t.status === 'Error' || t.status === 'Skipped'
+                ) && !overallTaskStatus} 
+                type="text"
+                icon={<DeleteOutlined />}
+              />
+            </Tooltip>
+            
+            {viewingDate === 'today' ? (
+              <Tooltip title="View History">
+                <Button
+                  type="text"
+                  icon={<HistoryOutlined />}
+                  onClick={() => {
+                    setViewingDate('history');
+                    setSelectedHistoryDate(null); // Reset selected date
+                    setHistoricalData(null); // Clear previous historical data
+                    // Optionally fetch for a default date like yesterday:
+                    // const yesterday = dayjs().subtract(1, 'day');
+                    // setSelectedHistoryDate(yesterday);
+                    // fetchHistoricalData(yesterday.format('YYYY-MM-DD'));
+                  }}
+                />
+              </Tooltip>
+            ) : (
+              <Tooltip title="View Today's Progress">
+                <Button
+                  type="text"
+                  icon={<ClockCircleOutlined />}
+                  onClick={() => {
+                    setViewingDate('today');
+                    fetchTodaysHistory(); // Refresh today's data
+                    setHistoricalData(null); // Clear historical data
+                    setSelectedHistoryDate(null); // Clear selected history date
+                  }}
+                />
+              </Tooltip>
+            )}
+          </div>
+        }
       >
-        {/* Overall Status Display - show only when task is completed */}
-        {overallTaskStatus && (
+        {overallTaskStatus && viewingDate === 'today' && ( // Only show overall status for today's view if it exists
           <>
             <div style={{ 
-              marginBottom: 16, 
-              padding: 16, 
-              borderRadius: 4, 
-              backgroundColor: overallTaskStatus.status === 'SUCCESS' 
-                ? '#f6ffed' 
-                : overallTaskStatus.status === 'PARTIAL_SUCCESS' 
-                  ? '#fffbe6' 
-                  : '#fff2f0'
+              marginBottom: 16, padding: 12, borderRadius: 4, 
+              backgroundColor: overallTaskStatus.status === 'SUCCESS' ? '#f6ffed' : overallTaskStatus.status === 'PARTIAL_SUCCESS' ? '#fffbe6' : '#fff2f0',
+              border: `1px solid ${overallTaskStatus.status === 'SUCCESS' ? '#b7eb8f' : overallTaskStatus.status === 'PARTIAL_SUCCESS' ? '#ffe58f' : '#ffa39e'}`
             }}>
               <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
-                {overallTaskStatus.status === 'SUCCESS' && <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 20, marginRight: 8 }} />}
-                {overallTaskStatus.status === 'PARTIAL_SUCCESS' && <ExperimentOutlined style={{ color: '#faad14', fontSize: 20, marginRight: 8 }} />}
-                {overallTaskStatus.status === 'FAILURE' && <CloseCircleOutlined style={{ color: '#f5222d', fontSize: 20, marginRight: 8 }} />}
-                <Text strong>Fetch Status</Text>
+                {overallTaskStatus.status === 'SUCCESS' && <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 18, marginRight: 8 }} />}
+                {overallTaskStatus.status === 'PARTIAL_SUCCESS' && <ExperimentOutlined style={{ color: '#faad14', fontSize: 18, marginRight: 8 }} />}
+                {overallTaskStatus.status === 'FAILURE' && <CloseCircleOutlined style={{ color: '#f5222d', fontSize: 18, marginRight: 8 }} />}
+                <Text strong>Last Fetch Group Status</Text>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', marginBottom: 4 }}>
-                <span><CheckCircleOutlined style={{ color: 'green' }} /> {overallTaskStatus.successful}</span>
-                <span style={{ marginLeft: '16px' }}><CloseCircleOutlined style={{ color: 'red' }} /> {overallTaskStatus.failed}</span>
-              </div>
-              <Text type="secondary">Total items saved: {overallTaskStatus.saved}</Text>
+              <Space size="large">
+                <span><CheckCircleOutlined style={{ color: 'green', marginRight: 4 }} />S: {overallTaskStatus.successful}</span>
+                <span><CloseCircleOutlined style={{ color: 'red', marginRight: 4 }} />F: {overallTaskStatus.failed}</span>
+              </Space>
+              <div style={{marginTop: 4}}><Text type="secondary">Total items saved: {overallTaskStatus.saved}</Text></div>
             </div>
             <Divider style={{ margin: '0 0 16px 0' }} />
           </>
         )}
+
+        {viewingDate === 'history' && (
+          <div style={{ marginBottom: 16 }}>
+            <DatePicker 
+              value={selectedHistoryDate}
+              onChange={handleHistoryDateChange} 
+              style={{ width: '100%' }}
+              disabledDate={(current) => current && current > dayjs().endOf('day')}
+            />
+          </div>
+        )}
         
-        <List
-          itemLayout="horizontal"
-          dataSource={displayedTasks}
-          locale={{ emptyText: 'No fetch tasks currently running or queued.' }}
-          renderItem={(item: FetchTaskItem | FetchHistoryItem) => (
-            <List.Item key={getSourceId(item)}>
-              <List.Item.Meta
-                title={getSourceName(item)}
-                description={
-                  <Space direction="vertical" size={2}>
-                    <Tag color={getStatusColor(getStatus(item))}>{getStatus(item)?.toUpperCase()}</Tag>
-                  </Space>
+        {(isHistoryLoading && (viewingDate === 'history' || (viewingDate === 'today' && todaysHistory.length === 0 && tasksToMonitor.length === 0))) ? (
+            <div style={{ textAlign: 'center', padding: '20px 0' }}><Spin tip="Loading history..." /></div>
+        ) : displayedTasks.length === 0 ? (
+            <Empty description={viewingDate === 'history' && !selectedHistoryDate ? "Select a date to view history." : "No tasks or history to display."} />
+        ) : (
+            <List
+            itemLayout="horizontal"
+            dataSource={displayedTasks}
+            renderItem={(item: FetchTaskItem | FetchHistoryItem, index) => {
+                const itemStatus = getStatus(item);
+                const itemsSaved = getItemsSavedThisRun(item);
+                const itemProgress = getProgress(item);
+                const isRunningOrPending = itemStatus !== 'Complete' && itemStatus !== 'Error' && itemStatus !== 'Skipped';
+                
+                const isLastRunningTask = isRunningOrPending && 
+                (index === displayedTasks.length - 1 || !('progress' in displayedTasks[index+1] && getStatus(displayedTasks[index+1]) !== 'Complete' && getStatus(displayedTasks[index+1]) !== 'Error' && getStatus(displayedTasks[index+1]) !== 'Skipped'));
+
+                let extraContent = null;
+                const iconStyle = { fontSize: '16px', verticalAlign: 'middle' };
+                const badgeAreaStyle = { 
+                    minWidth: '45px', // Adjusted for potential 3-digit numbers
+                    display: 'inline-block', 
+                    textAlign: 'left' as 'left',
+                    verticalAlign: 'middle',
+                    marginLeft: '8px' // Space between icon and badge area
+                };
+
+                if (isRunningOrPending) {
+                extraContent = (
+                    <Space align="center">
+                    <Tooltip title={itemStatus}>
+                        {itemStatus === 'Preparing' || itemStatus === 'Pending' ? (
+                        <SyncOutlined spin style={{ ...iconStyle, color: '#1890ff' }} />
+                        ) : (
+                        <LoadingOutlined style={{ ...iconStyle, color: '#1890ff' }} />
+                        )}
+                    </Tooltip>
+                    <Progress
+                        percent={itemProgress}
+                        status="active"
+                        size="small"
+                        showInfo={false}
+                        style={{ width: 60 }} // Reduced width for progress
+                    />
+                    </Space>
+                );
+                } else if (itemStatus === 'Complete') {
+                extraContent = (
+                    <Space align="center" size={0}>
+                    <Tooltip title="Complete">
+                        <CheckCircleOutlined style={{ ...iconStyle, color: '#52c41a' }} />
+                    </Tooltip>
+                    <div style={badgeAreaStyle}>
+                        {itemsSaved !== undefined && itemsSaved > 0 && (
+                        <Badge count={`+${itemsSaved}`} style={{ backgroundColor: '#52c41a' }} size="small" />
+                        )}
+                    </div>
+                    </Space>
+                );
+                } else if (itemStatus === 'Error') {
+                extraContent = (
+                    <Space align="center" size={0}>
+                    <Tooltip title="Error">
+                        <CloseCircleOutlined style={{ ...iconStyle, color: '#f5222d' }} />
+                    </Tooltip>
+                    <div style={badgeAreaStyle} />
+                    </Space>
+                );
+                } else if (itemStatus === 'Skipped') {
+                extraContent = (
+                    <Space align="center" size={0}>
+                    <Tooltip title="Skipped">
+                        <StopOutlined style={{ ...iconStyle, color: '#faad14' }} />
+                    </Tooltip>
+                    <div style={badgeAreaStyle} />
+                    </Space>
+                );
                 }
-              />
-              <div style={{ width: 120, textAlign: 'right' }}>
-                <Progress
-                  percent={getProgress(item)}
-                  status={getStatus(item) === 'Error' ? 'exception' : getStatus(item) === 'Complete' ? 'success' : 'active'}
-                  size="small"
-                  showInfo={getStatus(item) !== 'pending'}
-                />
-                {/* Display items saved only on complete status */}
-                {getItemsSaved(item) !== undefined && getStatus(item) === 'Complete' && (
-                  <Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
-                    Saved: {getItemsSaved(item)}
-                  </Text>
-                )}
-              </div>
-            </List.Item>
-          )}
-        />
-        <Divider style={{ margin: '16px 0', borderColor: '#f5f5f5' }}/>
-        <Button 
-          onClick={() => {
-            // Only remove completed or error tasks
-            setTasksToMonitor(prev => prev.filter(t => 
-              t.status !== 'Complete' && t.status !== 'Error' && t.status !== 'Skipped'
-            ))
-          }}
-          disabled={!tasksToMonitor.some(t => 
-            t.status === 'Complete' || t.status === 'Error' || t.status === 'Skipped'
-          )} 
-          type="text"
-          icon={<BarsOutlined />}
-        >
-          Clear Completed Tasks
-        </Button>
+
+                return (
+                <>
+                    <List.Item 
+                    key={`${getSourceId(item)}-${'sourceId' in item ? 'live' : 'hist'}-${index}`} // More unique key
+                    extra={extraContent}
+                    >
+                    <List.Item.Meta
+                        title={<Text ellipsis={{tooltip: getSourceName(item)}}>{getSourceName(item)}</Text>}
+                        description={ viewingDate === 'history' && 'last_updated_at' in item && item.last_updated_at ? 
+                            <Text type="secondary" style={{fontSize: '12px'}}>{dayjs(item.last_updated_at).format('HH:mm:ss')}</Text> 
+                            : null
+                        }
+                    />
+                    </List.Item>
+                    
+                    {isLastRunningTask && viewingDate === 'today' && <Divider style={{ margin: '8px 0' }} />}
+                </>
+                );
+            }}
+            />
+        )}
       </Drawer>
 
-      {/* Analysis Modal */}
       {selectedNewsItemId !== null && (
         <AnalysisModal
           isOpen={analysisModalVisible}
@@ -959,5 +942,4 @@ const NewsPage: React.FC = () => {
   );
 };
 
-// Wrap the component with the HOC for authentication
 export default withAuth(NewsPage);
