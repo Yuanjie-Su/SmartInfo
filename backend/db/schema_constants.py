@@ -1,3 +1,4 @@
+# File: /home/cator/project/SmartInfo/backend/db/schema_constants.py
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
@@ -15,6 +16,7 @@ USER_PREFERENCES_TABLE = "user_preferences"
 CHATS_TABLE = "chats"
 MESSAGES_TABLE = "messages"
 USERS_TABLE = "users"
+FETCH_HISTORY_TABLE = "fetch_history"  # New Table
 
 # News category table column names
 NEWS_CATEGORY_ID = "id"
@@ -79,6 +81,19 @@ NEWS_USER_ID = "user_id"
 USERS_ID = "id"
 USERS_USERNAME = "username"
 USERS_HASHED_PASSWORD = "hashed_password"
+
+# Fetch History Table
+FETCH_HISTORY_ID = "id"
+FETCH_HISTORY_USER_ID = "user_id"
+FETCH_HISTORY_SOURCE_ID = "source_id"
+FETCH_HISTORY_RECORD_DATE = "record_date"  # DATE type
+FETCH_HISTORY_ITEMS_SAVED_TODAY = "items_saved_today"  # Cumulative count for the day
+FETCH_HISTORY_LAST_UPDATED_AT = (
+    "last_updated_at"  # Timestamp of last update for this record
+)
+FETCH_HISTORY_LAST_BATCH_TASK_GROUP_ID = (
+    "last_batch_task_group_id"  # Optional: Track which task group last updated
+)
 
 # Default values
 DEFAULT_SEQUENCE_NUMBER = 0

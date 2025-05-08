@@ -6,6 +6,7 @@
 Pydantic models for news related data (sources, categories, items, requests).
 """
 
+from datetime import date, datetime
 from pydantic import BaseModel, Field, AnyHttpUrl, ConfigDict
 from typing import List, Optional, Dict, Any
 
@@ -297,68 +298,12 @@ class UpdateAnalysisRequest(BaseModel):
     )
 
 
-# --- Request/Response Models for News Operations ---
+# --- Fetch History Models ---
+class FetchHistoryItemResponse(BaseModel):
+    source_id: int
+    source_name: str
+    record_date: date
+    items_saved_today: int
+    last_updated_at: Optional[datetime] = None
 
-
-class FetchSourceRequest(BaseModel):
-    """Schema for requesting fetching from a specific source."""
-
-    source_id: int = Field(..., description="ID of the news source to fetch")
-
-
-class FetchSourceBatchRequest(BaseModel):
-    """Schema for requesting batch fetching from multiple sources."""
-
-    source_ids: List[int] = Field(..., description="List of news source IDs to fetch")
-
-
-class FetchUrlRequest(BaseModel):
-    """Schema for requesting crawling and processing of a single URL."""
-
-    url: AnyHttpUrl = Field(..., description="URL to crawl and process")
-
-
-class TaskResponse(BaseModel):
-    """Schema for responses to task initiation requests."""
-
-    task_group_id: str = Field(..., description="Unique identifier for the task group")
-    message: str = Field(..., description="Informational message about the task")
-
-
-class AnalyzeRequest(BaseModel):
-    """Schema for requesting analysis of news items."""
-
-    news_ids: Optional[List[int]] = Field(
-        None,
-        description="List of news item IDs to analyze. If empty or None, analyze all unanalyzed.",
-    )
-    force: bool = Field(
-        False, description="If True, force re-analysis even if analysis already exists."
-    )
-
-
-class AnalyzeContentRequest(BaseModel):
-    """Schema for requesting analysis of arbitrary content."""
-
-    content: str = Field(..., description="The content to be analyzed")
-    instructions: str = Field(
-        ...,
-        description="Specific instructions for the LLM on how to perform the analysis",
-    )
-
-
-class AnalysisResult(BaseModel):
-    """Schema for the result of content analysis."""
-
-    analysis: str = Field(
-        ...,
-        description="The analysis result (can be Markdown, plain text, or other format as requested)",
-    )
-
-
-class UpdateAnalysisRequest(BaseModel):
-    """Schema for updating the analysis field of a news item."""
-
-    analysis: str = Field(
-        ..., description="The new analysis text to store for the news item"
-    )
+    model_config = ConfigDict(from_attributes=True, arbitrary_types_allowed=True)

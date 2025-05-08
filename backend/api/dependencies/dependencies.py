@@ -23,7 +23,8 @@ from db.repositories import (
     NewsCategoryRepository,
     NewsSourceRepository,
     UserPreferenceRepository,
-    UserRepository,  # Import UserRepository
+    UserRepository,
+    FetchHistoryRepository,
 )
 from models import User  # Import User model
 from services import (
@@ -149,6 +150,11 @@ async def get_news_source_repository() -> NewsSourceRepository:
 async def get_user_preference_repository() -> UserPreferenceRepository:
     """Provides an instance of UserPreferenceRepository."""
     return UserPreferenceRepository()
+
+
+async def get_fetch_history_repository() -> FetchHistoryRepository:
+    """Provides an instance of FetchHistoryRepository."""
+    return FetchHistoryRepository()
 
 
 # --- Service Dependencies ---

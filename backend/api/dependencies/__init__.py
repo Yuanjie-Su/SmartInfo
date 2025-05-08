@@ -13,6 +13,7 @@ from api.dependencies.dependencies import (
     get_news_category_repository,
     get_news_source_repository,
     get_user_preference_repository,
+    get_fetch_history_repository,
     # Services
     get_chat_service,
     get_news_service,

@@ -1,3 +1,4 @@
+# File: /home/cator/project/SmartInfo/backend/db/connection.py
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
@@ -27,6 +28,7 @@ from db.schema_constants import (
     CHATS_TABLE,
     MESSAGES_TABLE,
     USERS_TABLE,
+    FETCH_HISTORY_TABLE,  # Import new table name
     # News category columns
     NEWS_CATEGORY_ID,
     NEWS_CATEGORY_NAME,
@@ -83,6 +85,14 @@ from db.schema_constants import (
     USERS_ID,
     USERS_USERNAME,
     USERS_HASHED_PASSWORD,
+    # Fetch History columns (NEW)
+    FETCH_HISTORY_ID,
+    FETCH_HISTORY_USER_ID,
+    FETCH_HISTORY_SOURCE_ID,
+    FETCH_HISTORY_RECORD_DATE,
+    FETCH_HISTORY_ITEMS_SAVED_TODAY,
+    FETCH_HISTORY_LAST_UPDATED_AT,
+    FETCH_HISTORY_LAST_BATCH_TASK_GROUP_ID,
 )
 
 logger = logging.getLogger(__name__)
@@ -390,6 +400,31 @@ class DatabaseConnectionManager:
                         f"Index idx_messages_chat_id_sequence checked/created."
                     )
 
+                    # Fetch History Table (NEW)
+                    await conn.execute(
+                        f"""
+                        CREATE TABLE IF NOT EXISTS {FETCH_HISTORY_TABLE} (
+                            {FETCH_HISTORY_ID} BIGSERIAL PRIMARY KEY,
+                            {FETCH_HISTORY_USER_ID} INTEGER NOT NULL REFERENCES {USERS_TABLE}({USERS_ID}) ON DELETE CASCADE,
+                            {FETCH_HISTORY_SOURCE_ID} INTEGER NOT NULL REFERENCES {NEWS_SOURCES_TABLE}({NEWS_SOURCE_ID}) ON DELETE CASCADE,
+                            {FETCH_HISTORY_RECORD_DATE} DATE NOT NULL,
+                            {FETCH_HISTORY_ITEMS_SAVED_TODAY} INTEGER NOT NULL DEFAULT 0,
+                            {FETCH_HISTORY_LAST_UPDATED_AT} TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                            {FETCH_HISTORY_LAST_BATCH_TASK_GROUP_ID} TEXT,
+                            UNIQUE ({FETCH_HISTORY_USER_ID}, {FETCH_HISTORY_SOURCE_ID}, {FETCH_HISTORY_RECORD_DATE})
+                        )
+                        """
+                    )
+                    logger.debug(f"Table {FETCH_HISTORY_TABLE} checked/created.")
+
+                    # Add index for efficient date lookup
+                    await conn.execute(
+                        f"""
+                        CREATE INDEX IF NOT EXISTS idx_fetch_history_user_date ON {FETCH_HISTORY_TABLE} ({FETCH_HISTORY_USER_ID}, {FETCH_HISTORY_RECORD_DATE} DESC)
+                        """
+                    )
+                    logger.debug(f"Index idx_fetch_history_user_date checked/created.")
+
                     logger.info("Database schema verification/creation complete.")
 
                 except asyncpg.PostgresError as e:
@@ -439,20 +474,29 @@ class DatabaseConnectionManager:
         connection in 'single' mode.
         """
         if self._db_resource is None:
-            await self._initialize()
+            # If called before initialization, attempt to initialize now.
+            # This might be problematic if called from a non-async context initially.
+            # Best practice is to ensure init_db_connection is called during app startup.
+            logger.warning(
+                "Database connection manager accessed before initialization. Attempting lazy init."
+            )
+            await self._initialize()  # Use default mode/size if not specified
+
+        if self._db_resource is None:  # Check again after attempting init
+            raise RuntimeError("Database connection manager failed to initialize.")
 
         if self._connection_mode == "pool":
             # Ensure _db_resource is a pool in pool mode
-            assert isinstance(
-                self._db_resource, asyncpg.Pool
-            ), "Database resource is not a pool in 'pool' mode"
+            if not isinstance(self._db_resource, asyncpg.Pool):
+                raise RuntimeError("Database resource is not a pool in 'pool' mode")
             async with self._db_resource.acquire() as conn:
                 yield conn
         elif self._connection_mode == "single":
             # Ensure _db_resource is a connection in single mode
-            assert isinstance(
-                self._db_resource, asyncpg.Connection
-            ), "Database resource is not a connection in 'single' mode"
+            if not isinstance(self._db_resource, asyncpg.Connection):
+                raise RuntimeError(
+                    "Database resource is not a connection in 'single' mode"
+                )
             yield self._db_resource
         else:
             # This case should ideally not be reached if _initialize is called first

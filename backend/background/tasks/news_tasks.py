@@ -24,6 +24,7 @@ from db.repositories import (
     NewsRepository,
     NewsSourceRepository,
     ApiKeyRepository,
+    FetchHistoryRepository,
 )
 from models import ApiKey
 
@@ -60,7 +61,7 @@ async def _run_batch_processing(
     task,  # Celery task instance for state updates
     source_ids: List[int],
     user_id: int,
-    task_group_id: str,  # Added task_group_id
+    task_group_id: str,
 ):
     """
     Main async function executed by asyncio.run() within the Celery task.
@@ -73,6 +74,7 @@ async def _run_batch_processing(
     news_repo: Optional[NewsRepository] = None
     source_repo: Optional[NewsSourceRepository] = None
     api_key_repo: Optional[ApiKeyRepository] = None
+    fetch_history_repo: Optional[FetchHistoryRepository] = None
     redis_client = None
 
     # Define progress callback that publishes updates via Redis
@@ -82,7 +84,7 @@ async def _run_batch_processing(
         step: Union[int, str],  # Use int for step codes
         progress: float,
         details: str = "",  # Mainly used for error messages
-        items_count: int = 0,
+        items_count: int = 0,  # This now represents items_saved_this_run for the final COMPLETE step
     ):
         update_data = {
             "event": "source_progress",  # Event type for frontend
@@ -94,6 +96,7 @@ async def _run_batch_processing(
         # Conditionally add optional fields
         is_complete = step == COMPLETE
         is_error = step == ERROR
+        is_skipped = step == SKIPPED
 
         if is_complete and items_count > 0:
             update_data["items_saved"] = items_count
@@ -101,6 +104,8 @@ async def _run_batch_processing(
             update_data["error"] = (
                 True  # Simplified to boolean instead of detailed message
             )
+        elif is_skipped:
+            update_data["skipped"] = True
 
         # Publish update to Redis
         channel = f"task_progress:{task_group_id}"
@@ -147,6 +152,7 @@ async def _run_batch_processing(
         news_repo = NewsRepository()
         source_repo = NewsSourceRepository()
         api_key_repo = ApiKeyRepository()
+        fetch_history_repo = FetchHistoryRepository()
         logger.info(
             f"[PID:{pid}] Task {task.request.id} (Group: {task_group_id}): Repositories initialized."
         )
@@ -228,8 +234,10 @@ async def _run_batch_processing(
                     source_details=source_details,
                     llm_pool=llm_pool,
                     news_repo=news_repo,
+                    fetch_history_repo=fetch_history_repo,
                     user_id=user_id,
                     progress_callback=progress_callback,  # Pass the modified callback
+                    task_group_id=task_group_id,
                 )
             )
 
@@ -277,7 +285,6 @@ async def _run_batch_processing(
             "processed_sources_count": len(source_details_to_process),
             "successful_sources_count": successful_count,
             "failed_sources_count": error_count,
-            "items_saved_in_batch": items_saved,
             "message": f"Batch processing completed. Successful: {successful_count}, Errors: {error_count}",
         }
 
@@ -343,8 +350,10 @@ async def _process_single_source_concurrently(
     source_details: Dict[str, Any],
     llm_pool: LLMClientPool,
     news_repo: NewsRepository,
+    fetch_history_repo: FetchHistoryRepository,
     user_id: int,
     progress_callback: callable,  # Batch-level callback
+    task_group_id: str,
 ) -> Dict[str, Any]:
     """
     Processes a single news source within the batch, managed by a semaphore.
@@ -437,6 +446,15 @@ async def _process_single_source_concurrently(
             saved_count, skipped_count = await news_repo.add_batch(
                 fetch_result, user_id
             )
+
+            # --- Record History ONLY if saved_count > 0 ---
+            if saved_count > 0:
+                await fetch_history_repo.record_completion(
+                    user_id=user_id,
+                    source_id=source_id,
+                    items_saved_this_run=saved_count,
+                    task_group_id=task_group_id,
+                )
 
             # Update the message based on saved count
             success_message = (
@@ -594,7 +612,6 @@ def finalize_news_fetch_group(results, task_group_id: str, user_id: int):
     total_processed_sources = 0
     total_successful_sources = 0
     total_failed_sources = 0
-    total_items_saved = 0
     batch_statuses = []
 
     # Iterate through results and aggregate statistics
@@ -609,7 +626,6 @@ def finalize_news_fetch_group(results, task_group_id: str, user_id: int):
         total_processed_sources += batch_result.get("processed_sources_count", 0)
         total_successful_sources += batch_result.get("successful_sources_count", 0)
         total_failed_sources += batch_result.get("failed_sources_count", 0)
-        total_items_saved += batch_result.get("items_saved_in_batch", 0)
         batch_statuses.append(batch_result.get("status", "UNKNOWN"))
 
     # Determine overall status
@@ -630,7 +646,6 @@ def finalize_news_fetch_group(results, task_group_id: str, user_id: int):
         "status": overall_status,
         "successful": total_successful_sources,
         "failed": total_failed_sources,
-        "saved": total_items_saved,
     }
 
     # Publish to Redis using synchronous client
@@ -659,6 +674,5 @@ def finalize_news_fetch_group(results, task_group_id: str, user_id: int):
         "task_group_id": task_group_id,
         "overall_status": overall_status,
         "total_batches": total_batches,
-        "total_items_saved": total_items_saved,
         "message": f"Task group {task_group_id} completed with status: {overall_status}",
     }

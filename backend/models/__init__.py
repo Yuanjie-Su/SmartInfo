@@ -30,6 +30,7 @@ from models.schemas.news import (
     NewsCategoryResponse,
     NewsSourceResponse,
     NewsResponse,
+    FetchHistoryItemResponse,
 )
 from models.schemas.api_key import (
     ApiKey,
@@ -80,6 +81,7 @@ __all__ = [
     "AnalyzeContentRequest",
     "AnalysisResult",
     "UpdateAnalysisRequest",
+    "FetchHistoryItemResponse",
     # API Key related
     "ApiKey",
     "ApiKeyCreate",

@@ -10,6 +10,7 @@ from db.repositories.user_preference_repository import UserPreferenceRepository
 from db.repositories.chat_repository import ChatRepository
 from db.repositories.message_repository import MessageRepository
 from db.repositories.user_repository import UserRepository
+from db.repositories.fetch_history_repository import FetchHistoryRepository
 
 __all__ = [
     "NewsRepository",
@@ -20,4 +21,5 @@ __all__ = [
     "ChatRepository",
     "MessageRepository",
     "UserRepository",
+    "FetchHistoryRepository",
 ]

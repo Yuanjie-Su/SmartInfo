@@ -14,7 +14,8 @@ import {
   FetchSourceRequest,
   FetchUrlRequest,
   AnalyzeRequest,
-  AnalyzeContentRequest
+  AnalyzeContentRequest,
+  FetchHistoryItem
 } from '../utils/types';
 
 const BASE_PATH = '/api/news';
@@ -183,4 +184,15 @@ export const streamAnalysis = async (newsId: number, force: boolean = false): Pr
   }
 
   return response;
+};
+
+// NEW: Function to fetch fetch history
+export const getFetchHistory = async (params?: {
+  date?: string; // YYYY-MM-DD
+  start_date?: string; // YYYY-MM-DD
+  end_date?: string; // YYYY-MM-DD
+  // Add page/page_size if implementing pagination
+}): Promise<FetchHistoryItem[]> => {
+  const response = await api.get(`${BASE_PATH}/fetch-history`, { params });
+  return response.data;
 };

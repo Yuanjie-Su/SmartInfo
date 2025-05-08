@@ -14,38 +14,36 @@ from typing import (
     Dict,
     Optional,
     Annotated,
-)  # Import Annotated
+)
 import uuid
 import math  # Import math for batching
+from datetime import date
 
 # Import dependencies from the centralized dependencies module
 from api.dependencies import (
     get_news_service,
     get_current_active_user,
+    get_fetch_history_repository,
 )  # Import user dependency
 
 # Import Celery primitives for chord
-from celery import group, chord
+from celery import chord
 
 # Import schemas from the main models package
 from models import (  # Import models directly
     News,  # Keep for internal use if needed
     NewsCreate,
     NewsUpdate,
-    NewsSource,  # Keep for internal use if needed
     NewsSourceCreate,
     NewsSourceUpdate,
-    NewsCategory,  # Keep for internal use if needed
     NewsCategoryCreate,
     NewsCategoryUpdate,
-    FetchSourceRequest,
-    FetchUrlRequest,
     AnalyzeRequest,
     AnalyzeContentRequest,
-    AnalysisResult,
     UpdateAnalysisRequest,
     FetchSourceBatchRequest,
-    User,  # Import User schema
+    FetchHistoryItemResponse,
+    User,
     # Import News Response Schemas
     NewsCategoryResponse,
     NewsSourceResponse,
@@ -54,6 +52,7 @@ from models import (  # Import models directly
 
 # Import the service class type hint
 from services.news_service import NewsService
+from db.repositories import FetchHistoryRepository
 
 # Import ws_manager and Celery tasks
 from core.ws_manager import ws_manager
@@ -1041,3 +1040,69 @@ async def stream_news_item_analysis(
         ),
         media_type="text/plain",
     )
+
+
+# --- Fetch History Endpoint ---
+@router.get(
+    "/fetch-history",
+    response_model=List[FetchHistoryItemResponse],
+    summary="Get news fetch history for the user",
+    description="Retrieve records of completed news fetches (where items > 0), filterable by date.",
+)
+async def get_fetch_history(
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    fetch_history_repo: Annotated[
+        FetchHistoryRepository, Depends(get_fetch_history_repository)
+    ],
+    record_date: Optional[date] = Query(
+        None, description="Filter by specific date (YYYY-MM-DD)"
+    ),
+    start_date: Optional[date] = Query(
+        None, description="Start date for range filter (YYYY-MM-DD)"
+    ),
+    end_date: Optional[date] = Query(
+        None, description="End date for range filter (YYYY-MM-DD)"
+    ),
+    # Add pagination if needed:
+    # page: int = Query(1, ge=1),
+    # page_size: int = Query(100, ge=1, le=500),
+):
+    """
+    Retrieve fetch history records for the authenticated user.
+    Defaults to today if no date/range is specified.
+    """
+    user_id = current_user.id
+    try:
+        if record_date:
+            history_records = await fetch_history_repo.get_history_by_date(
+                user_id, record_date
+            )
+        elif start_date and end_date:
+            if start_date > end_date:
+                raise HTTPException(
+                    status_code=400, detail="Start date cannot be after end date."
+                )
+            history_records = await fetch_history_repo.get_history_by_date_range(
+                user_id, start_date, end_date
+            )
+        else:
+            # Default to today
+            today = date.today()
+            history_records = await fetch_history_repo.get_history_by_date(
+                user_id, today
+            )
+
+        # Convert asyncpg.Record to Pydantic model
+        return [
+            FetchHistoryItemResponse.model_validate(dict(record))
+            for record in history_records
+        ]
+
+    except Exception as e:
+        logger.exception(
+            f"Failed to retrieve fetch history for user {user_id}", exc_info=True
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An error occurred while retrieving fetch history.",
+        )

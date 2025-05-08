@@ -70,3 +70,4 @@ pytest.ini
 test*.py
 test_*.py
 tests/
+clear_redis_key.py

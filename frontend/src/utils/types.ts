@@ -85,19 +85,25 @@ export interface FetchTaskItem {
   status: string;         // Status string derived from step code
   progress?: number;      // Progress percentage (0-100)
   error?: boolean;        // Error flag when status === 'Error'
+  skipped?: boolean;      // Skipped flag
+  items_saved_this_run?: number; // NEW: Items saved in the *current* run (from WS)
   items_saved?: number;   // Included only for completed tasks
 }
 
-export interface FetchTaskResponse {
-  task_id: string;
-  message: string;
+// NEW: Interface for Fetch History Records from API
+export interface FetchHistoryItem {
+  source_id: number; // Match backend response field names
+  source_name: string;
+  record_date: string; // Date string (YYYY-MM-DD)
+  items_saved_today: number;
+  last_updated_at: string; // ISO datetime string
 }
 
 // New interface for overall task status display
 export interface OverallStatusInfo {
   status: 'SUCCESS' | 'PARTIAL_SUCCESS' | 'FAILURE';
-  successful: number;
-  failed: number;
+  successful: number; // Sources successfully processed in the group
+  failed: number;     // Sources failed in the group
   saved: number;
 }
 

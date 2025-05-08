@@ -22,7 +22,8 @@ import {
   Drawer,
   Progress,
   message,
-  Tooltip
+  Tooltip,
+  DatePicker
 } from 'antd';
 import {
   SearchOutlined,
@@ -34,9 +35,10 @@ import {
   BarsOutlined,
   LinkOutlined,
   CheckCircleOutlined,
-  CloseCircleOutlined
+  CloseCircleOutlined,
+  StopOutlined
 } from '@ant-design/icons';
-import { NewsItem, NewsCategory, NewsSource, NewsFilterParams, FetchTaskItem, OverallStatusInfo } from '@/utils/types';
+import { NewsItem, NewsCategory, NewsSource, NewsFilterParams, FetchTaskItem, OverallStatusInfo, FetchHistoryItem } from '@/utils/types';
 import * as newsService from '@/services/newsService';
 import { handleApiError } from '@/utils/apiErrorHandler';
 import Link from 'next/link';
@@ -44,6 +46,7 @@ import debounce from 'lodash/debounce';
 import type { CheckboxChangeEvent } from 'antd/es/checkbox';
 import AnalysisModal from '@/components/analysis/AnalysisModal';
 import withAuth from '@/components/auth/withAuth'; // Import the HOC
+import dayjs from 'dayjs';
 
 const { Title, Text, Paragraph } = Typography;
 const { Option } = Select;
@@ -115,6 +118,16 @@ const NewsPage: React.FC = () => {
   const [taskGroupId, setTaskGroupId] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
+  // NEW: Fetch today's completed history records
+  const [todaysHistory, setTodaysHistory] = useState<FetchHistoryItem[]>([]);
+  const [isHistoryLoading, setIsHistoryLoading] = useState<boolean>(false);
+
+  // NEW: Fetch history for a specific date
+  const [historicalData, setHistoricalData] = useState<FetchHistoryItem[] | null>(null);
+
+  // NEW: Added for history filtering
+  const [viewingDate, setViewingDate] = useState<'today' | 'history'>('today');
+
   // Load news data
   const loadNews = useCallback(async (params: NewsFilterParams) => {
     try {
@@ -128,6 +141,42 @@ const NewsPage: React.FC = () => {
       setError('Cannot load news content, please try again later');
     } finally {
       setLoading(false);
+    }
+  }, []);
+
+  // NEW: Fetch today's completed history records
+  const fetchTodaysHistory = useCallback(async () => {
+    // Only fetch if drawer is potentially visible or needed
+    // if (!isTaskDrawerVisible && viewingDate !== 'today') return;
+    setIsHistoryLoading(true);
+    try {
+      const todayStr = dayjs().format('YYYY-MM-DD');
+      const history = await newsService.getFetchHistory({ date: todayStr });
+      setTodaysHistory(history);
+      console.log("Fetched today's history:", history);
+    } catch (error) {
+      handleApiError(error, "Failed to load today's fetch history");
+      setTodaysHistory([]); // Clear on error
+    } finally {
+      setIsHistoryLoading(false);
+    }
+  }, []);
+
+  // NEW: Fetch history for a specific date
+  const fetchHistoricalData = useCallback(async (date: string | null) => {
+    if (!date) {
+      setHistoricalData(null); // Clear if no date
+      return;
+    }
+    setIsHistoryLoading(true);
+    setHistoricalData(null); // Clear previous history
+    try {
+      const history = await newsService.getFetchHistory({ date });
+      setHistoricalData(history);
+    } catch (error) {
+      handleApiError(error, `Failed to load fetch history for ${date}`);
+    } finally {
+      setIsHistoryLoading(false);
     }
   }, []);
 
@@ -352,6 +401,9 @@ const NewsPage: React.FC = () => {
         setCategories(categoriesData);
         setSources(sourcesData);
         setFilteredFetchSources(sourcesData); // Initialize filtered sources for fetch modal
+        
+        // Fetch today's history initially
+        fetchTodaysHistory();
       } catch (error) {
         handleApiError(error, 'Failed to load initial data');
         setError('Cannot load categories and sources, please refresh the page and try again');
@@ -361,7 +413,7 @@ const NewsPage: React.FC = () => {
     };
 
     loadInitialData();
-  }, []);
+  }, [fetchTodaysHistory]); // Add fetchTodaysHistory as dependency
 
   // Load news when filters change
   useEffect(() => {
@@ -432,15 +484,19 @@ const NewsPage: React.FC = () => {
     const newTasks: FetchTaskItem[] = selectedSourcesDetails.map(source => ({
       sourceId: source.id,
       sourceName: source.name,
-      status: 'pending', // Initial status
+      status: 'Pending', // Initial status for live monitoring
       progress: 0,
     }));
 
-    // Reset overall status when starting a new fetch
+    // Reset overall status and potentially clear old monitored tasks
     setOverallTaskStatus(null);
-    
-    // Update UI state first for responsiveness
     setTasksToMonitor(prevTasks => [...prevTasks, ...newTasks]); // Append new tasks
+
+    // Reset history view
+    setViewingDate('today');
+    setHistoricalData(null);
+    fetchTodaysHistory(); // Fetch latest completed for today
+
     setIsFetchModalVisible(false);
     setIsTaskDrawerVisible(true); // Open the drawer immediately
 
@@ -454,7 +510,7 @@ const NewsPage: React.FC = () => {
     } catch (error) {
       // Handle API errors
       handleApiError(error, 'Failed to start news fetch tasks');
-      // Remove the pending tasks from the monitor list if API call failed
+      // Remove the newly added pending tasks if API call failed
       setTasksToMonitor(prevTasks => prevTasks.filter(task => !selectedSourceIds.includes(task.sourceId)));
     } finally {
       // Reset selections in the settings modal for next time
@@ -467,7 +523,9 @@ const NewsPage: React.FC = () => {
   };
 
   // Helper function for status colors in task drawer
-  const getStatusColor = (status: FetchTaskItem['status']) => {
+  const getStatusColor = (status: FetchTaskItem['status'] | undefined) => {
+    if (!status) return 'default'; // Handle undefined status
+    
     switch (status.toLowerCase()) {
       case 'pending': return 'default'; // Grey
       case 'preparing':
@@ -493,6 +551,87 @@ const NewsPage: React.FC = () => {
   const closeAnalysisModal = () => {
     setAnalysisModalVisible(false);
     setSelectedNewsItemId(null);
+  };
+
+  // --- NEW: Prepare data for Drawer ---
+  const getDisplayedTasks = () => {
+    let displayed: (FetchTaskItem | FetchHistoryItem)[] = [];
+    const processedSourceIds = new Set<number>();
+
+    // 1. Add active/just completed tasks from monitor
+    tasksToMonitor.forEach(task => {
+      // Add running, pending, error, skipped tasks
+      if (task.status !== 'Complete' || task.items_saved_this_run === undefined) {
+         displayed.push(task);
+      } else if (task.items_saved_this_run !== undefined && task.items_saved_this_run > 0) {
+         // Add *just* completed tasks (with items_saved_this_run > 0) to show the +N
+         displayed.push(task);
+      }
+      processedSourceIds.add(task.sourceId);
+    });
+
+    // 2. Add today's completed history, skipping duplicates already shown from monitor
+    if (viewingDate === 'today') {
+      todaysHistory.forEach(hist => {
+        if (!processedSourceIds.has(hist.source_id)) {
+          displayed.push(hist);
+          processedSourceIds.add(hist.source_id); // Should not be necessary but safe
+        }
+      });
+    } else if (historicalData) {
+      // 3. Or add historical data if viewing history
+      displayed = [...historicalData]; // Replace entirely if viewing history
+    }
+
+    // 4. Sort: Running/Pending first, then by completion/update time desc
+    displayed.sort((a, b) => {
+        const isALive = 'progress' in a && a.status !== 'Complete' && a.status !== 'Error' && a.status !== 'Skipped';
+        const isBLive = 'progress' in b && b.status !== 'Complete' && b.status !== 'Error' && b.status !== 'Skipped';
+
+        if (isALive && !isBLive) return -1; // a (live) comes before b (completed)
+        if (!isALive && isBLive) return 1;  // b (live) comes before a (completed)
+
+        // If both are live or both are completed, sort by time (most recent first)
+        const timeA = 'last_updated_at' in a ? new Date(a.last_updated_at).getTime() : Date.now(); // Use current time for live tasks? Or keep order?
+        const timeB = 'last_updated_at' in b ? new Date(b.last_updated_at).getTime() : Date.now();
+        // For completed tasks, use last_updated_at. For live tasks, maybe keep insertion order or use a placeholder time.
+        // Let's prioritize completed by last_updated_at
+        const completedTimeA = 'last_updated_at' in a ? new Date(a.last_updated_at).getTime() : 0;
+        const completedTimeB = 'last_updated_at' in b ? new Date(b.last_updated_at).getTime() : 0;
+
+        return completedTimeB - completedTimeA; // Descending order
+    });
+
+    return displayed;
+  };
+
+  const displayedTasks = getDisplayedTasks();
+
+  // Add helper functions to safely access properties from both item types
+  const getSourceId = (item: FetchTaskItem | FetchHistoryItem): number => {
+    return 'sourceId' in item ? item.sourceId : item.source_id;
+  };
+
+  const getSourceName = (item: FetchTaskItem | FetchHistoryItem): string => {
+    return 'sourceName' in item ? item.sourceName : item.source_name;
+  };
+
+  const getStatus = (item: FetchTaskItem | FetchHistoryItem): string => {
+    if ('status' in item) return item.status;
+    // For FetchHistoryItem, return "Complete" as default status
+    return 'Complete';
+  };
+
+  const getProgress = (item: FetchTaskItem | FetchHistoryItem): number => {
+    if ('progress' in item) return item.progress || 0;
+    // For FetchHistoryItem, return 100 (completed)
+    return 100;
+  };
+
+  const getItemsSaved = (item: FetchTaskItem | FetchHistoryItem): number | undefined => {
+    if ('items_saved' in item) return item.items_saved;
+    if ('items_saved_today' in item) return item.items_saved_today;
+    return undefined;
   };
 
   return (
@@ -539,8 +678,12 @@ const NewsPage: React.FC = () => {
           </Button>
         </Col>
         <Col xs={12} sm={12} md={3} lg={3}>
-          <Button icon={<BarsOutlined />} onClick={() => setIsTaskDrawerVisible(true)} style={{ width: '100%' }}>
-            View Progress {tasksToMonitor.length > 0 ? `(${tasksToMonitor.filter(t => t.status !== 'complete' && t.status !== 'error').length})` : ''}
+          <Button icon={<BarsOutlined />} onClick={() => {
+              setViewingDate('today'); // Ensure drawer opens to today's view
+              fetchTodaysHistory(); // Refresh today's data when opening
+              setIsTaskDrawerVisible(true);
+            }} style={{ width: '100%' }}>
+            View Progress {tasksToMonitor.filter(t => t.status !== 'Complete' && t.status !== 'Error' && t.status !== 'Skipped').length > 0 ? `(${tasksToMonitor.filter(t => t.status !== 'Complete' && t.status !== 'Error' && t.status !== 'Skipped').length})` : ''}
           </Button>
         </Col>
       </Row>
@@ -757,29 +900,29 @@ const NewsPage: React.FC = () => {
         
         <List
           itemLayout="horizontal"
-          dataSource={tasksToMonitor}
+          dataSource={displayedTasks}
           locale={{ emptyText: 'No fetch tasks currently running or queued.' }}
-          renderItem={(item: FetchTaskItem) => (
-            <List.Item key={item.sourceId}>
+          renderItem={(item: FetchTaskItem | FetchHistoryItem) => (
+            <List.Item key={getSourceId(item)}>
               <List.Item.Meta
-                title={item.sourceName}
+                title={getSourceName(item)}
                 description={
                   <Space direction="vertical" size={2}>
-                    <Tag color={getStatusColor(item.status)}>{item.status?.toUpperCase()}</Tag>
+                    <Tag color={getStatusColor(getStatus(item))}>{getStatus(item)?.toUpperCase()}</Tag>
                   </Space>
                 }
               />
               <div style={{ width: 120, textAlign: 'right' }}>
                 <Progress
-                  percent={item.progress || 0}
-                  status={item.status === 'Error' ? 'exception' : item.status === 'Complete' ? 'success' : 'active'}
+                  percent={getProgress(item)}
+                  status={getStatus(item) === 'Error' ? 'exception' : getStatus(item) === 'Complete' ? 'success' : 'active'}
                   size="small"
-                  showInfo={item.status !== 'pending'}
+                  showInfo={getStatus(item) !== 'pending'}
                 />
                 {/* Display items saved only on complete status */}
-                {item.items_saved !== undefined && item.status === 'Complete' && (
+                {getItemsSaved(item) !== undefined && getStatus(item) === 'Complete' && (
                   <Text type="secondary" style={{ fontSize: 12, display: 'block' }}>
-                    Saved: {item.items_saved}
+                    Saved: {getItemsSaved(item)}
                   </Text>
                 )}
               </div>
