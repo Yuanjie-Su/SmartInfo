@@ -25,6 +25,16 @@ class AppConfig:
     Manages application configuration settings loaded from environment variables.
     """
 
+    keys_list = [
+        "DB_USER",
+        "DB_PASSWORD",
+        "DB_NAME",
+        "DB_HOST",
+        "DB_PORT",
+        "REDIS_URL",
+        "FETCH_BATCH_SIZE",
+    ]
+
     def __init__(self):
         """Initialize configuration."""
         # --- Load Database Configuration from Environment Variables ---
@@ -32,7 +42,19 @@ class AppConfig:
         self._db_password = os.getenv("DB_PASSWORD")
         self._db_name = os.getenv("DB_NAME")
         self._db_host = os.getenv("DB_HOST", "localhost")
-        self._db_port = os.getenv("DB_PORT", "5432")  # Default PostgreSQL port
+        self._db_port = os.getenv("DB_PORT", "5432")
+
+        # --- Load Redis Configuration from Environment Variables ---
+        self._redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
+        # --- Load Fetch Configuration from Environment Variables ---
+        try:
+            self._fetch_batch_size = int(os.getenv("FETCH_BATCH_SIZE", 5))
+        except (ValueError, TypeError):
+            logger.warning(
+                f"FETCH_BATCH_SIZE '{os.getenv('FETCH_BATCH_SIZE')}' is not a valid integer. Defaulting to 5."
+            )
+            self._fetch_batch_size = 5
 
         # --- Validate Required Database Configuration ---
         required_db_vars = {
@@ -59,31 +81,13 @@ class AppConfig:
         Get a configuration value. Only supports DB connection keys.
         For other keys, returns the provided default.
         """
-        db_connection_keys = {
-            "DB_USER": self._db_user,
-            "DB_PASSWORD": self._db_password,
-            "DB_NAME": self._db_name,
-            "DB_HOST": self._db_host,
-            "DB_PORT": self._db_port,
-        }
-        if key in db_connection_keys:
-            logger.debug(f"Config: Returning direct attribute for '{key}'.")
-            # Attempt to return correct type for port
-            if key == "DB_PORT":
-                try:
-                    return int(db_connection_keys[key])
-                except (ValueError, TypeError):
-                    logger.warning(
-                        f"Could not convert DB_PORT '{db_connection_keys[key]}' to int. Returning as string."
-                    )
-                    return db_connection_keys[key]  # Fallback to string
-            return db_connection_keys[key]
-
-        # For any other key, return the provided default
-        logger.debug(
-            f"Config: Key '{key}' not a DB config key. Returning provided default."
-        )
-        return default
+        if key in self.keys_list:
+            return getattr(self, f"_{key}")
+        else:
+            logger.warning(
+                f"Config: Key '{key}' not found in config. Returning default."
+            )
+            return default
 
     # --- Properties for Database Connection ---
     @property
@@ -111,6 +115,10 @@ class AppConfig:
                 f"DB_PORT '{self._db_port}' is not a valid integer. Defaulting to 5432."
             )
             return 5432  # Return default int port if conversion fails
+
+    @property
+    def fetch_batch_size(self) -> int:
+        return self._fetch_batch_size
 
 
 # Create a single, globally accessible instance of AppConfig

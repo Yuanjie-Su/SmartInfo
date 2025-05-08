@@ -5,6 +5,7 @@ from api.dependencies.dependencies import (
     get_db_connection_context_dependency,
     get_current_active_user,
     # Repositories
+    get_user_repository,
     get_api_key_repository,
     get_chat_repository,
     get_message_repository,

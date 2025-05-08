@@ -6,14 +6,13 @@ Handles CRUD for news items, sources, categories, and initiates fetching/analysi
 """
 
 import logging
+from config import config
 from fastapi import APIRouter, Depends, HTTPException, Body, Query, status
 from fastapi.responses import StreamingResponse
 from typing import (
     List,
     Dict,
-    Any,
     Optional,
-    AsyncGenerator,
     Annotated,
 )  # Import Annotated
 import uuid
@@ -839,7 +838,7 @@ async def trigger_fetch_batch_group(
             raise HTTPException(status_code=400, detail="No source IDs provided.")
 
         task_group_id = str(uuid.uuid4())  # Generate unique group ID
-        batch_size = 4  # Define batch size
+        batch_size = config.fetch_batch_size  # Define batch size
         source_ids = request.source_ids
         total_sources = len(source_ids)
         num_batches = math.ceil(total_sources / batch_size)

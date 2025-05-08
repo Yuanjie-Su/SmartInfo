@@ -1,139 +1,238 @@
-# SmartInfo - Intelligent News Analysis and Knowledge Management Tool
+# SmartInfo: News Aggregation, Analysis, and Chat
 
-[![GitHub stars](https://img.shields.io/github/stars/catorsu/SmartInfo?style=social)](https://github.com/catorsu/SmartInfo/stargazers)
-[![GitHub forks](https://img.shields.io/github/forks/catorsu/SmartInfo?style=social)](https://github.com/catorsu/SmartInfo/network/members)
-[![GitHub issues](https://img.shields.io/github/issues/catorsu/SmartInfo)](https://github.com/catorsu/SmartInfo/issues)
+[![Python Version](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
+[![Framework](https://img.shields.io/badge/Framework-FastAPI%20%7C%20Next.js-lightgrey.svg)](https://fastapi.tiangolo.com/)
+[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE) SmartInfo is a full-stack application designed for intelligent news aggregation, automated content analysis using Large Language Models (LLMs), and interactive chat functionalities. It comprises a FastAPI backend for data processing and API management, and a React/Next.js frontend for a modern user experience.
 
-**Repository:** [https://github.com/catorsu/SmartInfo.git](https://github.com/catorsu/SmartInfo.git)
+## ✨ Features
 
-## Overview
+* **Backend (FastAPI)**
+    * User authentication and management (JWT-based).
+    * News source and category management (CRUD operations per user).
+    * Asynchronous web crawling (Aiohttp, Playwright, Selenium) for fetching news content.
+    * Background task processing using Celery and Redis for fetching and analyzing news.
+    * Integration with OpenAI-compatible LLM APIs for:
+        * Extracting relevant article links from source pages.
+        * Generating concise summaries and fact-based titles for articles.
+        * Performing in-depth analysis of news content on demand.
+        * Powering a conversational chat interface.
+    * WebSocket support for real-time task progress monitoring.
+    * API key management for user-specific LLM configurations.
+    * Persistent user preference storage.
+    * PostgreSQL database integration using `asyncpg`.
+    * Comprehensive API documentation via Swagger UI and ReDoc.
+* **Frontend (Next.js & Ant Design)**
+    * User registration and login interface.
+    * Dashboard for viewing, filtering, and searching aggregated news items.
+    * Modal interface to trigger background news fetching from selected sources.
+    * Real-time task progress drawer using WebSockets.
+    * Modal for viewing detailed LLM analysis of individual news items.
+    * Interactive chat interface with conversation history management.
+    * Settings page for managing API keys and application preferences.
+    * Protected routes using Higher-Order Components (HOC).
+    * Responsive design using Ant Design components.
 
-SmartInfo is a desktop application designed for researchers, analysts, and enthusiasts to aggregate news from various sources, perform intelligent analysis and summarization using Large Language Models (LLMs), and build a searchable knowledge base for question-answering.
+## 🛠️ Technology Stack
 
-The application features a user-friendly interface built with PySide6, allowing users to manage news sources, fetch articles, view content, trigger AI-powered analysis, and interact with a Q&A system based on the collected information.
+**Backend:**
 
-## Key Features
+* **Framework:** FastAPI
+* **Language:** Python 3.12+
+* **Async:** `asyncio`, `aiohttp`, `asyncpg`
+* **Database:** PostgreSQL
+* **Task Queue:** Celery
+* **Broker/Backend:** Redis
+* **Web Crawling:** Playwright, Selenium, Aiohttp, Trafilatura, BeautifulSoup4
+* **LLM Interaction:** OpenAI Python SDK (compatible with DeepSeek, etc.)
+* **Authentication:** JWT (python-jose), Bcrypt
+* **Data Validation:** Pydantic
+* **Environment Management:** Poetry, python-dotenv
+* **Web Server:** Uvicorn
 
-- **News Management:**
-  - Configure and manage news sources (URLs) categorized by topic.
-  - Fetch news articles from configured sources using web crawling (`crawl4ai`).
-  - Extract key information (title, link, summary, date) from crawled content using an LLM (e.g., DeepSeek).
-  - View, filter, search, and delete stored news articles.
-  - Preview news content and AI analysis results.
-- **Intelligent Analysis:**
-  - Generate summaries and perform different types of analysis (e.g., Technical, Trends, Competitive) on selected news articles using an LLM (DeepSeek).
-  - View original content alongside the generated analysis.
-- **Q&A:**
-  - Ask natural language questions based on the collected news.
-  - View Q&A history.
-- **Configuration:**
-  - Manage API keys (e.g., DeepSeek) via UI (stored in database) or environment variables (`.env` file takes priority).
-  - Manage news categories and sources.
-  - View and potentially change the data storage path (default: `~/SmartInfo/data`).
+**Frontend:**
 
-## Technology Stack
+* **Framework:** Next.js
+* **Language:** TypeScript
+* **UI Library:** Ant Design (antd)
+* **State Management:** React Context API (`AuthContext`)
+* **HTTP Client:** Axios
+* **Testing:** Jest, React Testing Library
+* **Package Manager:** npm / yarn
 
-- **Language:** Python 3.x
-- **GUI:** PySide6
-- **LLM Interaction:** `openai` library (compatible with DeepSeek API), `deepseek-tokenizer`
-- **Web Crawling:** `crawl4ai`
-- **Database:**
-  - SQLite (for metadata, configuration, Q&A history)
-- **Configuration:** `python-dotenv`
-- **Other:** `requests` (for API testing), `ijson` (likely for stream parsing)
-
-## Installation
-
-1.  **Clone the repository:**
-    ```bash
-    git clone [https://github.com/catorsu/SmartInfo.git](https://github.com/catorsu/SmartInfo.git)
-    cd SmartInfo
-    ```
-2.  **Create and activate a virtual environment (recommended):**
-    ```bash
-    python -m venv venv
-    # On Windows
-    venv\Scripts\activate
-    # On macOS/Linux
-    source venv/bin/activate
-    ```
-3.  **Install dependencies:**
-    ```bash
-    pip install -r requirements.txt
-    ```
-
-## Configuration
-
-1.  **API Keys:**
-    - The primary method for configuring the DeepSeek API key is through an environment variable. Create a file named `.env` in the project root directory.
-    - Add your API key to the `.env` file:
-      ```dotenv
-      # .env file
-      DEEPSEEK_API_KEY=your_deepseek_api_key_here
-      ```
-    - Alternatively, you can set the API key via the "Settings" tab in the application UI. Keys set via the UI are stored in the SQLite database (`smartinfo.db`). **Note:** The `.env` file setting always takes priority if present.
-2.  **Other Settings:**
-    - The embedding model, data directory, and other system settings can be viewed and potentially modified in the "Settings" tab of the application.
-    - Settings changed via the UI are saved in the `smartinfo.db` SQLite database located in the data directory.
-    - The default data directory is `~/SmartInfo/data` (within your user home directory).
-
-## Usage
-
-1.  Ensure you have configured your API key (see Configuration section).
-2.  Make sure you are in the project's root directory (`SmartInfo`).
-3.  Run the main application script:
-    ```bash
-    python src/main.py
-    ```
-
-## Command Line Arguments
-
-The application supports the following command-line arguments when run from the root directory:
-
-- `python src/main.py --reset-sources`: (Functionality might need implementation in `NewsService`) Reset news sources to default.
-- `python src/main.py --clear-news`: Clear ALL news data from SQLite and embeddings from ChromaDB (prompts for confirmation).
-- `python src/main.py --reset-database`: Reset the entire database, clearing ALL data including configuration, API keys, news and Q&A history (prompts for confirmation).
-- `python src/main.py --log-level <LEVEL>`: Set the logging level (e.g., `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`). Default is `INFO`. Log file is `smartinfo.log`.
-
-## Project Structure
-
-- `src/main.py`: Main application entry point.
-- `src/config.py`: Application configuration management.
-- `src/core/crawler.py`: Web crawling logic.
-- `src/db/`: Database connection and repository classes.
-- `src/services/`: Business logic layer (News, Analysis, QA, Settings, LLM Client).
-- `src/ui/`: User interface components (Main Window, Tabs, Async Runner).
-- `src/utils/`: Utility functions (e.g., token counting).
-- `requirements.txt`: Project dependencies.
-- `README.md` / `README_CN.md`: This documentation.
-
-## Running Background Tasks with Celery
-
-The application uses Celery with Redis for handling background tasks such as news fetching and analysis. To run these tasks, you need to start a Celery worker in addition to the main FastAPI application.
-
-### Starting the Celery Worker
-
-1. Make sure Redis is running on localhost:6379 (or configure the REDIS_URL environment variable)
-2. Open a terminal and navigate to the project directory
-3. Activate your virtual environment
-4. Run the following command:
-
-```bash
-# On Windows
-celery -A backend.celery_worker worker --loglevel=info --pool=solo
-
-# On Linux/Mac
-celery -A backend.celery_worker worker --loglevel=info
-```
-
-The worker will start and initialize all the necessary dependencies (database connection, LLM client pool, etc.) and then start listening for tasks.
-
-Note: On Windows, you need to use the `--pool=solo` option as the default prefork pool is not supported on Windows.
-
-### Configuring Redis
-
-By default, the application looks for Redis at `redis://localhost:6379/0`. You can change this by setting the `REDIS_URL` environment variable in your `.env` file:
+## 📂 Project Structure
 
 ```
-REDIS_URL=redis://your-redis-host:6379/0
+SmartInfo/
+├── backend/                 # FastAPI Backend Application
+│   ├── api/                 # API routers and dependencies
+│   │   ├── dependencies/
+│   │   └── routers/         # Routers for different modules (auth, chat, news, etc.)
+│   ├── background/          # Celery background tasks and app setup
+│   │   ├── tasks/
+│   │   └── celery_app.py
+│   ├── core/                # Core logic (LLM client, security, crawler, workflow)
+│   │   ├── llm/
+│   │   ├── workflow/
+│   │   └── ...
+│   ├── db/                  # Database connection, repositories, schema constants
+│   │   ├── repositories/
+│   │   └── ...
+│   ├── models/              # Pydantic models (schemas)
+│   │   └── schemas/
+│   ├── services/            # Business logic layer
+│   ├── utils/               # Utility functions
+│   ├── config.py            # Application configuration loading
+│   ├── main.py              # FastAPI application entry point
+│   └── pyproject.toml       # Poetry dependencies and project config
+├── frontend/                # Next.js Frontend Application
+│   ├── public/              # Static assets
+│   ├── src/                 # Source code
+│   │   ├── components/      # Reusable React components
+│   │   ├── context/         # React context (e.g., AuthContext)
+│   │   ├── pages/           # Next.js pages (routes)
+│   │   ├── services/        # API service functions (using Axios)
+│   │   ├── styles/          # CSS modules and global styles
+│   │   ├── utils/           # Utility functions and types
+│   │   └── __tests__/       # Unit/Integration tests
+│   ├── next.config.js       # Next.js configuration
+│   ├── package.json         # npm/yarn dependencies
+│   └── tsconfig.json        # TypeScript configuration
+├── .gitignore               # Git ignore rules
+└── README.md                # This file
 ```
+
+## 🚀 Getting Started
+
+### Prerequisites
+
+* Python 3.12+
+* Poetry (for Python dependency management)
+* Node.js (v18+ recommended)
+* npm or yarn
+* PostgreSQL Database Server
+* Redis Server
+
+### Backend Setup
+
+1.  **Navigate to Backend Directory:**
+    ```bash
+    cd backend
+    ```
+
+2.  **Install Dependencies:**
+    ```bash
+    poetry install
+    ```
+    *(This installs dependencies defined in `pyproject.toml` into a virtual environment managed by Poetry)*
+
+3.  **Environment Variables:**
+    * Copy the example environment file:
+        ```bash
+        cp .env.example .env
+        ```
+    * Edit the `.env` file and provide your specific database credentials, Redis URL, and a strong `SECRET_KEY` for JWT:
+        ```dotenv
+        # .env (Example - Replace with your actual values)
+        DB_USER=your_db_user
+        DB_PASSWORD=your_db_password
+        DB_NAME=smartinfo_db
+        DB_HOST=localhost
+        DB_PORT=5432
+        REDIS_URL=redis://localhost:6379/0       # For Celery Broker & WebSocket PubSub
+        REDIS_BACKEND_URL=redis://localhost:6379/1 # For Celery Result Backend
+        SECRET_KEY=a_very_strong_random_secret_key_please_change_me # IMPORTANT: Change this!
+        FETCH_BATCH_SIZE=5 # Number of sources to fetch in one Celery task
+        # LOG_LEVEL=DEBUG # Optional: Set to DEBUG for more verbose logs
+        # RELOAD=true # Optional: Set to true for auto-reload during development
+        ```
+
+4.  **Run Database Migrations (Implicit):**
+    The database tables are created automatically when the FastAPI application starts (within the `lifespan` function in `main.py`) if they don't exist.
+
+5.  **Run the Backend API Server:**
+    ```bash
+    poetry run uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
+    ```
+    * `--reload`: Enables auto-reloading for development. Remove for production.
+    * The server will be accessible at `http://localhost:8000`.
+
+6.  **Run the Celery Worker:**
+    Open a *new terminal* in the `backend` directory:
+    ```bash
+    poetry run celery -A backend.background.celery_app worker --loglevel=info
+    ```
+    *(This starts the background worker to process news fetching and analysis tasks.)*
+
+### Frontend Setup
+
+1.  **Navigate to Frontend Directory:**
+    ```bash
+    cd frontend
+    ```
+
+2.  **Install Dependencies:**
+    ```bash
+    npm install
+    # or
+    yarn install
+    ```
+
+3.  **Environment Variables:**
+    * Create a `.env.local` file in the `frontend` directory.
+    * Add the URL of your running backend API:
+        ```dotenv
+        # .env.local
+        NEXT_PUBLIC_API_URL=http://localhost:8000
+        ```
+        *(Adjust if your backend is running on a different host or port)*
+
+4.  **Run the Frontend Development Server:**
+    ```bash
+    npm run dev
+    # or
+    yarn dev
+    ```
+    * The frontend will be accessible at `http://localhost:3000`.
+
+### Testing
+
+**Backend:**
+
+* Run unit/integration tests:
+    ```bash
+    cd backend
+    poetry run pytest
+    ```
+
+**Frontend:**
+
+* Run unit tests:
+    ```bash
+    cd frontend
+    npm test
+    # or
+    yarn test
+    ```
+* Test backend connectivity from the frontend environment:
+    ```bash
+    cd frontend
+    npm run test:backend
+    # or
+    yarn test:backend
+    ```
+    *(Requires the backend server to be running)*
+
+## 📚 API Documentation
+
+Once the backend server is running, you can access the automatically generated API documentation:
+
+* **Swagger UI:** [http://localhost:8000/docs](http://localhost:8000/docs)
+* **ReDoc:** [http://localhost:8000/redoc](http://localhost:8000/redoc)
+
+## 🤝 Contributing
+
+Contributions are welcome! Please follow standard fork-and-pull-request workflows. Ensure your code adheres to existing style conventions and includes tests where appropriate.
+
+## 📜 License
+
+This project is licensed under the MIT License. See the `LICENSE` file for details. ```
