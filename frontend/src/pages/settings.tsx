@@ -34,7 +34,7 @@ import { ApiKey, NewsCategory, NewsSource } from '@/utils/types';
 import * as settingsService from '@/services/settingsService';
 import * as newsService from '@/services/newsService';
 import MainLayout from '../components/layout/MainLayout';
-import { handleApiError } from '../utils/apiErrorHandler';
+import { handleApiError, extractErrorMessage } from '../utils/apiErrorHandler'; // Import extractErrorMessage
 import withAuth from '@/components/auth/withAuth'; // Import the HOC
 
 const { Title, Text, Paragraph } = Typography;
@@ -61,7 +61,7 @@ const Settings: React.FC = () => {
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsLoading, setSettingsLoading] = useState(true);
   const [apiKeysLoading, setApiKeysLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ type: string, message: string, status?: number } | null>(null); // Updated error state type
   
   // API Key modal state
   const [isApiKeyModalVisible, setIsApiKeyModalVisible] = useState(false);
@@ -87,15 +87,18 @@ const Settings: React.FC = () => {
   const loadAllData = async () => {
     try {
       setLoading(true);
+      setError(null); // Reset error state
       await Promise.all([
         loadSettings(),
         loadApiKeys(),
         loadCategories(),
         loadSources()
       ]);
-    } catch (error) {
-      console.error('Failed to load settings data:', error);
-      message.error('Failed to load settings data');
+    } catch (err: any) { // Catch the error here
+      console.error('Failed to load settings data:', err);
+      const errorDetails = extractErrorMessage(err); // Use the structured error handler
+      setError(errorDetails); // Set the structured error state
+      // No need for global message here
     } finally {
       setLoading(false);
     }
@@ -104,12 +107,14 @@ const Settings: React.FC = () => {
   const loadSettings = async () => {
     try {
       setSettingsLoading(true);
+      // No need to reset error here, loadAllData does it
       const settingsData = await settingsService.getSettings();
       setSettings(settingsData);
       settingsForm.setFieldsValue(settingsData);
-    } catch (err) {
-      handleApiError(err, '加载设置失败');
-      setError('加载设置失败');
+    } catch (err: any) {
+      const errorDetails = extractErrorMessage(err);
+      setError(errorDetails); // Set error state
+      // No need for global message
     } finally {
       setSettingsLoading(false);
     }
@@ -118,24 +123,44 @@ const Settings: React.FC = () => {
   const loadApiKeys = async () => {
     try {
       setApiKeysLoading(true);
+      // No need to reset error here
       const apiKeysData = await settingsService.getApiKeys();
       setApiKeys(apiKeysData);
-    } catch (err) {
-      handleApiError(err, '加载API密钥失败');
-      setError('加载API密钥失败');
+    } catch (err: any) {
+      const errorDetails = extractErrorMessage(err);
+      setError(errorDetails); // Set error state
+      // No need for global message
     } finally {
       setApiKeysLoading(false);
     }
   };
   
   const loadCategories = async () => {
-    const categoriesData = await newsService.getCategories();
-    setCategories(categoriesData);
+    try {
+      // No need for loading/error state specific to categories here,
+      // as they are part of the overall settings page load.
+      const categoriesData = await newsService.getCategories();
+      setCategories(categoriesData);
+    } catch (err: any) {
+      console.error('Failed to load categories:', err);
+      // Decide if category loading failure should block the whole page or just affect source dropdown
+      // For now, let's just log and let the page load with potentially empty category list.
+      // If it should block, set the main error state:
+      // const errorDetails = extractErrorMessage(err);
+      // setError(errorDetails);
+    }
   };
   
   const loadSources = async () => {
-    const sourcesData = await newsService.getSources();
-    setSources(sourcesData);
+    try {
+      // No need for loading/error state specific to sources here
+      const sourcesData = await newsService.getSources();
+      setSources(sourcesData);
+    } catch (err: any) {
+      console.error('Failed to load sources:', err);
+      // Decide if source loading failure should block the whole page
+      // For now, just log.
+    }
   };
   
   // Settings management
@@ -483,18 +508,27 @@ const Settings: React.FC = () => {
     <MainLayout>
       <div style={{ padding: '24px' }}>
         <Title level={2}>系统设置</Title>
-        
-        {error && <Alert message={error} type="error" style={{ marginBottom: 16 }} />}
-        
+
+        {/* Display error alert if error state is set */}
+        {error && (
+          <Alert
+            message="Error Loading Settings"
+            description={error.message || "An unexpected error occurred while loading settings data."}
+            type="error"
+            showIcon
+            style={{ marginBottom: 16 }}
+          />
+        )}
+
         <Tabs defaultActiveKey="general">
-          <TabPane 
-            tab={<><SettingOutlined /> 通用设置</>} 
+          <TabPane
+            tab={<><SettingOutlined /> 通用设置</>}
             key="general"
           >
             <Card title="应用程序设置" extra={
               <Space>
-                <Button 
-                  icon={<ReloadOutlined />} 
+                <Button
+                  icon={<ReloadOutlined />}
                   onClick={resetSettings}
                 >
                   重置为默认
@@ -508,15 +542,15 @@ const Settings: React.FC = () => {
                   onFinish={saveSettings}
                 >
                   {Object.entries(settings).map(([key, value]) => (
-                    <Form.Item 
-                      key={key} 
+                    <Form.Item
+                      key={key}
                       name={key}
                       label={key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
                     >
                       <Input />
                     </Form.Item>
                   ))}
-                  
+
                   <Form.Item>
                     <Button type="primary" htmlType="submit" loading={savingSettings} icon={<SaveOutlined />}>
                       保存设置
@@ -526,47 +560,47 @@ const Settings: React.FC = () => {
               </Spin>
             </Card>
           </TabPane>
-          
-          <TabPane 
-            tab={<><KeyOutlined /> API密钥</>} 
+
+          <TabPane
+            tab={<><KeyOutlined /> API密钥</>}
             key="api-keys"
           >
             <div style={{ marginBottom: 16 }}>
-              <Button 
-                type="primary" 
-                icon={<PlusOutlined />} 
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
                 onClick={showAddApiKeyModal}
               >
                 添加API密钥
               </Button>
             </div>
-            
+
             <Spin spinning={apiKeysLoading}>
-              <Table 
-                dataSource={apiKeys} 
-                columns={apiKeyColumns} 
+              <Table
+                dataSource={apiKeys}
+                columns={apiKeyColumns}
                 rowKey="id"
                 pagination={false}
               />
             </Spin>
           </TabPane>
-          
-          <TabPane 
-            tab={<><ApiOutlined /> 新闻来源</>} 
+
+          <TabPane
+            tab={<><ApiOutlined /> 新闻来源</>}
             key="sources"
           >
             <div style={{ marginBottom: 16 }}>
-              <Button 
-                type="primary" 
-                icon={<PlusOutlined />} 
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
                 onClick={showAddSourceModal}
               >
                 添加来源
               </Button>
             </div>
-            
-            <Table 
-              dataSource={sources} 
+
+            <Table
+              dataSource={sources}
               columns={[
                 {
                   title: '名称',
@@ -593,8 +627,8 @@ const Settings: React.FC = () => {
                   key: 'actions',
                   render: (_: any, record: NewsSource) => (
                     <Space>
-                      <Button 
-                        icon={<EditOutlined />} 
+                      <Button
+                        icon={<EditOutlined />}
                         onClick={() => showEditSourceModal(record)}
                         size="small"
                       >
@@ -606,8 +640,8 @@ const Settings: React.FC = () => {
                         okText="是"
                         cancelText="否"
                       >
-                        <Button 
-                          danger 
+                        <Button
+                          danger
                           icon={<DeleteOutlined />}
                           size="small"
                         >
@@ -617,7 +651,7 @@ const Settings: React.FC = () => {
                     </Space>
                   ),
                 },
-              ]} 
+              ]}
               rowKey="id"
               loading={loading}
             />

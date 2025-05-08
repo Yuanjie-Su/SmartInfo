@@ -1,29 +1,30 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/router';
-import { 
-  Layout, 
-  List, 
-  Input, 
-  Button, 
-  Avatar, 
-  Spin, 
-  Empty, 
-  Select, 
+import {
+  Layout,
+  List,
+  Input,
+  Button,
+  Avatar,
+  Spin,
+  Empty, // Import Empty
+  Select,
   Typography,
   Space,
   Card,
-  message
+  message,
+  Alert // Import Alert
 } from 'antd';
-import { 
-  UserOutlined, 
-  RobotOutlined, 
-  SendOutlined, 
+import {
+  UserOutlined,
+  RobotOutlined,
+  SendOutlined,
   PlusOutlined,
-  CopyOutlined 
+  CopyOutlined
 } from '@ant-design/icons';
 import MainLayout from '@/components/layout/MainLayout';
 import * as chatService from '@/services/chatService';
-import { handleApiError } from '@/utils/apiErrorHandler';
+import { handleApiError, extractErrorMessage } from '@/utils/apiErrorHandler'; // Import extractErrorMessage
 import { Chat, Message, Question } from '@/utils/types';
 import withAuth from '@/components/auth/withAuth'; // Import the HOC
 
@@ -41,7 +42,7 @@ const ChatPage: React.FC = () => {
   const [loadingChats, setLoadingChats] = useState(true);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [sending, setSending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ type: string, message: string, status?: number } | null>(null); // Updated error state type
 
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -71,16 +72,19 @@ const ChatPage: React.FC = () => {
   const fetchChats = async () => {
     try {
       setLoadingChats(true);
+      setError(null); // Reset error state
       const response = await chatService.getChats();
       setChats(response);
-      
+
       // Select first chat if available and none is selected
       if (response.length > 0 && !selectedChatId) {
         setSelectedChatId(response[0].id);
       }
-    } catch (error) {
-      handleApiError(error, '获取聊天会话失败');
-      setError('加载聊天会话时出错');
+    } catch (err: any) { // Catch the error here
+      console.error('Failed to fetch chats:', err);
+      const errorDetails = extractErrorMessage(err); // Use the structured error handler
+      setError(errorDetails); // Set the structured error state
+      // No need for global message here
     } finally {
       setLoadingChats(false);
     }
@@ -90,11 +94,14 @@ const ChatPage: React.FC = () => {
   const fetchMessages = async (chatId: number) => {
     try {
       setLoadingMessages(true);
+      setError(null); // Reset error state
       const response = await chatService.getMessages(chatId);
       setMessages(response);
-    } catch (error) {
-      handleApiError(error, '获取消息失败');
-      setError('加载消息时出错');
+    } catch (err: any) { // Catch the error here
+      console.error('Failed to fetch messages:', err);
+      const errorDetails = extractErrorMessage(err); // Use the structured error handler
+      setError(errorDetails); // Set the structured error state
+      // No need for global message here
     } finally {
       setLoadingMessages(false);
     }
@@ -142,26 +149,26 @@ const ChatPage: React.FC = () => {
 
     try {
       setSending(true);
-      
+
       // Optimistically add user message to UI
       setMessages(prev => [...prev, userMessageObj]);
       setInputMessage('');
-      
+
       // Create user message in backend
       const userMessage = await chatService.createMessage({
         chat_id: chatId,
         sender: 'user',
         content: inputMessage
       });
-      
+
       // Prepare and send question to LLM
       const question: Question = {
         chat_id: chatId,
         content: inputMessage
       };
-      
+
       const answer = await chatService.askQuestion(question);
-      
+
       // Add assistant response to UI
       const assistantMessageObj: Message = {
         id: answer.message_id || Date.now() + 1,
@@ -171,9 +178,9 @@ const ChatPage: React.FC = () => {
         timestamp: new Date().toISOString(), // Use ISO string
         sequence_number: messages.length + 2 // Temporary sequence number (after user msg)
       };
-      
+
       setMessages(prev => [...prev, assistantMessageObj]);
-      
+
       // Refresh messages from server to ensure consistency
       await fetchMessages(chatId);
     } catch (error) {
@@ -216,10 +223,10 @@ const ChatPage: React.FC = () => {
   return (
     <MainLayout>
       <Layout style={{ padding: '24px', height: 'calc(100vh - 64px)' }}>
-        <Content style={{ 
-          background: '#fff', 
-          padding: 24, 
-          margin: 0, 
+        <Content style={{
+          background: '#fff',
+          padding: 24,
+          margin: 0,
           borderRadius: 8,
           height: '100%',
           display: 'flex',
@@ -255,15 +262,15 @@ const ChatPage: React.FC = () => {
                   </Option>
                 ))}
               </Select>
-              <Button 
-                type="primary" 
-                icon={<PlusOutlined />} 
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
                 onClick={handleNewChat}
               >
                 新聊天
               </Button>
             </Space>
-            
+
             {selectedChatId && (
               <Button
                 type="link"
@@ -275,93 +282,116 @@ const ChatPage: React.FC = () => {
           </div>
 
           {/* Messages Display */}
-          <div 
-            style={{ 
-              flexGrow: 1, 
-              overflowY: 'auto', 
-              padding: '0 16px',
-              marginBottom: 16,
-              border: '1px solid #f0f0f0',
-              borderRadius: 4
-            }}
-            ref={messageListRef}
-          >
-            {loadingMessages ? (
-              <div style={{ display: 'flex', justifyContent: 'center', padding: '40px 0' }}>
-                <Spin size="large" />
-              </div>
-            ) : messages.length === 0 ? (
-              <Empty 
-                description="没有消息" 
-                style={{ margin: '60px 0' }}
-                image={Empty.PRESENTED_IMAGE_SIMPLE} 
+          {error ? ( // Check for any error
+            error.type === 'notFound' ? ( // Specific Not Found UI
+              <Empty description={error.message || "Chat or messages not found."} style={{ margin: '60px 0' }} image={Empty.PRESENTED_IMAGE_SIMPLE} />
+            ) : error.type === 'forbidden' ? ( // Specific Forbidden UI
+              <Alert
+                message="Access Denied"
+                description={error.message || "You do not have permission to view this chat."}
+                type="error"
+                showIcon
+                style={{ marginBottom: 16 }}
               />
-            ) : (
-              <div style={{ padding: '16px 0' }}>
-                {messages.map((msg) => {
-                  const isUser = msg.sender === 'user';
-                  return (
-                    <div
-                      key={msg.id}
-                      style={{
-                        display: 'flex',
-                        justifyContent: isUser ? 'flex-end' : 'flex-start',
-                        marginBottom: 16,
-                      }}
-                    >
-                      <Card
+            ) : ( // Generic Error Alert
+              <Alert
+                message="Error"
+                description={error.message || "An unexpected error occurred."}
+                type="error"
+                showIcon
+                style={{ marginBottom: 16 }}
+              />
+            )
+          ) : (
+            <div
+              style={{
+                flexGrow: 1,
+                overflowY: 'auto',
+                padding: '0 16px',
+                marginBottom: 16,
+                border: '1px solid #f0f0f0',
+                borderRadius: 4
+              }}
+              ref={messageListRef}
+            >
+              {loadingMessages ? (
+                <div style={{ display: 'flex', justifyContent: 'center', padding: '40px 0' }}>
+                  <Spin size="large" />
+                </div>
+              ) : messages.length === 0 ? (
+                <Empty
+                  description="没有消息"
+                  style={{ margin: '60px 0' }}
+                  image={Empty.PRESENTED_IMAGE_SIMPLE}
+                />
+              ) : (
+                <div style={{ padding: '16px 0' }}>
+                  {messages.map((msg) => {
+                    const isUser = msg.sender === 'user';
+                    return (
+                      <div
+                        key={msg.id}
                         style={{
-                          maxWidth: '70%',
-                          backgroundColor: isUser ? '#f0f2ff' : '#fff',
-                          borderColor: isUser ? '#d7d9e6' : '#e0e0e0',
+                          display: 'flex',
+                          justifyContent: isUser ? 'flex-end' : 'flex-start',
+                          marginBottom: 16,
                         }}
-                        bodyStyle={{ padding: '12px 16px' }}
                       >
-                        <div style={{ display: 'flex', alignItems: 'flex-start' }}>
-                          <Avatar 
-                            icon={isUser ? <UserOutlined /> : <RobotOutlined />} 
-                            style={{ 
-                              marginRight: 8, 
-                              backgroundColor: isUser ? '#1677ff' : '#52c41a' 
-                            }}
-                          />
-                          <div style={{ flex: 1 }}>
-                            <div
+                        <Card
+                          style={{
+                            maxWidth: '70%',
+                            backgroundColor: isUser ? '#f0f2ff' : '#fff',
+                            borderColor: isUser ? '#d7d9e6' : '#e0e0e0',
+                          }}
+                          bodyStyle={{ padding: '12px 16px' }}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'flex-start' }}>
+                            <Avatar
+                              icon={isUser ? <UserOutlined /> : <RobotOutlined />}
                               style={{
-                                whiteSpace: 'pre-wrap',
-                                wordBreak: 'break-word',
+                                marginRight: 8,
+                                backgroundColor: isUser ? '#1677ff' : '#52c41a'
                               }}
-                            >
-                              {msg.content}
-                            </div>
-                            <div style={{ 
-                              marginTop: 8, 
-                              display: 'flex', 
-                              justifyContent: 'space-between',
-                              alignItems: 'center'
-                              }}>
-                              <Text type="secondary" style={{ fontSize: '0.8rem' }}>
-                                {msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString() : ''}
-                              </Text>
-                              
-                              <Button 
-                                type="text" 
-                                icon={<CopyOutlined />} 
-                                size="small"
-                                onClick={() => handleCopyMessage(msg.content)}
-                                title="复制消息"
-                              />
+                            />
+                            <div style={{ flex: 1 }}>
+                              <div
+                                style={{
+                                  whiteSpace: 'pre-wrap',
+                                  wordBreak: 'break-word',
+                                }}
+                              >
+                                {msg.content}
+                              </div>
+                              <div style={{
+                                marginTop: 8,
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'center'
+                                }}>
+                                <Text type="secondary" style={{ fontSize: '0.8rem' }}>
+                                  {msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString() : ''}
+                                </Text>
+
+                                <Button
+                                  type="text"
+                                  icon={<CopyOutlined />}
+                                  size="small"
+                                  onClick={() => handleCopyMessage(msg.content)}
+                                  title="复制消息"
+                                />
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      </Card>
-                    </div>
-                  );
-                })}
-                <div ref={messagesEndRef} />
-              </div>
-            )}
-          </div>
+                        </Card>
+                      </div>
+                    );
+                  })}
+                  <div ref={messagesEndRef} />
+                </div>
+              )}
+            </div>
+          )}
+
 
           {/* Message Input */}
           <div style={{ display: 'flex', alignItems: 'flex-end' }}>

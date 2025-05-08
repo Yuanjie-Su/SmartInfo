@@ -46,7 +46,7 @@ import {
 } from '@ant-design/icons';
 import { NewsItem, NewsCategory, NewsSource, NewsFilterParams, FetchTaskItem, OverallStatusInfo, FetchHistoryItem } from '@/utils/types';
 import * as newsService from '@/services/newsService';
-import { handleApiError } from '@/utils/apiErrorHandler';
+import { handleApiError, extractErrorMessage } from '@/utils/apiErrorHandler'; // Import extractErrorMessage
 import Link from 'next/link';
 import debounce from 'lodash/debounce';
 import type { CheckboxChangeEvent } from 'antd/es/checkbox';
@@ -91,7 +91,7 @@ const NewsPage: React.FC = () => {
   const [categories, setCategories] = useState<NewsCategory[]>([]);
   const [sources, setSources] = useState<NewsSource[]>([]);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ type: string, message: string, status?: number } | null>(null); // Updated error state type
   const [filters, setFilters] = useState<NewsFilterParams>({
     page: 1,
     page_size: 10,
@@ -128,7 +128,7 @@ const NewsPage: React.FC = () => {
   const loadNews = useCallback(async (params: NewsFilterParams) => {
     try {
       setLoading(true);
-      setError(null);
+      setError(null); // Reset error state
       const newsData = await newsService.getNewsItems(params);
       setNews(newsData);
       // Assuming total is fetched with newsData or a separate call
@@ -143,9 +143,11 @@ const NewsPage: React.FC = () => {
         setNews([]);
         setTotal(0);
       }
-    } catch (error) {
-      handleApiError(error, 'Failed to load news');
-      setError('Cannot load news content, please try again later');
+    } catch (err: any) { // Catch the error here
+      console.error('Failed to load news:', err);
+      const errorDetails = extractErrorMessage(err); // Use the structured error handler
+      setError(errorDetails); // Set the structured error state
+      // No need for global message here, component handles display
     } finally {
       setLoading(false);
     }
@@ -359,9 +361,11 @@ const NewsPage: React.FC = () => {
         setSources(sourcesData);
         setFilteredFetchSources(sourcesData);
         fetchTodaysHistory();
-      } catch (error) {
-        handleApiError(error, 'Failed to load initial data');
-        setError('Cannot load categories and sources, please refresh the page and try again');
+      } catch (err: any) { // Catch the error here
+        console.error('Failed to load initial data:', err);
+        const errorDetails = extractErrorMessage(err); // Use the structured error handler
+        setError(errorDetails); // Set the structured error state
+        // No need for global message here
       } finally {
         setLoading(false);
       }
@@ -431,7 +435,7 @@ const NewsPage: React.FC = () => {
     setOverallTaskStatus(null);
     // Clear only non-pending/non-running tasks from monitor before adding new ones
     setTasksToMonitor(prevTasks => [
-        ...prevTasks.filter(t => t.status !== 'Complete' && t.status !== 'Error' && t.status !== 'Skipped'), 
+        ...prevTasks.filter(t => t.status !== 'Complete' && t.status !== 'Error' && t.status !== 'Skipped'),
         ...newTasks
     ]);
 
@@ -499,7 +503,7 @@ const NewsPage: React.FC = () => {
 
         const timeA = 'last_updated_at' in a && a.last_updated_at ? new Date(a.last_updated_at).getTime() : ('sourceId' in a ? Date.now() : 0);
         const timeB = 'last_updated_at' in b && b.last_updated_at ? new Date(b.last_updated_at).getTime() : ('sourceId' in b ? Date.now() : 0);
-        
+
         return timeB - timeA;
     });
 
@@ -602,7 +606,7 @@ const NewsPage: React.FC = () => {
 
       {error && (
         <Alert
-          message={error}
+          message={error.message || "An unexpected error occurred."}
           type="error"
           showIcon
           style={{ marginBottom: 16 }}
@@ -613,7 +617,26 @@ const NewsPage: React.FC = () => {
         <div style={{ textAlign: 'center', padding: '50px 0' }}>
           <Spin size="large" tip="Loading news..." />
         </div>
-      ) : !loading && news.length === 0 && !error ? ( // Show empty state only if not loading and no error
+      ) : error ? ( // Check for any error
+        error.type === 'notFound' ? ( // Specific Not Found UI
+          <Empty description={error.message || "Content not found."} />
+        ) : error.type === 'forbidden' ? ( // Specific Forbidden UI
+          <Alert
+            message="Access Denied"
+            description={error.message || "You do not have permission to view this content."}
+            type="error"
+            showIcon
+            style={{ marginBottom: 16 }}
+          />
+        ) : ( // Generic Error Alert
+          <Alert
+            message={error.message || "An unexpected error occurred."}
+            type="error"
+            showIcon
+            style={{ marginBottom: 16 }}
+          />
+        )
+      ) : !loading && news.length === 0 ? ( // Show empty state only if not loading, no error, and news is empty
         <Empty description="No news found. Try adjusting filters or fetching new articles." />
       ) : (
         <>
@@ -747,21 +770,21 @@ const NewsPage: React.FC = () => {
         footer={
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
             <Tooltip title="Clear Completed & Errored Tasks">
-              <Button 
+              <Button
                 onClick={() => {
-                  setTasksToMonitor(prev => prev.filter(t => 
+                  setTasksToMonitor(prev => prev.filter(t =>
                     t.status !== 'Complete' && t.status !== 'Error' && t.status !== 'Skipped'
                   ));
                   setOverallTaskStatus(null); // Clear overall status when clearing tasks
                 }}
-                disabled={!tasksToMonitor.some(t => 
+                disabled={!tasksToMonitor.some(t =>
                   t.status === 'Complete' || t.status === 'Error' || t.status === 'Skipped'
-                ) && !overallTaskStatus} 
+                ) && !overallTaskStatus}
                 type="text"
                 icon={<DeleteOutlined />}
               />
             </Tooltip>
-            
+
             {viewingDate === 'today' ? (
               <Tooltip title="View History">
                 <Button
@@ -797,8 +820,8 @@ const NewsPage: React.FC = () => {
       >
         {overallTaskStatus && viewingDate === 'today' && ( // Only show overall status for today's view if it exists
           <>
-            <div style={{ 
-              marginBottom: 16, padding: 12, borderRadius: 4, 
+            <div style={{
+              marginBottom: 16, padding: 12, borderRadius: 4,
               backgroundColor: overallTaskStatus.status === 'SUCCESS' ? '#f6ffed' : overallTaskStatus.status === 'PARTIAL_SUCCESS' ? '#fffbe6' : '#fff2f0',
               border: `1px solid ${overallTaskStatus.status === 'SUCCESS' ? '#b7eb8f' : overallTaskStatus.status === 'PARTIAL_SUCCESS' ? '#ffe58f' : '#ffa39e'}`
             }}>
@@ -820,15 +843,15 @@ const NewsPage: React.FC = () => {
 
         {viewingDate === 'history' && (
           <div style={{ marginBottom: 16 }}>
-            <DatePicker 
+            <DatePicker
               value={selectedHistoryDate}
-              onChange={handleHistoryDateChange} 
+              onChange={handleHistoryDateChange}
               style={{ width: '100%' }}
               disabledDate={(current) => current && current > dayjs().endOf('day')}
             />
           </div>
         )}
-        
+
         {(isHistoryLoading && (viewingDate === 'history' || (viewingDate === 'today' && todaysHistory.length === 0 && tasksToMonitor.length === 0))) ? (
             <div style={{ textAlign: 'center', padding: '20px 0' }}><Spin tip="Loading history..." /></div>
         ) : displayedTasks.length === 0 ? (
@@ -842,15 +865,15 @@ const NewsPage: React.FC = () => {
                 const itemsSaved = getItemsSavedThisRun(item);
                 const itemProgress = getProgress(item);
                 const isRunningOrPending = itemStatus !== 'Complete' && itemStatus !== 'Error' && itemStatus !== 'Skipped';
-                
-                const isLastRunningTask = isRunningOrPending && 
+
+                const isLastRunningTask = isRunningOrPending &&
                 (index === displayedTasks.length - 1 || !('progress' in displayedTasks[index+1] && getStatus(displayedTasks[index+1]) !== 'Complete' && getStatus(displayedTasks[index+1]) !== 'Error' && getStatus(displayedTasks[index+1]) !== 'Skipped'));
 
                 let extraContent = null;
                 const iconStyle = { fontSize: '16px', verticalAlign: 'middle' };
-                const badgeAreaStyle = { 
+                const badgeAreaStyle = {
                     minWidth: '45px', // Adjusted for potential 3-digit numbers
-                    display: 'inline-block', 
+                    display: 'inline-block',
                     textAlign: 'left' as 'left',
                     verticalAlign: 'middle',
                     marginLeft: '8px' // Space between icon and badge area
@@ -910,19 +933,19 @@ const NewsPage: React.FC = () => {
 
                 return (
                 <>
-                    <List.Item 
+                    <List.Item
                     key={`${getSourceId(item)}-${'sourceId' in item ? 'live' : 'hist'}-${index}`} // More unique key
                     extra={extraContent}
                     >
                     <List.Item.Meta
                         title={<Text ellipsis={{tooltip: getSourceName(item)}}>{getSourceName(item)}</Text>}
-                        description={ viewingDate === 'history' && 'last_updated_at' in item && item.last_updated_at ? 
-                            <Text type="secondary" style={{fontSize: '12px'}}>{dayjs(item.last_updated_at).format('HH:mm:ss')}</Text> 
+                        description={ viewingDate === 'history' && 'last_updated_at' in item && item.last_updated_at ?
+                            <Text type="secondary" style={{fontSize: '12px'}}>{dayjs(item.last_updated_at).format('HH:mm:ss')}</Text>
                             : null
                         }
                     />
                     </List.Item>
-                    
+
                     {isLastRunningTask && viewingDate === 'today' && <Divider style={{ margin: '8px 0' }} />}
                 </>
                 );

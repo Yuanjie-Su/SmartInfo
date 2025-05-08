@@ -299,6 +299,9 @@ async def create_message(
         # Service create_message doesn't need user_id directly, relies on prior check
         new_message = await chat_service.create_message(message_data)
         return new_message
+    except ValueError as ve:  # Catch ValueError specifically
+        logger.error(f"Message creation validation error: {ve}")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
     except Exception as e:
         logger.exception("Failed to create message", exc_info=True)
         raise HTTPException(

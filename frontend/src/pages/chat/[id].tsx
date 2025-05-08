@@ -20,6 +20,7 @@ import {
 } from '@ant-design/icons';
 import { Chat, Message, MessageCreate } from '@/utils/types';
 import * as chatService from '@/services/chatService';
+import { extractErrorMessage } from '@/utils/apiErrorHandler'; // Import extractErrorMessage
 import withAuth from '@/components/auth/withAuth'; // Import the HOC
 
 const { Title, Text, Paragraph } = Typography;
@@ -33,6 +34,7 @@ const ChatPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [newMessage, setNewMessage] = useState('');
+  const [error, setError] = useState<{ type: string, message: string, status?: number } | null>(null); // Updated error state type
   
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -53,15 +55,29 @@ const ChatPage: React.FC = () => {
   const loadChat = async (chatId: number) => {
     try {
       setLoading(true);
-      const chatData = await chatService.getChat(chatId);
+      setError(null); // Reset error state
+      const chatData = await chatService.getChat(chatId); // This service method now returns null for 404
+
+      if (chatData === null) { // Handle not found specifically (service returned null)
+        setChat(null); // Ensure chat state is null
+        setMessages([]); // Clear messages
+        // Set a specific notFound error type
+        setError({ type: 'notFound', message: `Chat session with ID ${chatId} not found or not owned by user.`, status: 404 });
+        return; // Stop processing
+      }
+
       setChat(chatData);
-      
-      // Load messages for this chat
+
+      // Load messages for this chat (assuming getMessages also handles errors and returns [])
       const messagesData = await chatService.getMessages(chatId);
       setMessages(messagesData);
-    } catch (error) {
-      console.error('Failed to load chat:', error);
-      message.error('Failed to load chat data');
+
+    } catch (err: any) { // Catch other errors (network, 5xx, 403, etc.)
+      console.error('Failed to load chat:', err);
+      const errorDetails = extractErrorMessage(err); // Use the structured error handler
+      setError(errorDetails); // Set the structured error state
+      setChat(null); // Ensure chat state is null on error
+      setMessages([]); // Clear messages on error
     } finally {
       setLoading(false);
     }
@@ -200,19 +216,50 @@ const ChatPage: React.FC = () => {
       </div>
     );
   }
-  
-  if (!chat) {
+
+  // Check for error state first
+  if (error) {
     return (
       <div style={{ textAlign: 'center', marginTop: 50 }}>
-        <Title level={3}>Chat not found</Title>
-        <Paragraph>The requested chat could not be found or has been deleted.</Paragraph>
-        <Button type="primary" onClick={() => router.push('/')}>
-          Return to Home
+        {error.type === 'notFound' ? (
+          <>
+            <Title level={3}>Chat Not Found</Title>
+            <Paragraph>{error.message || "The requested chat could not be found or access is denied."}</Paragraph>
+          </>
+        ) : error.type === 'forbidden' ? (
+           <>
+            <Title level={3}>Access Denied</Title>
+            <Paragraph>{error.message || "You do not have permission to view this chat."}</Paragraph>
+          </>
+        ) : (
+          <>
+            <Title level={3}>Error Loading Chat</Title>
+            <Paragraph>{error.message || "An unexpected error occurred while loading the chat."}</Paragraph>
+          </>
+        )}
+        <Button type="primary" onClick={() => router.push('/chat')}>
+          Return to Chat List
         </Button>
       </div>
     );
   }
-  
+
+  // If not loading and no error, check if chat data exists
+  if (!chat) {
+     // This case should ideally be covered by the error state now,
+     // but keep as a fallback if error state wasn't set correctly.
+     return (
+        <div style={{ textAlign: 'center', marginTop: 50 }}>
+          <Title level={3}>Chat Not Found</Title>
+          <Paragraph>The requested chat could not be found or has been deleted.</Paragraph>
+          <Button type="primary" onClick={() => router.push('/chat')}>
+            Return to Chat List
+          </Button>
+        </div>
+      );
+  }
+
+  // If not loading, no error, and chat exists, render the chat content
   return (
     <div style={{ height: 'calc(100vh - 150px)', display: 'flex', flexDirection: 'column' }}>
       <div style={{ marginBottom: 16 }}>

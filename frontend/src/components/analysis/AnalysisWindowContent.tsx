@@ -3,7 +3,7 @@ import { Typography, Spin, Alert, Space, Divider, Empty, Tooltip } from 'antd';
 import { LinkOutlined } from '@ant-design/icons';
 import { NewsItem } from '@/utils/types';
 import * as newsService from '@/services/newsService';
-import { handleApiError } from '@/utils/apiErrorHandler';
+import { handleApiError, extractErrorMessage } from '@/utils/apiErrorHandler'; // Import extractErrorMessage
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -22,25 +22,29 @@ const AnalysisWindowContent: React.FC<AnalysisWindowContentProps> = ({ newsItemI
   const [analysisContent, setAnalysisContent] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isStreaming, setIsStreaming] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
-  const [notFound, setNotFound] = useState<boolean>(false); // New state for not found
+  const [error, setError] = useState<{ type: string, message: string, status?: number } | null>(null); // Updated error state type
+  // Remove notFound state as it will be part of the error object
+  // const [notFound, setNotFound] = useState<boolean>(false);
 
   useEffect(() => {
     const fetchNewsAndAnalyze = async () => {
       setIsLoading(true);
-      setError(null);
-      setNotFound(false); // Reset not found state
+      setError(null); // Reset error state
+      // setNotFound(false); // Remove reset for notFound
       setAnalysisContent('');
 
       try {
-        const item = await newsService.getNewsById(newsItemId); // Might return null now
-        if (item === null) { // Handle not found case specifically
-          setNotFound(true);
-          setNewsItem(null);
+        const item = await newsService.getNewsById(newsItemId); // This service method now returns null for 404
+
+        if (item === null) { // Handle not found case specifically (service returned null)
+          setNewsItem(null); // Ensure newsItem state is null
+          // Set a specific notFound error type
+          setError({ type: 'notFound', message: `News item with ID ${newsItemId} not found or not owned by user.`, status: 404 });
           setIsLoading(false);
           setIsStreaming(false);
-          return;
+          return; // Stop processing
         }
+
         setNewsItem(item);
 
         if (item.analysis) {
@@ -86,21 +90,22 @@ const AnalysisWindowContent: React.FC<AnalysisWindowContentProps> = ({ newsItemI
                 setAnalysisContent('No analysis generated or content available.');
             }
 
-          } catch (streamError) {
+          } catch (streamError: any) { // Catch streaming errors
             console.error("Streaming analysis failed:", streamError);
-            handleApiError(streamError, 'Failed to stream analysis');
-            setError('Failed to stream analysis content.');
+            const errorDetails = extractErrorMessage(streamError); // Use structured error handler
+            setError(errorDetails); // Set the structured error state
             setIsLoading(false); // Ensure loading stops on error
           } finally {
             setIsStreaming(false);
           }
         }
-      } catch (fetchError) { // This catch will now only handle non-404 errors from getNewsById
+      } catch (fetchError: any) { // Catch errors from getNewsById (excluding 404 which returns null)
         console.error("Failed to fetch news item:", fetchError);
-        handleApiError(fetchError, 'Failed to load news item');
-        setError('Failed to load news item details.');
+        const errorDetails = extractErrorMessage(fetchError); // Use structured error handler
+        setError(errorDetails); // Set the structured error state
         setIsLoading(false);
         setIsStreaming(false);
+        setNewsItem(null); // Ensure newsItem is null on error
       }
     };
 
@@ -111,8 +116,11 @@ const AnalysisWindowContent: React.FC<AnalysisWindowContentProps> = ({ newsItemI
 
   // --- Render Logic ---
 
+  // --- Render Logic ---
+
   // Loading State (Initial fetch before content/analysis is known)
-  if (isLoading && !newsItem && !notFound) { // Add notFound check
+  // Check if loading AND no newsItem AND no error
+  if (isLoading && !newsItem && !error) {
     return (
       <div style={{ height: FIXED_CONTENT_HEIGHT, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
         <Spin size="large" tip="Loading news item..." />
@@ -120,32 +128,41 @@ const AnalysisWindowContent: React.FC<AnalysisWindowContentProps> = ({ newsItemI
     );
   }
 
-  // Error State (for non-404 errors)
+  // Error State (for any error, including notFound and forbidden)
   if (error) {
     return (
-      <div style={{ height: FIXED_CONTENT_HEIGHT, padding: '20px' }}>
-        <Alert message="Error" description={error} type="error" showIcon />
+      <div style={{ height: FIXED_CONTENT_HEIGHT, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+        {error.type === 'notFound' ? ( // Specific Not Found UI
+          <Empty description={error.message || "News item not found."} />
+        ) : error.type === 'forbidden' ? ( // Specific Forbidden UI
+          <Alert
+            message="Access Denied"
+            description={error.message || "You do not have permission to view this news item."}
+            type="error"
+            showIcon
+          />
+        ) : ( // Generic Error Alert
+          <Alert
+            message="Error"
+            description={error.message || "An unexpected error occurred."}
+            type="error"
+            showIcon
+          />
+        )}
       </div>
     );
   }
 
-  // Not Found State (for 404 errors handled in service)
-  if (notFound) { // Use the new notFound state
-    return (
-      <div style={{ height: FIXED_CONTENT_HEIGHT, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-        <Empty description="News item not found." />
-      </div>
-    );
+  // No News Item Found State (Should ideally be covered by error.type === 'notFound')
+  // Keep as a fallback, though error state should handle this.
+  if (!newsItem) {
+     return (
+        <div style={{ height: FIXED_CONTENT_HEIGHT, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+          <Empty description="News item not found." />
+        </div>
+      );
   }
 
-  // No News Item Found State (Should ideally not be reached if notFound is handled)
-  if (!newsItem) { // Keep as a fallback, though notFound should cover this for 404s
-    return (
-      <div style={{ height: FIXED_CONTENT_HEIGHT, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-        <Empty description="News item not found." />
-      </div>
-    );
-  }
 
   // Content Display State (Fixed Height Flex Layout)
   return (
@@ -159,8 +176,6 @@ const AnalysisWindowContent: React.FC<AnalysisWindowContentProps> = ({ newsItemI
       {/* --- Top Section (Static Height) --- */}
       <div style={{ flexShrink: 0 }}> {/* Prevent this part from shrinking */}
         <Title level={4} style={{ marginBottom: '8px', marginTop: 0 }}>{newsItem.title}</Title>
-        {/* Generated by Copilot */}
-        {/* Generated by Copilot */}
         <Space size={16} wrap style={{ marginBottom: '12px', fontSize: '12px' }}>
           {newsItem.date && <Text type="secondary">{new Date(newsItem.date).toLocaleDateString()}</Text>}
           {newsItem.source_name && (
@@ -173,7 +188,6 @@ const AnalysisWindowContent: React.FC<AnalysisWindowContentProps> = ({ newsItemI
               </a>
             </Tooltip>
            )}
-          {/* Category name display removed */}
         </Space>
         {newsItem.summary && <Paragraph type="secondary" style={{ marginBottom: '12px' }}>{newsItem.summary}</Paragraph>}
         <Divider style={{ marginTop: '0px', marginBottom: '12px' }} />
@@ -186,15 +200,15 @@ const AnalysisWindowContent: React.FC<AnalysisWindowContentProps> = ({ newsItemI
         minHeight: 0,       // Crucial: Prevents flex item overflow issues
         paddingRight: '8px', // Space for scrollbar
       }}>
-        {isLoading ? ( // Show loading spinner *inside* the scrollable area
+        {isStreaming ? ( // Show streaming indicator *inside* the scrollable area
            <div style={{ textAlign: 'center', padding: '20px 0' }}>
-              <Spin size="small" /> {isStreaming ? "Streaming analysis..." : "Loading analysis..."}
+              <Spin size="small" /> Streaming analysis...
            </div>
-        ) : analysisContent ? (
+        ) : analysisContent && analysisContent !== 'No analysis generated or content available.' ? ( // Check for actual content
           <Paragraph style={{ whiteSpace: 'pre-wrap', marginBottom: 0 }}>
             {analysisContent}
           </Paragraph>
-        ) : (
+        ) : ( // Show empty state if no analysis content after loading/streaming
           <Empty description="No analysis available or generated." image={Empty.PRESENTED_IMAGE_SIMPLE}/>
         )}
       </div>
