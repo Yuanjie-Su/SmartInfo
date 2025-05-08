@@ -13,16 +13,7 @@ import asyncpg
 from datetime import datetime, timezone
 
 from db.repositories.base_repository import BaseRepository
-from db.schema_constants import (
-    MESSAGES_TABLE,
-    MESSAGE_ID,
-    MESSAGE_CHAT_ID,
-    MESSAGE_SENDER,
-    MESSAGE_CONTENT,
-    MESSAGE_TIMESTAMP,
-    MESSAGE_SEQUENCE_NUMBER,
-    DEFAULT_SEQUENCE_NUMBER,
-)
+from db.schema_constants import Messages
 
 logger = logging.getLogger(__name__)
 
@@ -57,15 +48,15 @@ class MessageRepository(BaseRepository):
                 sequence_number = (
                     new_sequence_number
                     if new_sequence_number is not None
-                    else DEFAULT_SEQUENCE_NUMBER
+                    else Messages.DEFAULT_SEQUENCE_NUMBER
                 )
 
             current_time = datetime.now(timezone.utc)
 
             query_str = f"""
-                INSERT INTO {MESSAGES_TABLE} (
-                    {MESSAGE_CHAT_ID}, {MESSAGE_SENDER}, {MESSAGE_CONTENT},
-                    {MESSAGE_TIMESTAMP}, {MESSAGE_SEQUENCE_NUMBER}
+                INSERT INTO {Messages.TABLE_NAME} (
+                    {Messages.CHAT_ID}, {Messages.SENDER}, {Messages.CONTENT},
+                    {Messages.TIMESTAMP}, {Messages.SEQUENCE_NUMBER}
                 ) VALUES ($1, $2, $3, $4, $5)
                 RETURNING *
             """
@@ -76,7 +67,7 @@ class MessageRepository(BaseRepository):
 
             if new_message_record:
                 logger.info(
-                    f"Added message with ID {new_message_record[MESSAGE_ID.lower()]} to chat {chat_id}"
+                    f"Added message with ID {new_message_record[Messages.ID.lower()]} to chat {chat_id}"
                 )
                 return new_message_record
             else:
@@ -120,11 +111,11 @@ class MessageRepository(BaseRepository):
             param_index = 1
 
             if content is not None:
-                updates[MESSAGE_CONTENT] = f"${param_index}"
+                updates[Messages.CONTENT] = f"${param_index}"
                 params.append(content)
                 param_index += 1
             if sequence_number is not None:
-                updates[MESSAGE_SEQUENCE_NUMBER] = f"${param_index}"
+                updates[Messages.SEQUENCE_NUMBER] = f"${param_index}"
                 params.append(sequence_number)
                 param_index += 1
 
@@ -136,9 +127,9 @@ class MessageRepository(BaseRepository):
                 f"{field} = {placeholder}" for field, placeholder in updates.items()
             )
             query_str = f"""
-                UPDATE {MESSAGES_TABLE}
+                UPDATE {Messages.TABLE_NAME}
                 SET {set_clause_str}
-                WHERE {MESSAGE_ID} = ${param_index}
+                WHERE {Messages.ID} = ${param_index}
             """
             params.append(message_id)
 
@@ -170,7 +161,7 @@ class MessageRepository(BaseRepository):
             bool: True if deletion was successful, False otherwise
         """
         try:
-            query_str = f"DELETE FROM {MESSAGES_TABLE} WHERE {MESSAGE_ID} = $1"
+            query_str = f"DELETE FROM {Messages.TABLE_NAME} WHERE {Messages.ID} = $1"
 
             status = await self._execute(query_str, (message_id,))
             deleted = status is not None and status.startswith("DELETE 1")
@@ -201,7 +192,9 @@ class MessageRepository(BaseRepository):
             bool: True if deletion was successful, False otherwise
         """
         try:
-            query_str = f"DELETE FROM {MESSAGES_TABLE} WHERE {MESSAGE_CHAT_ID} = $1"
+            query_str = (
+                f"DELETE FROM {Messages.TABLE_NAME} WHERE {Messages.CHAT_ID} = $1"
+            )
 
             status = await self._execute(query_str, (chat_id,))
             logger.info(
@@ -230,9 +223,9 @@ class MessageRepository(BaseRepository):
         """
         try:
             query_str = f"""
-                SELECT {MESSAGE_ID}, {MESSAGE_CHAT_ID}, {MESSAGE_SENDER}, 
-                       {MESSAGE_CONTENT}, {MESSAGE_TIMESTAMP}, {MESSAGE_SEQUENCE_NUMBER}
-                FROM {MESSAGES_TABLE} WHERE {MESSAGE_ID} = $1
+                SELECT {Messages.ID}, {Messages.CHAT_ID}, {Messages.SENDER}, 
+                       {Messages.CONTENT}, {Messages.TIMESTAMP}, {Messages.SEQUENCE_NUMBER}
+                FROM {Messages.TABLE_NAME} WHERE {Messages.ID} = $1
             """
             return await self._fetchone(query_str, (message_id,))
 
@@ -252,11 +245,11 @@ class MessageRepository(BaseRepository):
         """
         try:
             query_str = f"""
-                SELECT {MESSAGE_ID}, {MESSAGE_CHAT_ID}, {MESSAGE_SENDER}, 
-                       {MESSAGE_CONTENT}, {MESSAGE_TIMESTAMP}, {MESSAGE_SEQUENCE_NUMBER}
-                FROM {MESSAGES_TABLE} 
-                WHERE {MESSAGE_CHAT_ID} = $1
-                ORDER BY {MESSAGE_SEQUENCE_NUMBER} ASC
+                SELECT {Messages.ID}, {Messages.CHAT_ID}, {Messages.SENDER}, 
+                       {Messages.CONTENT}, {Messages.TIMESTAMP}, {Messages.SEQUENCE_NUMBER}
+                FROM {Messages.TABLE_NAME} 
+                WHERE {Messages.CHAT_ID} = $1
+                ORDER BY {Messages.SEQUENCE_NUMBER} ASC
             """
             return await self._fetchall(query_str, (chat_id,))
 
@@ -275,9 +268,7 @@ class MessageRepository(BaseRepository):
             int: The number of messages in the chat
         """
         try:
-            query_str = (
-                f"SELECT COUNT(*) FROM {MESSAGES_TABLE} WHERE {MESSAGE_CHAT_ID} = $1"
-            )
+            query_str = f"SELECT COUNT(*) FROM {Messages.TABLE_NAME} WHERE {Messages.CHAT_ID} = $1"
             # Use _fetchone
             record = await self._fetchone(query_str, (chat_id,))
             count = record[0] if record else 0
@@ -298,17 +289,17 @@ class MessageRepository(BaseRepository):
             int: The next sequence number (max existing + 1) or DEFAULT_SEQUENCE_NUMBER if no messages exist
         """
         try:
-            query_str = f"SELECT MAX({MESSAGE_SEQUENCE_NUMBER}) FROM {MESSAGES_TABLE} WHERE {MESSAGE_CHAT_ID} = $1"
+            query_str = f"SELECT MAX({Messages.SEQUENCE_NUMBER}) FROM {Messages.TABLE_NAME} WHERE {Messages.CHAT_ID} = $1"
             # Use _fetchone
             record = await self._fetchone(query_str, (chat_id,))
             max_sequence = record[0] if record and record[0] is not None else None
 
             if max_sequence is None:
-                return DEFAULT_SEQUENCE_NUMBER
+                return Messages.DEFAULT_SEQUENCE_NUMBER
             else:
                 return (max_sequence or 0) + 1
         except Exception as e:
             logger.error(
                 f"Failed to get next sequence number for chat {chat_id}: {str(e)}"
             )
-            return DEFAULT_SEQUENCE_NUMBER
+            return Messages.DEFAULT_SEQUENCE_NUMBER

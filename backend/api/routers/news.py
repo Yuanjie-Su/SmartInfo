@@ -644,8 +644,8 @@ async def get_all_news_categories(
         # Manually construct the list of dictionaries to match NewsCategoryResponse schema
         return [
             {
-                "id": category["category_id"],
-                "name": category["category_name"],
+                "id": category["id"],
+                "name": category["name"],
                 "source_count": category["source_count"],
             }
             for category in categories_data

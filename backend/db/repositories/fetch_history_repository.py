@@ -14,20 +14,7 @@ import asyncpg
 from datetime import date, datetime, timezone
 
 from db.repositories.base_repository import BaseRepository
-from db.schema_constants import (
-    FETCH_HISTORY_TABLE,
-    FETCH_HISTORY_ID,
-    FETCH_HISTORY_USER_ID,
-    FETCH_HISTORY_SOURCE_ID,
-    FETCH_HISTORY_RECORD_DATE,
-    FETCH_HISTORY_ITEMS_SAVED_TODAY,
-    FETCH_HISTORY_LAST_UPDATED_AT,
-    FETCH_HISTORY_LAST_BATCH_TASK_GROUP_ID,
-    NEWS_SOURCE_ID,
-    NEWS_SOURCE_USER_ID,
-    NEWS_SOURCES_TABLE,  # Needed for join
-    NEWS_SOURCE_NAME,  # Needed for join
-)
+from db.schema_constants import FetchHistory, NewsSource
 
 logger = logging.getLogger(__name__)
 
@@ -65,14 +52,14 @@ class FetchHistoryRepository(BaseRepository):
         current_timestamp = datetime.now(timezone.utc)
 
         query_str = f"""
-            INSERT INTO {FETCH_HISTORY_TABLE} (
-                {FETCH_HISTORY_USER_ID}, {FETCH_HISTORY_SOURCE_ID}, {FETCH_HISTORY_RECORD_DATE},
-                {FETCH_HISTORY_ITEMS_SAVED_TODAY}, {FETCH_HISTORY_LAST_UPDATED_AT}, {FETCH_HISTORY_LAST_BATCH_TASK_GROUP_ID}
+            INSERT INTO {FetchHistory.TABLE_NAME} ( 
+                {FetchHistory.USER_ID}, {FetchHistory.SOURCE_ID}, {FetchHistory.RECORD_DATE},
+                {FetchHistory.ITEMS_SAVED_TODAY}, {FetchHistory.LAST_UPDATED_AT}, {FetchHistory.LAST_BATCH_TASK_GROUP_ID}
             ) VALUES ($1, $2, $3, $4, $5, $6)
-            ON CONFLICT ({FETCH_HISTORY_USER_ID}, {FETCH_HISTORY_SOURCE_ID}, {FETCH_HISTORY_RECORD_DATE}) DO UPDATE SET
-                {FETCH_HISTORY_ITEMS_SAVED_TODAY} = {FETCH_HISTORY_TABLE}.{FETCH_HISTORY_ITEMS_SAVED_TODAY} + EXCLUDED.{FETCH_HISTORY_ITEMS_SAVED_TODAY},
-                {FETCH_HISTORY_LAST_UPDATED_AT} = EXCLUDED.{FETCH_HISTORY_LAST_UPDATED_AT},
-                {FETCH_HISTORY_LAST_BATCH_TASK_GROUP_ID} = EXCLUDED.{FETCH_HISTORY_LAST_BATCH_TASK_GROUP_ID}
+            ON CONFLICT ({FetchHistory.USER_ID}, {FetchHistory.SOURCE_ID}, {FetchHistory.RECORD_DATE}) DO UPDATE SET
+                {FetchHistory.ITEMS_SAVED_TODAY} = {FetchHistory.TABLE_NAME}.{FetchHistory.ITEMS_SAVED_TODAY} + EXCLUDED.{FetchHistory.ITEMS_SAVED_TODAY},
+                {FetchHistory.LAST_UPDATED_AT} = EXCLUDED.{FetchHistory.LAST_UPDATED_AT},
+                {FetchHistory.LAST_BATCH_TASK_GROUP_ID} = EXCLUDED.{FetchHistory.LAST_BATCH_TASK_GROUP_ID}
         """
         params = (
             user_id,
@@ -125,16 +112,16 @@ class FetchHistoryRepository(BaseRepository):
         """
         query_str = f"""
             SELECT
-                fh.{FETCH_HISTORY_SOURCE_ID},
-                ns.{NEWS_SOURCE_NAME},
-                fh.{FETCH_HISTORY_RECORD_DATE},
-                fh.{FETCH_HISTORY_ITEMS_SAVED_TODAY},
-                fh.{FETCH_HISTORY_LAST_UPDATED_AT}
-            FROM {FETCH_HISTORY_TABLE} fh
-            JOIN {NEWS_SOURCES_TABLE} ns ON fh.{FETCH_HISTORY_SOURCE_ID} = ns.{NEWS_SOURCE_ID}
-            WHERE fh.{FETCH_HISTORY_USER_ID} = $1 AND fh.{FETCH_HISTORY_RECORD_DATE} = $2
-              AND ns.{NEWS_SOURCE_USER_ID} = $1 -- Ensure source also belongs to user
-            ORDER BY fh.{FETCH_HISTORY_LAST_UPDATED_AT} DESC
+                fh.{FetchHistory.SOURCE_ID},
+                ns.{NewsSource.NAME},
+                fh.{FetchHistory.RECORD_DATE},
+                fh.{FetchHistory.ITEMS_SAVED_TODAY},
+                fh.{FetchHistory.LAST_UPDATED_AT}
+            FROM {FetchHistory.TABLE_NAME} fh
+            JOIN {NewsSource.TABLE_NAME} ns ON fh.{FetchHistory.SOURCE_ID} = ns.{NewsSource.ID}
+            WHERE fh.{FetchHistory.USER_ID} = $1 AND fh.{FetchHistory.RECORD_DATE} = $2
+              AND ns.{NewsSource.USER_ID} = $1 -- Ensure source also belongs to user
+            ORDER BY fh.{FetchHistory.LAST_UPDATED_AT} DESC
         """
         try:
             return await self._fetchall(query_str, (user_id, record_date))
@@ -160,18 +147,18 @@ class FetchHistoryRepository(BaseRepository):
         """
         query_str = f"""
             SELECT
-                fh.{FETCH_HISTORY_SOURCE_ID},
-                ns.{NEWS_SOURCE_NAME},
-                fh.{FETCH_HISTORY_RECORD_DATE},
-                fh.{FETCH_HISTORY_ITEMS_SAVED_TODAY},
-                fh.{FETCH_HISTORY_LAST_UPDATED_AT}
-            FROM {FETCH_HISTORY_TABLE} fh
-            JOIN {NEWS_SOURCES_TABLE} ns ON fh.{FETCH_HISTORY_SOURCE_ID} = ns.{NEWS_SOURCE_ID}
-            WHERE fh.{FETCH_HISTORY_USER_ID} = $1
-              AND fh.{FETCH_HISTORY_RECORD_DATE} >= $2
-              AND fh.{FETCH_HISTORY_RECORD_DATE} <= $3
-              AND ns.{NEWS_SOURCE_USER_ID} = $1 -- Ensure source also belongs to user
-            ORDER BY fh.{FETCH_HISTORY_RECORD_DATE} DESC, fh.{FETCH_HISTORY_LAST_UPDATED_AT} DESC
+                fh.{FetchHistory.SOURCE_ID},
+                ns.{NewsSource.NAME},
+                fh.{FetchHistory.RECORD_DATE},
+                fh.{FetchHistory.ITEMS_SAVED_TODAY},
+                fh.{FetchHistory.LAST_UPDATED_AT}
+            FROM {FetchHistory.TABLE_NAME} fh
+            JOIN {NewsSource.TABLE_NAME} ns ON fh.{FetchHistory.SOURCE_ID} = ns.{NewsSource.ID}
+            WHERE fh.{FetchHistory.USER_ID} = $1
+              AND fh.{FetchHistory.RECORD_DATE} >= $2
+              AND fh.{FetchHistory.RECORD_DATE} <= $3
+              AND ns.{NewsSource.USER_ID} = $1 -- Ensure source also belongs to user
+            ORDER BY fh.{FetchHistory.RECORD_DATE} DESC, fh.{FetchHistory.LAST_UPDATED_AT} DESC
         """
         try:
             return await self._fetchall(query_str, (user_id, start_date, end_date))

@@ -19,80 +19,15 @@ from contextlib import asynccontextmanager, AbstractAsyncContextManager
 # Import using backend package path
 from config import config  # Import the config instance
 from db.schema_constants import (
-    # Table names
-    NEWS_CATEGORY_TABLE,
-    NEWS_SOURCES_TABLE,
-    NEWS_TABLE,
-    API_CONFIG_TABLE,
-    USER_PREFERENCES_TABLE,
-    CHATS_TABLE,
-    MESSAGES_TABLE,
-    USERS_TABLE,
-    FETCH_HISTORY_TABLE,  # Import new table name
-    # News category columns
-    NEWS_CATEGORY_ID,
-    NEWS_CATEGORY_NAME,
-    NEWS_CATEGORY_USER_ID,
-    # News source columns
-    NEWS_SOURCE_ID,
-    NEWS_SOURCE_NAME,
-    NEWS_SOURCE_URL,
-    NEWS_SOURCE_CATEGORY_ID,
-    NEWS_SOURCE_USER_ID,
-    # News columns
-    NEWS_ID,
-    NEWS_TITLE,
-    NEWS_URL,
-    NEWS_SOURCE_NAME,
-    NEWS_CATEGORY_NAME,
-    NEWS_SOURCE_ID,
-    NEWS_CATEGORY_ID,
-    NEWS_SUMMARY,
-    NEWS_ANALYSIS,
-    NEWS_DATE,
-    NEWS_CONTENT,
-    NEWS_USER_ID,
-    # API config columns
-    API_CONFIG_ID,
-    API_CONFIG_MODEL,
-    API_CONFIG_BASE_URL,
-    API_CONFIG_API_KEY,
-    API_CONFIG_CONTEXT,
-    API_CONFIG_MAX_OUTPUT_TOKENS,
-    API_CONFIG_DESCRIPTION,
-    API_CONFIG_CREATED_DATE,
-    API_CONFIG_MODIFIED_DATE,
-    API_CONFIG_USER_ID,
-    # User Preference columns
-    USER_PREFERENCE_KEY,
-    USER_PREFERENCE_VALUE,
-    USER_PREFERENCE_DESCRIPTION,
-    USER_PREFERENCE_USER_ID,
-    # Chat columns
-    CHAT_ID,
-    CHAT_TITLE,
-    CHAT_CREATED_AT,
-    CHAT_UPDATED_AT,
-    CHAT_USER_ID,
-    # Message columns
-    MESSAGE_ID,
-    MESSAGE_CHAT_ID,
-    MESSAGE_SENDER,
-    MESSAGE_CONTENT,
-    MESSAGE_TIMESTAMP,
-    MESSAGE_SEQUENCE_NUMBER,
-    # User columns
-    USERS_ID,
-    USERS_USERNAME,
-    USERS_HASHED_PASSWORD,
-    # Fetch History columns (NEW)
-    FETCH_HISTORY_ID,
-    FETCH_HISTORY_USER_ID,
-    FETCH_HISTORY_SOURCE_ID,
-    FETCH_HISTORY_RECORD_DATE,
-    FETCH_HISTORY_ITEMS_SAVED_TODAY,
-    FETCH_HISTORY_LAST_UPDATED_AT,
-    FETCH_HISTORY_LAST_BATCH_TASK_GROUP_ID,
+    Users,
+    NewsCategory,
+    NewsSource,
+    News,
+    ApiConfig,
+    UserPreferences,
+    Chats,
+    Messages,
+    FetchHistory,
 )
 
 logger = logging.getLogger(__name__)
@@ -220,18 +155,18 @@ class DatabaseConnectionManager:
                     # Users Table (PostgreSQL syntax) - Create users table first for foreign key references
                     await conn.execute(
                         f"""
-                        CREATE TABLE IF NOT EXISTS {USERS_TABLE} (
-                            {USERS_ID} SERIAL PRIMARY KEY,
-                            {USERS_USERNAME} TEXT NOT NULL UNIQUE,
-                            {USERS_HASHED_PASSWORD} TEXT NOT NULL
+                        CREATE TABLE IF NOT EXISTS {Users.TABLE_NAME} (
+                            {Users.ID} SERIAL PRIMARY KEY,
+                            {Users.USERNAME} TEXT NOT NULL UNIQUE,
+                            {Users.HASHED_PASSWORD} TEXT NOT NULL
                         )
                     """
                     )
-                    logger.debug(f"Table {USERS_TABLE} checked/created.")
+                    logger.debug(f"Table {Users.TABLE_NAME} checked/created.")
 
                     await conn.execute(
                         f"""
-                        CREATE INDEX IF NOT EXISTS idx_users_username ON {USERS_TABLE} ({USERS_USERNAME})
+                        CREATE INDEX IF NOT EXISTS idx_users_username ON {Users.TABLE_NAME} ({Users.USERNAME})
                     """
                     )
                     logger.debug(f"Index idx_users_username checked/created.")
@@ -239,36 +174,36 @@ class DatabaseConnectionManager:
                     # News Category Table (PostgreSQL syntax)
                     await conn.execute(
                         f"""
-                        CREATE TABLE IF NOT EXISTS {NEWS_CATEGORY_TABLE} (
-                            {NEWS_CATEGORY_ID} SERIAL PRIMARY KEY,
-                            {NEWS_CATEGORY_NAME} TEXT NOT NULL,
-                            {NEWS_CATEGORY_USER_ID} INTEGER NOT NULL REFERENCES {USERS_TABLE}({USERS_ID}) ON DELETE CASCADE,
-                            UNIQUE ({NEWS_CATEGORY_NAME}, {NEWS_CATEGORY_USER_ID})
+                        CREATE TABLE IF NOT EXISTS {NewsCategory.TABLE_NAME} (
+                            {NewsCategory.ID} SERIAL PRIMARY KEY,
+                            {NewsCategory.NAME} TEXT NOT NULL,
+                            {NewsCategory.USER_ID} INTEGER NOT NULL REFERENCES {Users.TABLE_NAME}({Users.ID}) ON DELETE CASCADE,
+                            UNIQUE ({NewsCategory.NAME}, {NewsCategory.USER_ID})
                         )
                     """
                     )
-                    logger.debug(f"Table {NEWS_CATEGORY_TABLE} checked/created.")
+                    logger.debug(f"Table {NewsCategory.TABLE_NAME} checked/created.")
 
                     # News Sources Table (PostgreSQL syntax)
                     await conn.execute(
                         f"""
-                        CREATE TABLE IF NOT EXISTS {NEWS_SOURCES_TABLE} (
-                            {NEWS_SOURCE_ID} SERIAL PRIMARY KEY,
-                            {NEWS_SOURCE_NAME} TEXT NOT NULL,
-                            {NEWS_SOURCE_URL} TEXT NOT NULL,
-                            {NEWS_SOURCE_CATEGORY_ID} INTEGER NOT NULL,
-                            {NEWS_SOURCE_USER_ID} INTEGER NOT NULL REFERENCES {USERS_TABLE}({USERS_ID}) ON DELETE CASCADE,
-                            FOREIGN KEY ({NEWS_SOURCE_CATEGORY_ID}) REFERENCES {NEWS_CATEGORY_TABLE}({NEWS_CATEGORY_ID}) ON DELETE CASCADE,
-                            UNIQUE ({NEWS_SOURCE_URL}, {NEWS_SOURCE_USER_ID}),
-                            UNIQUE ({NEWS_SOURCE_NAME}, {NEWS_SOURCE_USER_ID})
+                        CREATE TABLE IF NOT EXISTS {NewsSource.TABLE_NAME} (
+                            {NewsSource.ID} SERIAL PRIMARY KEY,
+                            {NewsSource.NAME} TEXT NOT NULL,
+                            {NewsSource.URL} TEXT NOT NULL,
+                            {NewsSource.CATEGORY_ID} INTEGER NOT NULL,
+                            {NewsSource.USER_ID} INTEGER NOT NULL REFERENCES {Users.TABLE_NAME}({Users.ID}) ON DELETE CASCADE,
+                            FOREIGN KEY ({NewsSource.CATEGORY_ID}) REFERENCES {NewsCategory.TABLE_NAME}({NewsCategory.ID}) ON DELETE CASCADE,
+                            UNIQUE ({NewsSource.URL}, {NewsSource.USER_ID}),
+                            UNIQUE ({NewsSource.NAME}, {NewsSource.USER_ID})
                         )
                     """
                     )
-                    logger.debug(f"Table {NEWS_SOURCES_TABLE} checked/created.")
+                    logger.debug(f"Table {NewsSource.TABLE_NAME} checked/created.")
 
                     await conn.execute(
                         f"""
-                        CREATE INDEX IF NOT EXISTS idx_news_sources_url ON {NEWS_SOURCES_TABLE} ({NEWS_SOURCE_URL})
+                        CREATE INDEX IF NOT EXISTS idx_news_sources_url ON {NewsSource.TABLE_NAME} ({NewsSource.URL})
                     """
                     )
                     logger.debug(f"Index idx_news_sources_url checked/created.")
@@ -276,54 +211,54 @@ class DatabaseConnectionManager:
                     # News Table (PostgreSQL syntax)
                     await conn.execute(
                         f"""
-                        CREATE TABLE IF NOT EXISTS {NEWS_TABLE} (
-                            {NEWS_ID} BIGSERIAL PRIMARY KEY,
-                            {NEWS_TITLE} TEXT NOT NULL,
-                            {NEWS_URL} TEXT NOT NULL,
-                            {NEWS_SOURCE_NAME} TEXT,
-                            {NEWS_CATEGORY_NAME} TEXT,
-                            {NEWS_SOURCE_ID} INTEGER,
-                            {NEWS_CATEGORY_ID} INTEGER,
-                            {NEWS_SUMMARY} TEXT,
-                            {NEWS_ANALYSIS} TEXT,
-                            {NEWS_DATE} TEXT,
-                            {NEWS_CONTENT} TEXT,
-                            {NEWS_USER_ID} INTEGER NOT NULL REFERENCES {USERS_TABLE}({USERS_ID}) ON DELETE CASCADE,
-                            FOREIGN KEY ({NEWS_SOURCE_ID}) REFERENCES {NEWS_SOURCES_TABLE}({NEWS_SOURCE_ID}) ON DELETE SET NULL,
-                            FOREIGN KEY ({NEWS_CATEGORY_ID}) REFERENCES {NEWS_CATEGORY_TABLE}({NEWS_CATEGORY_ID}) ON DELETE SET NULL,
-                            UNIQUE ({NEWS_URL}, {NEWS_USER_ID})
+                        CREATE TABLE IF NOT EXISTS {News.TABLE_NAME} (
+                            {News.ID} BIGSERIAL PRIMARY KEY,
+                            {News.TITLE} TEXT NOT NULL,
+                            {News.URL} TEXT NOT NULL,
+                            {News.SOURCE_NAME} TEXT,
+                            {News.CATEGORY_NAME} TEXT,
+                            {News.SOURCE_ID} INTEGER,
+                            {News.CATEGORY_ID} INTEGER,
+                            {News.SUMMARY} TEXT,
+                            {News.ANALYSIS} TEXT,
+                            {News.DATE} TEXT,
+                            {News.CONTENT} TEXT,
+                            {News.USER_ID} INTEGER NOT NULL REFERENCES {Users.TABLE_NAME}({Users.ID}) ON DELETE CASCADE,
+                            FOREIGN KEY ({News.SOURCE_ID}) REFERENCES {NewsSource.TABLE_NAME}({NewsSource.ID}) ON DELETE SET NULL,
+                            FOREIGN KEY ({News.CATEGORY_ID}) REFERENCES {NewsCategory.TABLE_NAME}({NewsCategory.ID}) ON DELETE SET NULL,
+                            UNIQUE ({News.URL}, {News.USER_ID})
                         )
                     """
                     )
-                    logger.debug(f"Table {NEWS_TABLE} checked/created.")
+                    logger.debug(f"Table {News.TABLE_NAME} checked/created.")
 
                     await conn.execute(
                         f"""
-                        CREATE INDEX IF NOT EXISTS idx_news_url ON {NEWS_TABLE} ({NEWS_URL})
+                        CREATE INDEX IF NOT EXISTS idx_news_url ON {News.TABLE_NAME} ({News.URL})
                     """
                     )
                     logger.debug(f"Index idx_news_url checked/created.")
                     await conn.execute(
                         f"""
-                        CREATE INDEX IF NOT EXISTS idx_news_date ON {NEWS_TABLE} ({NEWS_DATE} DESC)
+                        CREATE INDEX IF NOT EXISTS idx_news_date ON {News.TABLE_NAME} ({News.DATE} DESC)
                     """
                     )
                     logger.debug(f"Index idx_news_date checked/created.")
                     await conn.execute(
                         f"""
-                        CREATE INDEX IF NOT EXISTS idx_news_category_id ON {NEWS_TABLE} ({NEWS_CATEGORY_ID})
+                        CREATE INDEX IF NOT EXISTS idx_news_category_id ON {News.TABLE_NAME} ({News.CATEGORY_ID})
                     """
                     )
                     logger.debug(f"Index idx_news_category_id checked/created.")
                     await conn.execute(
                         f"""
-                        CREATE INDEX IF NOT EXISTS idx_news_source_id ON {NEWS_TABLE} ({NEWS_SOURCE_ID})
+                        CREATE INDEX IF NOT EXISTS idx_news_source_id ON {News.TABLE_NAME} ({News.SOURCE_ID})
                     """
                     )
                     logger.debug(f"Index idx_news_source_id checked/created.")
                     await conn.execute(
                         f"""
-                        CREATE INDEX IF NOT EXISTS idx_news_user_id ON {NEWS_TABLE} ({NEWS_USER_ID})
+                        CREATE INDEX IF NOT EXISTS idx_news_user_id ON {News.TABLE_NAME} ({News.USER_ID})
                     """
                     )
                     logger.debug(f"Index idx_news_user_id checked/created.")
@@ -331,104 +266,134 @@ class DatabaseConnectionManager:
                     # API Config Table (PostgreSQL syntax)
                     await conn.execute(
                         f"""
-                        CREATE TABLE IF NOT EXISTS {API_CONFIG_TABLE} (
-                            {API_CONFIG_ID} SERIAL PRIMARY KEY,
-                            {API_CONFIG_MODEL} TEXT NOT NULL,
-                            {API_CONFIG_BASE_URL} TEXT NOT NULL,
-                            {API_CONFIG_API_KEY} TEXT NOT NULL,
-                            {API_CONFIG_CONTEXT} INTEGER,
-                            {API_CONFIG_MAX_OUTPUT_TOKENS} INTEGER,
-                            {API_CONFIG_DESCRIPTION} TEXT,
-                            {API_CONFIG_USER_ID} INTEGER NOT NULL REFERENCES {USERS_TABLE}({USERS_ID}) ON DELETE CASCADE,
-                            {API_CONFIG_CREATED_DATE} TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                            {API_CONFIG_MODIFIED_DATE} TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                        CREATE TABLE IF NOT EXISTS {ApiConfig.TABLE_NAME} (
+                            {ApiConfig.ID} SERIAL PRIMARY KEY,
+                            {ApiConfig.MODEL} TEXT NOT NULL,
+                            {ApiConfig.BASE_URL} TEXT NOT NULL,
+                            {ApiConfig.API_KEY} TEXT NOT NULL,
+                            {ApiConfig.CONTEXT} INTEGER,
+                            {ApiConfig.MAX_OUTPUT_TOKENS} INTEGER,
+                            {ApiConfig.DESCRIPTION} TEXT,
+                            {ApiConfig.USER_ID} INTEGER NOT NULL REFERENCES {Users.TABLE_NAME}({Users.ID}) ON DELETE CASCADE,
+                            {ApiConfig.CREATED_DATE} TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                            {ApiConfig.MODIFIED_DATE} TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                         )
                     """
                     )
-                    logger.debug(f"Table {API_CONFIG_TABLE} checked/created.")
+                    logger.debug(f"Table {ApiConfig.TABLE_NAME} checked/created.")
 
                     # User Preferences Table (PostgreSQL syntax)
                     await conn.execute(
                         f"""
-                        CREATE TABLE IF NOT EXISTS {USER_PREFERENCES_TABLE} (
-                            {USER_PREFERENCE_KEY} TEXT NOT NULL,
-                            {USER_PREFERENCE_VALUE} TEXT,
-                            {USER_PREFERENCE_DESCRIPTION} TEXT,
-                            {USER_PREFERENCE_USER_ID} INTEGER NOT NULL REFERENCES {USERS_TABLE}({USERS_ID}) ON DELETE CASCADE,
-                            PRIMARY KEY ({USER_PREFERENCE_KEY}, {USER_PREFERENCE_USER_ID})
+                        CREATE TABLE IF NOT EXISTS {UserPreferences.TABLE_NAME} (
+                            {UserPreferences.KEY} TEXT NOT NULL,
+                            {UserPreferences.VALUE} TEXT,
+                            {UserPreferences.DESCRIPTION} TEXT,
+                            {UserPreferences.USER_ID} INTEGER NOT NULL REFERENCES {Users.TABLE_NAME}({Users.ID}) ON DELETE CASCADE,
+                            PRIMARY KEY ({UserPreferences.KEY}, {UserPreferences.USER_ID})
                         )
                     """
                     )
-                    logger.debug(f"Table {USER_PREFERENCES_TABLE} checked/created.")
+                    logger.debug(f"Table {UserPreferences.TABLE_NAME} checked/created.")
 
                     # Chats Table (PostgreSQL syntax)
                     await conn.execute(
                         f"""
-                        CREATE TABLE IF NOT EXISTS {CHATS_TABLE} (
-                            {CHAT_ID} BIGSERIAL PRIMARY KEY,
-                            {CHAT_TITLE} TEXT NOT NULL,
-                            {CHAT_USER_ID} INTEGER NOT NULL REFERENCES {USERS_TABLE}({USERS_ID}) ON DELETE CASCADE,
-                            {CHAT_CREATED_AT} TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                            {CHAT_UPDATED_AT} TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+                        CREATE TABLE IF NOT EXISTS {Chats.TABLE_NAME} (
+                            {Chats.ID} BIGSERIAL PRIMARY KEY,
+                            {Chats.TITLE} TEXT NOT NULL,
+                            {Chats.USER_ID} INTEGER NOT NULL REFERENCES {Users.TABLE_NAME}({Users.ID}) ON DELETE CASCADE,
+                            {Chats.CREATED_AT} TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                            {Chats.UPDATED_AT} TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
                         )
                     """
                     )
-                    logger.debug(f"Table {CHATS_TABLE} checked/created.")
+                    logger.debug(f"Table {Chats.TABLE_NAME} checked/created.")
 
                     # Messages Table (PostgreSQL syntax)
                     await conn.execute(
                         f"""
-                        CREATE TABLE IF NOT EXISTS {MESSAGES_TABLE} (
-                            {MESSAGE_ID} BIGSERIAL PRIMARY KEY,
-                            {MESSAGE_CHAT_ID} BIGINT NOT NULL,
-                            {MESSAGE_SENDER} TEXT NOT NULL,
-                            {MESSAGE_CONTENT} TEXT,
-                            {MESSAGE_TIMESTAMP} TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                            {MESSAGE_SEQUENCE_NUMBER} INTEGER,
-                            FOREIGN KEY ({MESSAGE_CHAT_ID}) REFERENCES {CHATS_TABLE}({CHAT_ID}) ON DELETE CASCADE
+                        CREATE TABLE IF NOT EXISTS {Messages.TABLE_NAME} (
+                            {Messages.ID} BIGSERIAL PRIMARY KEY,
+                            {Messages.CHAT_ID} BIGINT NOT NULL,
+                            {Messages.SENDER} TEXT NOT NULL,
+                            {Messages.CONTENT} TEXT,
+                            {Messages.TIMESTAMP} TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                            {Messages.SEQUENCE_NUMBER} INTEGER,
+                            FOREIGN KEY ({Messages.CHAT_ID}) REFERENCES {Chats.TABLE_NAME}({Chats.ID}) ON DELETE CASCADE
                         )
                     """
                     )
-                    logger.debug(f"Table {MESSAGES_TABLE} checked/created.")
+                    logger.debug(f"Table {Messages.TABLE_NAME} checked/created.")
 
                     await conn.execute(
                         f"""
-                        CREATE INDEX IF NOT EXISTS idx_messages_chat_id_sequence ON {MESSAGES_TABLE} ({MESSAGE_CHAT_ID}, {MESSAGE_SEQUENCE_NUMBER})
+                        CREATE INDEX IF NOT EXISTS idx_messages_chat_id_sequence ON {Messages.TABLE_NAME} ({Messages.CHAT_ID}, {Messages.SEQUENCE_NUMBER})
                     """
                     )
                     logger.debug(
                         f"Index idx_messages_chat_id_sequence checked/created."
                     )
 
-                    # Fetch History Table (NEW)
+                    # Fetch History Table (PostgreSQL syntax)
                     await conn.execute(
                         f"""
-                        CREATE TABLE IF NOT EXISTS {FETCH_HISTORY_TABLE} (
-                            {FETCH_HISTORY_ID} BIGSERIAL PRIMARY KEY,
-                            {FETCH_HISTORY_USER_ID} INTEGER NOT NULL REFERENCES {USERS_TABLE}({USERS_ID}) ON DELETE CASCADE,
-                            {FETCH_HISTORY_SOURCE_ID} INTEGER NOT NULL REFERENCES {NEWS_SOURCES_TABLE}({NEWS_SOURCE_ID}) ON DELETE CASCADE,
-                            {FETCH_HISTORY_RECORD_DATE} DATE NOT NULL,
-                            {FETCH_HISTORY_ITEMS_SAVED_TODAY} INTEGER NOT NULL DEFAULT 0,
-                            {FETCH_HISTORY_LAST_UPDATED_AT} TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                            {FETCH_HISTORY_LAST_BATCH_TASK_GROUP_ID} TEXT,
-                            UNIQUE ({FETCH_HISTORY_USER_ID}, {FETCH_HISTORY_SOURCE_ID}, {FETCH_HISTORY_RECORD_DATE})
+                        CREATE TABLE IF NOT EXISTS {FetchHistory.TABLE_NAME} (
+                            {FetchHistory.ID} BIGSERIAL PRIMARY KEY,
+                            {FetchHistory.USER_ID} INTEGER NOT NULL REFERENCES {Users.TABLE_NAME}({Users.ID}) ON DELETE CASCADE,
+                            {FetchHistory.SOURCE_ID} INTEGER NOT NULL REFERENCES {NewsSource.TABLE_NAME}({NewsSource.ID}) ON DELETE CASCADE,
+                            {FetchHistory.RECORD_DATE} DATE NOT NULL,
+                            {FetchHistory.ITEMS_SAVED_TODAY} INTEGER DEFAULT 0,
+                            {FetchHistory.LAST_UPDATED_AT} TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                            {FetchHistory.LAST_BATCH_TASK_GROUP_ID} TEXT,
+                            UNIQUE ({FetchHistory.SOURCE_ID}, {FetchHistory.USER_ID}, {FetchHistory.RECORD_DATE})
                         )
-                        """
+                    """
                     )
-                    logger.debug(f"Table {FETCH_HISTORY_TABLE} checked/created.")
+                    logger.debug(f"Table {FetchHistory.TABLE_NAME} checked/created.")
 
-                    # Add index for efficient date lookup
+                    # Additional indexes for Fetch History table
                     await conn.execute(
                         f"""
-                        CREATE INDEX IF NOT EXISTS idx_fetch_history_user_date ON {FETCH_HISTORY_TABLE} ({FETCH_HISTORY_USER_ID}, {FETCH_HISTORY_RECORD_DATE} DESC)
-                        """
+                        CREATE INDEX IF NOT EXISTS idx_fetch_history_user_id ON {FetchHistory.TABLE_NAME} ({FetchHistory.USER_ID})
+                    """
                     )
-                    logger.debug(f"Index idx_fetch_history_user_date checked/created.")
+                    logger.debug(f"Index idx_fetch_history_user_id checked/created.")
+                    await conn.execute(
+                        f"""
+                        CREATE INDEX IF NOT EXISTS idx_fetch_history_source_id ON {FetchHistory.TABLE_NAME} ({FetchHistory.SOURCE_ID})
+                    """
+                    )
+                    logger.debug(f"Index idx_fetch_history_source_id checked/created.")
+                    await conn.execute(
+                        f"""
+                        CREATE INDEX IF NOT EXISTS idx_fetch_history_date ON {FetchHistory.TABLE_NAME} ({FetchHistory.RECORD_DATE})
+                    """
+                    )
+                    logger.debug(f"Index idx_fetch_history_date checked/created.")
 
-                    logger.info("Database schema verification/creation complete.")
+                    # Search indexes for content fields
+                    try:
+                        await conn.execute(
+                            f"""
+                            CREATE INDEX IF NOT EXISTS idx_news_content_search ON {News.TABLE_NAME} (({News.CONTENT})) WHERE {News.CONTENT} IS NOT NULL
+                        """
+                        )
+                        logger.debug(f"Index idx_news_content_search checked/created.")
+                    except asyncpg.PostgresError as e:
+                        logger.warning(
+                            f"Could not create full-text search index idx_news_content_search: {e}"
+                        )
+
+                    logger.info(
+                        "All database tables and indexes verified/created successfully."
+                    )
 
                 except asyncpg.PostgresError as e:
-                    logger.error(f"Schema creation failed: {str(e)}", exc_info=True)
+                    logger.error(f"Error creating schema: {e}")
+                    raise
+                except Exception as e:
+                    logger.error(f"Unexpected error in schema creation: {e}")
                     raise
 
         if isinstance(conn_or_pool, asyncpg.Pool):

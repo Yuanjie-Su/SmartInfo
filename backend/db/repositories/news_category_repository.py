@@ -9,20 +9,7 @@ import logging
 from typing import List, Optional, Tuple, Dict, Any
 import asyncpg
 
-from db.schema_constants import (
-    NEWS_CATEGORY_TABLE,
-    NEWS_SOURCE_ID,
-    NEWS_SOURCES_TABLE,
-    NEWS_CATEGORY_ID,
-    NEWS_CATEGORY_NAME,
-    NEWS_SOURCE_CATEGORY_ID,
-    # NEWS_CATEGORY_USER_ID, # Conceptually adding user_id
-)
-
-# Note: Assuming 'user_id' column exists conceptually in NEWS_CATEGORY_TABLE and NEWS_SOURCES_TABLE
-NEWS_CATEGORY_USER_ID = "user_id"
-NEWS_SOURCE_USER_ID = "user_id"  # Needed for join in get_with_source_count
-
+from db.schema_constants import NewsCategory, NewsSource
 from db.repositories.base_repository import BaseRepository
 
 logger = logging.getLogger(__name__)
@@ -34,11 +21,11 @@ class NewsCategoryRepository(BaseRepository):
     async def add(self, name: str, user_id: int) -> Optional[int]:
         """Adds a new category for a user. Returns the new ID or existing ID if conflict."""
         query_insert = f"""
-            INSERT INTO {NEWS_CATEGORY_TABLE} ({NEWS_CATEGORY_NAME}, {NEWS_CATEGORY_USER_ID}) VALUES ($1, $2)
-            ON CONFLICT ({NEWS_CATEGORY_NAME}, {NEWS_CATEGORY_USER_ID}) DO NOTHING
-            RETURNING {NEWS_CATEGORY_ID}
+            INSERT INTO {NewsCategory.TABLE_NAME} ({NewsCategory.NAME}, {NewsCategory.USER_ID}) VALUES ($1, $2)
+            ON CONFLICT ({NewsCategory.NAME}, {NewsCategory.USER_ID}) DO NOTHING
+            RETURNING {NewsCategory.ID}
         """
-        query_select = f"SELECT {NEWS_CATEGORY_ID} FROM {NEWS_CATEGORY_TABLE} WHERE {NEWS_CATEGORY_NAME} = $1 AND {NEWS_CATEGORY_USER_ID} = $2"
+        query_select = f"SELECT {NewsCategory.ID} FROM {NewsCategory.TABLE_NAME} WHERE {NewsCategory.NAME} = $1 AND {NewsCategory.USER_ID} = $2"
         params_insert = (name, user_id)
         params_select = (name, user_id)
 
@@ -81,7 +68,7 @@ class NewsCategoryRepository(BaseRepository):
         self, category_id: int, user_id: int
     ) -> Optional[asyncpg.Record]:
         """Gets a category by its ID for a specific user."""
-        query_str = f"SELECT {NEWS_CATEGORY_ID}, {NEWS_CATEGORY_NAME}, {NEWS_CATEGORY_USER_ID} FROM {NEWS_CATEGORY_TABLE} WHERE {NEWS_CATEGORY_ID} = $1 AND {NEWS_CATEGORY_USER_ID} = $2"
+        query_str = f"SELECT {NewsCategory.ID}, {NewsCategory.NAME}, {NewsCategory.USER_ID} FROM {NewsCategory.TABLE_NAME} WHERE {NewsCategory.ID} = $1 AND {NewsCategory.USER_ID} = $2"
         try:
             return await self._fetchone(query_str, (category_id, user_id))
         except Exception as e:
@@ -92,7 +79,7 @@ class NewsCategoryRepository(BaseRepository):
 
     async def get_by_name(self, name: str, user_id: int) -> Optional[asyncpg.Record]:
         """Gets a category by its name for a specific user."""
-        query_str = f"SELECT {NEWS_CATEGORY_ID}, {NEWS_CATEGORY_NAME}, {NEWS_CATEGORY_USER_ID} FROM {NEWS_CATEGORY_TABLE} WHERE {NEWS_CATEGORY_NAME} = $1 AND {NEWS_CATEGORY_USER_ID} = $2"
+        query_str = f"SELECT {NewsCategory.ID}, {NewsCategory.NAME}, {NewsCategory.USER_ID} FROM {NewsCategory.TABLE_NAME} WHERE {NewsCategory.NAME} = $1 AND {NewsCategory.USER_ID} = $2"
         try:
             return await self._fetchone(query_str, (name, user_id))
         except Exception as e:
@@ -103,7 +90,7 @@ class NewsCategoryRepository(BaseRepository):
 
     async def exists_by_name(self, name: str, user_id: int) -> bool:
         """Checks if a category with the given name exists for a specific user."""
-        query_str = f"SELECT 1 FROM {NEWS_CATEGORY_TABLE} WHERE {NEWS_CATEGORY_NAME} = $1 AND {NEWS_CATEGORY_USER_ID} = $2 LIMIT 1"
+        query_str = f"SELECT 1 FROM {NewsCategory.TABLE_NAME} WHERE {NewsCategory.NAME} = $1 AND {NewsCategory.USER_ID} = $2 LIMIT 1"
         try:
             record = await self._fetchone(query_str, (name, user_id))
             return record is not None
@@ -115,7 +102,7 @@ class NewsCategoryRepository(BaseRepository):
 
     async def get_all(self, user_id: int) -> List[asyncpg.Record]:
         """Gets all categories for a specific user."""
-        query_str = f"SELECT {NEWS_CATEGORY_ID}, {NEWS_CATEGORY_NAME}, {NEWS_CATEGORY_USER_ID} FROM {NEWS_CATEGORY_TABLE} WHERE {NEWS_CATEGORY_USER_ID} = $1 ORDER BY {NEWS_CATEGORY_NAME}"
+        query_str = f"SELECT {NewsCategory.ID}, {NewsCategory.NAME}, {NewsCategory.USER_ID} FROM {NewsCategory.TABLE_NAME} WHERE {NewsCategory.USER_ID} = $1 ORDER BY {NewsCategory.NAME}"
         try:
             return await self._fetchall(query_str, (user_id,))
         except Exception as e:
@@ -125,12 +112,12 @@ class NewsCategoryRepository(BaseRepository):
     async def get_with_source_count(self, user_id: int) -> List[asyncpg.Record]:
         """Gets all categories for a user with count of sources (also belonging to the user) for each category."""
         query_str = f"""
-            SELECT c.{NEWS_CATEGORY_ID}, c.{NEWS_CATEGORY_NAME}, COUNT(s.{NEWS_SOURCE_ID}) as source_count
-            FROM {NEWS_CATEGORY_TABLE} c
-            LEFT JOIN {NEWS_SOURCES_TABLE} s ON c.{NEWS_CATEGORY_ID} = s.{NEWS_SOURCE_CATEGORY_ID} AND s.{NEWS_SOURCE_USER_ID} = c.{NEWS_CATEGORY_USER_ID}
-            WHERE c.{NEWS_CATEGORY_USER_ID} = $1
-            GROUP BY c.{NEWS_CATEGORY_ID}, c.{NEWS_CATEGORY_NAME}
-            ORDER BY c.{NEWS_CATEGORY_NAME}
+            SELECT c.{NewsCategory.ID}, c.{NewsCategory.NAME}, COUNT(s.{NewsSource.ID}) as source_count
+            FROM {NewsCategory.TABLE_NAME} c
+            LEFT JOIN {NewsSource.TABLE_NAME} s ON c.{NewsCategory.ID} = s.{NewsSource.CATEGORY_ID} AND s.{NewsSource.USER_ID} = c.{NewsCategory.USER_ID}
+            WHERE c.{NewsCategory.USER_ID} = $1
+            GROUP BY c.{NewsCategory.ID}, c.{NewsCategory.NAME}
+            ORDER BY c.{NewsCategory.NAME}
         """
         try:
             return await self._fetchall(query_str, (user_id,))
@@ -142,7 +129,7 @@ class NewsCategoryRepository(BaseRepository):
 
     async def update(self, category_id: int, user_id: int, name: str) -> bool:
         """Updates a category by ID for a specific user."""
-        query_str = f"UPDATE {NEWS_CATEGORY_TABLE} SET {NEWS_CATEGORY_NAME} = $1 WHERE {NEWS_CATEGORY_ID} = $2 AND {NEWS_CATEGORY_USER_ID} = $3"
+        query_str = f"UPDATE {NewsCategory.TABLE_NAME} SET {NewsCategory.NAME} = $1 WHERE {NewsCategory.ID} = $2 AND {NewsCategory.USER_ID} = $3"
         try:
             status = await self._execute(query_str, (name, category_id, user_id))
             updated = status is not None and status.startswith("UPDATE 1")
@@ -172,7 +159,7 @@ class NewsCategoryRepository(BaseRepository):
         # Note: Consider implications if news sources depend on this category.
         # The DB schema should define ON DELETE behavior (e.g., RESTRICT, CASCADE, SET NULL).
         # Assuming RESTRICT or similar, this might fail if sources exist.
-        query_str = f"DELETE FROM {NEWS_CATEGORY_TABLE} WHERE {NEWS_CATEGORY_ID} = $1 AND {NEWS_CATEGORY_USER_ID} = $2"
+        query_str = f"DELETE FROM {NewsCategory.TABLE_NAME} WHERE {NewsCategory.ID} = $1 AND {NewsCategory.USER_ID} = $2"
         try:
             status = await self._execute(query_str, (category_id, user_id))
             deleted = status is not None and status.startswith("DELETE 1")

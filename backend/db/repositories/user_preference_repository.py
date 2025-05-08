@@ -10,13 +10,7 @@ import logging
 from typing import List, Optional, Tuple, Dict, Any
 import asyncpg
 
-from db.schema_constants import (
-    USER_PREFERENCES_TABLE,
-    USER_PREFERENCE_KEY,
-    USER_PREFERENCE_VALUE,
-    USER_PREFERENCE_DESCRIPTION,
-    USER_PREFERENCE_USER_ID,  # Import user_id constant
-)
+from db.schema_constants import UserPreferences
 from db.repositories.base_repository import BaseRepository
 
 logger = logging.getLogger(__name__)
@@ -45,11 +39,11 @@ class UserPreferenceRepository(BaseRepository):
             True if successful, False otherwise.
         """
         query_str = f"""
-            INSERT INTO {USER_PREFERENCES_TABLE} ({USER_PREFERENCE_KEY}, {USER_PREFERENCE_VALUE}, {USER_PREFERENCE_DESCRIPTION}, {USER_PREFERENCE_USER_ID})
+            INSERT INTO {UserPreferences.TABLE_NAME} ({UserPreferences.KEY}, {UserPreferences.VALUE}, {UserPreferences.DESCRIPTION}, {UserPreferences.USER_ID})
             VALUES ($1, $2, $3, $4)
-            ON CONFLICT ({USER_PREFERENCE_KEY}, {USER_PREFERENCE_USER_ID}) DO UPDATE SET
-                {USER_PREFERENCE_VALUE} = EXCLUDED.{USER_PREFERENCE_VALUE},
-                {USER_PREFERENCE_DESCRIPTION} = EXCLUDED.{USER_PREFERENCE_DESCRIPTION}
+            ON CONFLICT ({UserPreferences.KEY}, {UserPreferences.USER_ID}) DO UPDATE SET
+                {UserPreferences.VALUE} = EXCLUDED.{UserPreferences.VALUE},
+                {UserPreferences.DESCRIPTION} = EXCLUDED.{UserPreferences.DESCRIPTION}
         """
         params = (config_key, config_value, description, user_id)
 
@@ -91,8 +85,8 @@ class UserPreferenceRepository(BaseRepository):
             asyncpg.Record of (config_key, config_value, description, user_id) or None if not found.
         """
         query_str = f"""
-            SELECT {USER_PREFERENCE_KEY}, {USER_PREFERENCE_VALUE}, {USER_PREFERENCE_DESCRIPTION}, {USER_PREFERENCE_USER_ID}
-            FROM {USER_PREFERENCES_TABLE} WHERE {USER_PREFERENCE_KEY} = $1 AND {USER_PREFERENCE_USER_ID} = $2
+            SELECT {UserPreferences.KEY}, {UserPreferences.VALUE}, {UserPreferences.DESCRIPTION}, {UserPreferences.USER_ID}
+            FROM {UserPreferences.TABLE_NAME} WHERE {UserPreferences.KEY} = $1 AND {UserPreferences.USER_ID} = $2
         """
         try:
             return await self._fetchone(query_str, (config_key, user_id))
@@ -112,12 +106,12 @@ class UserPreferenceRepository(BaseRepository):
         Returns:
             Dictionary mapping config_keys to config_values for the user.
         """
-        query_str = f"SELECT {USER_PREFERENCE_KEY}, {USER_PREFERENCE_VALUE} FROM {USER_PREFERENCES_TABLE} WHERE {USER_PREFERENCE_USER_ID} = $1"
+        query_str = f"SELECT {UserPreferences.KEY}, {UserPreferences.VALUE} FROM {UserPreferences.TABLE_NAME} WHERE {UserPreferences.USER_ID} = $1"
         try:
             records = await self._fetchall(query_str, (user_id,))
             return {
-                record[USER_PREFERENCE_KEY.lower()]: record[
-                    USER_PREFERENCE_VALUE.lower()
+                record[UserPreferences.KEY.lower()]: record[
+                    UserPreferences.VALUE.lower()
                 ]
                 for record in records
             }
@@ -136,10 +130,10 @@ class UserPreferenceRepository(BaseRepository):
             List of asyncpg.Record objects with config_key, config_value, description, user_id.
         """
         query_str = f"""
-            SELECT {USER_PREFERENCE_KEY}, {USER_PREFERENCE_VALUE}, {USER_PREFERENCE_DESCRIPTION}, {USER_PREFERENCE_USER_ID}
-            FROM {USER_PREFERENCES_TABLE}
-            WHERE {USER_PREFERENCE_USER_ID} = $1
-            ORDER BY {USER_PREFERENCE_KEY}
+            SELECT {UserPreferences.KEY}, {UserPreferences.VALUE}, {UserPreferences.DESCRIPTION}, {UserPreferences.USER_ID}
+            FROM {UserPreferences.TABLE_NAME}
+            WHERE {UserPreferences.USER_ID} = $1
+            ORDER BY {UserPreferences.KEY}
         """
         try:
             return await self._fetchall(query_str, (user_id,))
@@ -160,7 +154,7 @@ class UserPreferenceRepository(BaseRepository):
         Returns:
             True if deleted, False otherwise.
         """
-        query_str = f"DELETE FROM {USER_PREFERENCES_TABLE} WHERE {USER_PREFERENCE_KEY} = $1 AND {USER_PREFERENCE_USER_ID} = $2"
+        query_str = f"DELETE FROM {UserPreferences.TABLE_NAME} WHERE {UserPreferences.KEY} = $1 AND {UserPreferences.USER_ID} = $2"
         try:
             status = await self._execute(query_str, (config_key, user_id))
             deleted = status is not None and status.startswith("DELETE 1")
@@ -194,9 +188,7 @@ class UserPreferenceRepository(BaseRepository):
         Returns:
             True if successful, False otherwise.
         """
-        query_str = (
-            f"DELETE FROM {USER_PREFERENCES_TABLE} WHERE {USER_PREFERENCE_USER_ID} = $1"
-        )
+        query_str = f"DELETE FROM {UserPreferences.TABLE_NAME} WHERE {UserPreferences.USER_ID} = $1"
         try:
             status = await self._execute(query_str, (user_id,))
             logger.warning(

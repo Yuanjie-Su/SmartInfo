@@ -9,17 +9,8 @@ import logging
 from typing import List, Optional, Tuple, Dict, Any
 import asyncpg
 
-from db.schema_constants import (
-    NEWS_SOURCES_TABLE,
-    NEWS_CATEGORY_TABLE,
-    NEWS_SOURCE_ID,
-    NEWS_SOURCE_NAME,
-    NEWS_SOURCE_URL,
-    NEWS_SOURCE_CATEGORY_ID,
-    NEWS_CATEGORY_ID,
-    NEWS_CATEGORY_NAME,
-    # NEWS_SOURCE_USER_ID, # Conceptually adding user_id
-)
+from db.schema_constants import NewsSource
+from models.schemas.news import NewsCategory
 
 # Note: Assuming 'user_id' column exists conceptually in NEWS_SOURCES_TABLE
 NEWS_SOURCE_USER_ID = "user_id"
@@ -37,12 +28,12 @@ class NewsSourceRepository(BaseRepository):
     ) -> Optional[int]:
         """Adds a new source for a user. Returns the new ID or existing ID if conflict."""
         query_insert = f"""
-            INSERT INTO {NEWS_SOURCES_TABLE} ({NEWS_SOURCE_NAME}, {NEWS_SOURCE_URL}, {NEWS_SOURCE_CATEGORY_ID}, {NEWS_SOURCE_USER_ID})
+            INSERT INTO {NewsSource.TABLE_NAME} ({NewsSource.NAME}, {NewsSource.URL}, {NewsSource.CATEGORY_ID}, {NewsSource.USER_ID})
             VALUES ($1, $2, $3, $4)
-            ON CONFLICT ({NEWS_SOURCE_URL}, {NEWS_SOURCE_USER_ID}) DO NOTHING
-            RETURNING {NEWS_SOURCE_ID}
+            ON CONFLICT ({NewsSource.URL}, {NewsSource.USER_ID}) DO NOTHING
+            RETURNING {NewsSource.ID}
         """
-        query_select = f"SELECT {NEWS_SOURCE_ID} FROM {NEWS_SOURCES_TABLE} WHERE {NEWS_SOURCE_URL} = $1 AND {NEWS_SOURCE_USER_ID} = $2"
+        query_select = f"SELECT {NewsSource.ID} FROM {NewsSource.TABLE_NAME} WHERE {NewsSource.URL} = $1 AND {NewsSource.USER_ID} = $2"
         params_insert = (name, url, category_id, user_id)
         params_select = (url, user_id)
 
@@ -93,9 +84,9 @@ class NewsSourceRepository(BaseRepository):
     ) -> bool:
         """Updates an existing source belonging to a user."""
         query_str = f"""
-            UPDATE {NEWS_SOURCES_TABLE}
-            SET {NEWS_SOURCE_NAME} = $1, {NEWS_SOURCE_URL} = $2, {NEWS_SOURCE_CATEGORY_ID} = $3
-            WHERE {NEWS_SOURCE_ID} = $4 AND {NEWS_SOURCE_USER_ID} = $5
+            UPDATE {NewsSource.TABLE_NAME}
+            SET {NewsSource.NAME} = $1, {NewsSource.URL} = $2, {NewsSource.CATEGORY_ID} = $3
+            WHERE {NewsSource.ID} = $4 AND {NewsSource.USER_ID} = $5
         """
         params = (name, url, category_id, source_id, user_id)
 
@@ -125,7 +116,7 @@ class NewsSourceRepository(BaseRepository):
 
     async def delete(self, source_id: int, user_id: int) -> bool:
         """Deletes a source belonging to a user."""
-        query_str = f"DELETE FROM {NEWS_SOURCES_TABLE} WHERE {NEWS_SOURCE_ID} = $1 AND {NEWS_SOURCE_USER_ID} = $2"
+        query_str = f"DELETE FROM {NewsSource.TABLE_NAME} WHERE {NewsSource.ID} = $1 AND {NewsSource.USER_ID} = $2"
 
         try:
             status = await self._execute(query_str, (source_id, user_id))
@@ -151,9 +142,9 @@ class NewsSourceRepository(BaseRepository):
     async def get_by_id(self, source_id: int, user_id: int) -> Optional[asyncpg.Record]:
         """Gets a source by its ID for a specific user."""
         query_str = f"""
-            SELECT {NEWS_SOURCE_ID}, {NEWS_SOURCE_NAME}, {NEWS_SOURCE_URL}, {NEWS_SOURCE_CATEGORY_ID}, {NEWS_SOURCE_USER_ID}
-            FROM {NEWS_SOURCES_TABLE}
-            WHERE {NEWS_SOURCE_ID} = $1 AND {NEWS_SOURCE_USER_ID} = $2
+            SELECT {NewsSource.ID}, {NewsSource.NAME}, {NewsSource.URL}, {NewsSource.CATEGORY_ID}, {NewsSource.USER_ID}
+            FROM {NewsSource.TABLE_NAME}
+            WHERE {NewsSource.ID} = $1 AND {NewsSource.USER_ID} = $2
         """
         try:
             return await self._fetchone(query_str, (source_id, user_id))
@@ -166,9 +157,9 @@ class NewsSourceRepository(BaseRepository):
     async def get_by_name(self, name: str, user_id: int) -> Optional[asyncpg.Record]:
         """Gets a source by its name for a specific user."""
         query_str = f"""
-            SELECT {NEWS_SOURCE_ID}, {NEWS_SOURCE_NAME}, {NEWS_SOURCE_URL}, {NEWS_SOURCE_CATEGORY_ID}, {NEWS_SOURCE_USER_ID}
-            FROM {NEWS_SOURCES_TABLE}
-            WHERE {NEWS_SOURCE_NAME} = $1 AND {NEWS_SOURCE_USER_ID} = $2
+            SELECT {NewsSource.ID}, {NewsSource.NAME}, {NewsSource.URL}, {NewsSource.CATEGORY_ID}, {NewsSource.USER_ID}
+            FROM {NewsSource.TABLE_NAME}
+            WHERE {NewsSource.NAME} = $1 AND {NewsSource.USER_ID} = $2
         """
         try:
             return await self._fetchone(query_str, (name, user_id))
@@ -181,9 +172,9 @@ class NewsSourceRepository(BaseRepository):
     async def get_by_url(self, url: str, user_id: int) -> Optional[asyncpg.Record]:
         """Gets a source by its URL for a specific user."""
         query_str = f"""
-            SELECT {NEWS_SOURCE_ID}, {NEWS_SOURCE_NAME}, {NEWS_SOURCE_URL}, {NEWS_SOURCE_CATEGORY_ID}, {NEWS_SOURCE_USER_ID}
-            FROM {NEWS_SOURCES_TABLE}
-            WHERE {NEWS_SOURCE_URL} = $1 AND {NEWS_SOURCE_USER_ID} = $2
+            SELECT {NewsSource.ID}, {NewsSource.NAME}, {NewsSource.URL}, {NewsSource.CATEGORY_ID}, {NewsSource.USER_ID}
+            FROM {NewsSource.TABLE_NAME}
+            WHERE {NewsSource.URL} = $1 AND {NewsSource.USER_ID} = $2
         """
         try:
             return await self._fetchone(query_str, (url, user_id))
@@ -196,12 +187,12 @@ class NewsSourceRepository(BaseRepository):
     async def get_all(self, user_id: int) -> List[asyncpg.Record]:
         """Gets all sources for a specific user with category names."""
         query_str = f"""
-            SELECT ns.{NEWS_SOURCE_ID}, ns.{NEWS_SOURCE_NAME}, ns.{NEWS_SOURCE_URL}, ns.{NEWS_SOURCE_CATEGORY_ID}, ns.{NEWS_SOURCE_USER_ID},
-                   nc.{NEWS_CATEGORY_NAME} as category_name
-            FROM {NEWS_SOURCES_TABLE} ns
-            JOIN {NEWS_CATEGORY_TABLE} nc ON ns.{NEWS_SOURCE_CATEGORY_ID} = nc.{NEWS_CATEGORY_ID}
-            WHERE ns.{NEWS_SOURCE_USER_ID} = $1 AND nc.{NEWS_SOURCE_USER_ID} = $1 -- Ensure category also belongs to user
-            ORDER BY nc.{NEWS_CATEGORY_NAME}, ns.{NEWS_SOURCE_NAME}
+            SELECT ns.{NewsSource.ID}, ns.{NewsSource.NAME}, ns.{NewsSource.URL}, ns.{NewsSource.CATEGORY_ID}, ns.{NewsSource.USER_ID},
+                   nc.{NewsCategory.NAME} as category_name
+            FROM {NewsSource.TABLE_NAME} ns
+            JOIN {NewsCategory.TABLE_NAME} nc ON ns.{NewsSource.CATEGORY_ID} = nc.{NewsCategory.ID}
+            WHERE ns.{NewsSource.USER_ID} = $1 AND nc.{NewsCategory.USER_ID} = $1 -- Ensure category also belongs to user
+            ORDER BY nc.{NewsCategory.NAME}, ns.{NewsSource.NAME}
         """
         try:
             return await self._fetchall(query_str, (user_id,))
@@ -214,12 +205,12 @@ class NewsSourceRepository(BaseRepository):
     ) -> List[asyncpg.Record]:
         """Gets all sources for a specific category ID belonging to a user."""
         query_str = f"""
-            SELECT ns.{NEWS_SOURCE_ID}, ns.{NEWS_SOURCE_NAME}, ns.{NEWS_SOURCE_URL}, ns.{NEWS_SOURCE_CATEGORY_ID}, ns.{NEWS_SOURCE_USER_ID},
-                   nc.{NEWS_CATEGORY_NAME} as category_name
-            FROM {NEWS_SOURCES_TABLE} ns
-            JOIN {NEWS_CATEGORY_TABLE} nc ON ns.{NEWS_SOURCE_CATEGORY_ID} = nc.{NEWS_CATEGORY_ID}
-            WHERE ns.{NEWS_SOURCE_CATEGORY_ID} = $1 AND ns.{NEWS_SOURCE_USER_ID} = $2 AND nc.{NEWS_SOURCE_USER_ID} = $2 -- Ensure both source and category belong to user
-            ORDER BY nc.{NEWS_CATEGORY_NAME}, ns.{NEWS_SOURCE_NAME}
+            SELECT ns.{NewsSource.ID}, ns.{NewsSource.NAME}, ns.{NewsSource.URL}, ns.{NewsSource.CATEGORY_ID}, ns.{NewsSource.USER_ID},
+                   nc.{NewsCategory.NAME} as category_name
+            FROM {NewsSource.TABLE_NAME} ns
+            JOIN {NewsCategory.TABLE_NAME} nc ON ns.{NewsSource.CATEGORY_ID} = nc.{NewsCategory.ID}
+            WHERE ns.{NewsSource.CATEGORY_ID} = $1 AND ns.{NewsSource.USER_ID} = $2 AND nc.{NewsCategory.USER_ID} = $2 -- Ensure both source and category belong to user
+            ORDER BY nc.{NewsCategory.NAME}, ns.{NewsSource.NAME}
         """
         try:
             return await self._fetchall(query_str, (category_id, user_id))
@@ -231,7 +222,7 @@ class NewsSourceRepository(BaseRepository):
 
     async def exists_by_url(self, url: str, user_id: int) -> bool:
         """Checks if a source exists with the given URL for a specific user."""
-        query_str = f"SELECT 1 FROM {NEWS_SOURCES_TABLE} WHERE {NEWS_SOURCE_URL} = $1 AND {NEWS_SOURCE_USER_ID} = $2 LIMIT 1"
+        query_str = f"SELECT 1 FROM {NewsSource.TABLE_NAME} WHERE {NewsSource.URL} = $1 AND {NewsSource.USER_ID} = $2 LIMIT 1"
         try:
             record = await self._fetchone(query_str, (url, user_id))
             return record is not None
@@ -243,7 +234,7 @@ class NewsSourceRepository(BaseRepository):
 
     async def exists_by_name(self, name: str, user_id: int) -> bool:
         """Checks if a source exists with the given name for a specific user."""
-        query_str = f"SELECT 1 FROM {NEWS_SOURCES_TABLE} WHERE {NEWS_SOURCE_NAME} = $1 AND {NEWS_SOURCE_USER_ID} = $2 LIMIT 1"
+        query_str = f"SELECT 1 FROM {NewsSource.TABLE_NAME} WHERE {NewsSource.NAME} = $1 AND {NewsSource.USER_ID} = $2 LIMIT 1"
         try:
             record = await self._fetchone(query_str, (name, user_id))
             return record is not None

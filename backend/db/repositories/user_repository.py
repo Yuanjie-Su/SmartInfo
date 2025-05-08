@@ -12,12 +12,7 @@ import logging
 
 from .base_repository import BaseRepository
 from models import UserInDB  # Assuming UserInDB includes id, username, hashed_password
-from db.schema_constants import (
-    USERS_TABLE,
-    USERS_ID,
-    USERS_USERNAME,
-    USERS_HASHED_PASSWORD,
-)
+from db.schema_constants import Users
 
 logger = logging.getLogger(__name__)
 
@@ -39,9 +34,9 @@ class UserRepository(BaseRepository):
             The created user object (UserInDB) if successful, otherwise None.
         """
         query = f"""
-            INSERT INTO {USERS_TABLE} ({USERS_USERNAME}, {USERS_HASHED_PASSWORD})
+            INSERT INTO {Users.TABLE_NAME} ({Users.USERNAME}, {Users.HASHED_PASSWORD})
             VALUES ($1, $2)
-            RETURNING {USERS_ID}, {USERS_USERNAME}, {USERS_HASHED_PASSWORD}
+            RETURNING {Users.ID}, {Users.USERNAME}, {Users.HASHED_PASSWORD}
         """
         try:
             record = await self._fetchone(query, (username, hashed_password))
@@ -64,9 +59,9 @@ class UserRepository(BaseRepository):
             The user object (UserInDB) if found, otherwise None.
         """
         query = f"""
-            SELECT {USERS_ID}, {USERS_USERNAME}, {USERS_HASHED_PASSWORD}
-            FROM {USERS_TABLE}
-            WHERE {USERS_USERNAME} = $1
+            SELECT {Users.ID}, {Users.USERNAME}, {Users.HASHED_PASSWORD}
+            FROM {Users.TABLE_NAME}
+            WHERE {Users.USERNAME} = $1
         """
         try:
             record = await self._fetchone(query, (username,))
@@ -86,9 +81,9 @@ class UserRepository(BaseRepository):
             The user object (UserInDB) if found, otherwise None.
         """
         query = f"""
-            SELECT {USERS_ID}, {USERS_USERNAME}, {USERS_HASHED_PASSWORD}
-            FROM {USERS_TABLE}
-            WHERE {USERS_ID} = $1
+            SELECT {Users.ID}, {Users.USERNAME}, {Users.HASHED_PASSWORD}
+            FROM {Users.TABLE_NAME}
+            WHERE {Users.ID} = $1
         """
         try:
             record = await self._fetchone(query, (user_id,))

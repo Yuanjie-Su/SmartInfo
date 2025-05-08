@@ -13,14 +13,7 @@ import asyncpg
 from datetime import datetime, timezone
 
 from db.repositories.base_repository import BaseRepository
-from db.schema_constants import (
-    CHATS_TABLE,
-    CHAT_ID,
-    CHAT_TITLE,
-    CHAT_CREATED_AT,
-    CHAT_UPDATED_AT,
-    # CHAT_USER_ID, # Conceptually adding user_id
-)
+from db.schema_constants import Chats
 
 # Note: Assuming 'user_id' column exists conceptually in CHATS_TABLE
 CHAT_USER_ID = "user_id"
@@ -46,10 +39,10 @@ class ChatRepository(BaseRepository):
             current_time = datetime.now(timezone.utc)
 
             query_str = f"""
-                INSERT INTO {CHATS_TABLE} (
-                    {CHAT_TITLE}, {CHAT_CREATED_AT}, {CHAT_UPDATED_AT}, {CHAT_USER_ID}
+                INSERT INTO {Chats.TABLE_NAME} (
+                    {Chats.TITLE}, {Chats.CREATED_AT}, {Chats.UPDATED_AT}, {Chats.USER_ID}
                 ) VALUES ($1, $2, $3, $4)
-                RETURNING {CHAT_ID}
+                RETURNING {Chats.ID}
             """
             params = (title, current_time, current_time, user_id)
 
@@ -91,12 +84,12 @@ class ChatRepository(BaseRepository):
             param_index = 1
 
             if title is not None:
-                updates[CHAT_TITLE] = f"${param_index}"
+                updates[Chats.TITLE] = f"${param_index}"
                 params.append(title)
                 param_index += 1
 
             current_time = datetime.now(timezone.utc)
-            updates[CHAT_UPDATED_AT] = f"${param_index}"
+            updates[Chats.UPDATED_AT] = f"${param_index}"
             params.append(current_time)
             param_index += 1
 
@@ -110,9 +103,9 @@ class ChatRepository(BaseRepository):
                 f"{field} = {placeholder}" for field, placeholder in updates.items()
             )
             query_str = f"""
-                UPDATE {CHATS_TABLE}
+                UPDATE {Chats.TABLE_NAME}
                 SET {set_clause_str}
-                WHERE {CHAT_ID} = ${param_index} AND {CHAT_USER_ID} = ${param_index + 1}
+                WHERE {Chats.ID} = ${param_index} AND {Chats.USER_ID} = ${param_index + 1}
             """
             params.extend([chat_id, user_id])
 
@@ -157,7 +150,7 @@ class ChatRepository(BaseRepository):
             bool: True if deletion was successful, False otherwise.
         """
         try:
-            query_str = f"DELETE FROM {CHATS_TABLE} WHERE {CHAT_ID} = $1 AND {CHAT_USER_ID} = $2"
+            query_str = f"DELETE FROM {Chats.TABLE_NAME} WHERE {Chats.ID} = $1 AND {Chats.USER_ID} = $2"
 
             status = await self._execute(query_str, (chat_id, user_id))
             deleted = status is not None and status.startswith("DELETE 1")
@@ -194,8 +187,8 @@ class ChatRepository(BaseRepository):
         """
         try:
             query_str = f"""
-                SELECT {CHAT_ID}, {CHAT_TITLE}, {CHAT_CREATED_AT}, {CHAT_UPDATED_AT}, {CHAT_USER_ID}
-                FROM {CHATS_TABLE} WHERE {CHAT_ID} = $1 AND {CHAT_USER_ID} = $2
+                SELECT {Chats.ID}, {Chats.TITLE}, {Chats.CREATED_AT}, {Chats.UPDATED_AT}, {Chats.USER_ID}
+                FROM {Chats.TABLE_NAME} WHERE {Chats.ID} = $1 AND {Chats.USER_ID} = $2
             """
             return await self._fetchone(query_str, (chat_id, user_id))
 
@@ -219,10 +212,10 @@ class ChatRepository(BaseRepository):
         """
         try:
             query_str = f"""
-                SELECT {CHAT_ID}, {CHAT_TITLE}, {CHAT_CREATED_AT}, {CHAT_UPDATED_AT}, {CHAT_USER_ID}
-                FROM {CHATS_TABLE}
-                WHERE {CHAT_USER_ID} = $1
-                ORDER BY {CHAT_UPDATED_AT} DESC
+                SELECT {Chats.ID}, {Chats.TITLE}, {Chats.CREATED_AT}, {Chats.UPDATED_AT}, {Chats.USER_ID}
+                FROM {Chats.TABLE_NAME}
+                WHERE {Chats.USER_ID} = $1
+                ORDER BY {Chats.UPDATED_AT} DESC
                 LIMIT $2 OFFSET $3
             """
             return await self._fetchall(query_str, (user_id, limit, offset))
@@ -242,7 +235,9 @@ class ChatRepository(BaseRepository):
             int: The number of chats for the user in the database.
         """
         try:
-            query_str = f"SELECT COUNT(*) FROM {CHATS_TABLE} WHERE {CHAT_USER_ID} = $1"
+            query_str = (
+                f"SELECT COUNT(*) FROM {Chats.TABLE_NAME} WHERE {Chats.USER_ID} = $1"
+            )
             record = await self._fetchone(query_str, (user_id,))
             count = record[0] if record else 0
             return count if count is not None else 0
