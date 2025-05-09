@@ -261,17 +261,15 @@ class NewsRepository(BaseRepository):
                 conditions.append(f"({News.ANALYSIS} IS NULL OR {News.ANALYSIS} = '')")
 
         if search_term:
-            # Menggunakan plainto_tsquery untuk keamanan dan kemudahan penggunaan input pengguna
-            # dan operator @@ untuk pencocokan full-text search
-            # Pastikan ekspresi to_tsvector di sini cocok dengan yang ada di definisi indeks
+            # Ensure the expression for to_tsvector matches the GIN index definition
             conditions.append(
                 f"""
-                to_tsvector('simple',
+                to_tsvector('zhparsercfg',
                     COALESCE({News.TITLE}, '') || ' ' ||
                     COALESCE({News.SUMMARY}, '') || ' ' ||
                     COALESCE({News.SOURCE_NAME}, '') || ' ' ||
                     COALESCE({News.CATEGORY_NAME}, '')
-                ) @@ plainto_tsquery('simple', ${param_index})
+                ) @@ plainto_tsquery('zhparsercfg', ${param_index})
                 """
             )
             params.append(search_term)

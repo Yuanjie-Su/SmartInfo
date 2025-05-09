@@ -372,14 +372,73 @@ class DatabaseConnectionManager:
                     )
                     logger.debug(f"Index idx_fetch_history_date checked/created.")
 
-                    # Add a GIN index for Full-Text Search on title, summary, source_name, and category_name
-                    # We'll combine them into a single tsvector for searching.
-                    # COALESCE is used to handle NULL values gracefully by replacing them with an empty string.
-                    # 'simple' configuration is language-neutral. Consider 'english' or your primary language if applicable.
+                    # # Add zhparser extension and config
+                    # # 1. 确保 zhparser 扩展存在
+                    # try:
+                    #     await conn.execute("CREATE EXTENSION IF NOT EXISTS zhparser;")
+                    #     logger.debug("Extension 'zhparser' checked/created.")
+                    # except asyncpg.exceptions.InsufficientPrivilegeError:
+                    #     logger.warning(
+                    #         "Insufficient privilege to CREATE EXTENSION zhparser. "
+                    #         "Please ensure it is manually created by a superuser if not already present."
+                    #     )
+                    # except asyncpg.PostgresError as e_ext:
+                    #     # 如果扩展已存在但由其他角色创建等情况，可能会有其他错误
+                    #     # 但通常 IF NOT EXISTS 会处理好“已存在”的情况
+                    #     logger.warning(
+                    #         f"Notice during CREATE EXTENSION zhparser: {e_ext}. This might be okay if the extension already exists and is usable."
+                    #     )
+
+                    # # 2. 创建 zhparser 文本搜索配置
+                    # zhparser_config_name = "zhparsercfg"  # 定义配置名称，方便后续使用
+                    # try:
+                    #     await conn.execute(
+                    #         f"CREATE TEXT SEARCH CONFIGURATION {zhparser_config_name} (PARSER = zhparser);"
+                    #     )
+                    #     logger.info(
+                    #         f"Text search configuration '{zhparser_config_name}' created."
+                    #     )
+
+                    #     # 3. 如果配置是新创建的，立即为其添加映射
+                    #     # 这些映射对于 zhparser 如何处理特定类型的词元很重要
+                    #     await conn.execute(
+                    #         f"""
+                    #         ALTER TEXT SEARCH CONFIGURATION {zhparser_config_name}
+                    #         ADD MAPPING FOR n,v,a,i,e,l WITH simple;
+                    #         """
+                    #     )
+                    #     logger.info(
+                    #         f"Mappings for n,v,a,i,e,l added to new '{zhparser_config_name}'."
+                    #     )
+
+                    # except asyncpg.exceptions.DuplicateObjectError:
+                    #     # 配置已经存在
+                    #     logger.debug(
+                    #         f"Text search configuration '{zhparser_config_name}' already exists. "
+                    #         "Assuming it's correctly configured with necessary mappings. "
+                    #         "If issues arise, ensure mappings (n,v,a,i,e,l WITH simple) are present."
+                    #     )
+                    #     # 注意：如果配置已存在，我们不再次执行 ALTER TABLE ... ADD MAPPING，
+                    #     # 因为如果那些映射也已存在，它会报错。
+                    #     # 一个更健壮的系统可能会检查并确保映射存在，但这会更复杂。
+                    #     # 对于典型用例，如果配置存在，它通常是被正确设置的。
+                    # except asyncpg.exceptions.UndefinedObjectError as e_parser_undef:
+                    #     # 如果 zhparser 扩展没有成功启用，会导致这里找不到 PARSER 'zhparser'
+                    #     logger.error(
+                    #         f"Failed to create text search configuration '{zhparser_config_name}' "
+                    #         f"because the parser 'zhparser' was not found. "
+                    #         f"Please ensure the 'zhparser' extension is properly installed and enabled. Error: {e_parser_undef}"
+                    #     )
+                    # except asyncpg.PostgresError as e_cfg:
+                    #     logger.error(
+                    #         f"An error occurred while creating or configuring text search configuration '{zhparser_config_name}': {e_cfg}"
+                    #     )
+
+                    # 使用上面定义的 zhparser_config_name
                     await conn.execute(
                         f"""
                         CREATE INDEX IF NOT EXISTS idx_news_search_fts ON {News.TABLE_NAME} USING GIN (
-                            to_tsvector('simple',
+                            to_tsvector('zhparsercfg',
                                 COALESCE({News.TITLE}, '') || ' ' ||
                                 COALESCE({News.SUMMARY}, '') || ' ' ||
                                 COALESCE({News.SOURCE_NAME}, '') || ' ' ||
@@ -389,7 +448,7 @@ class DatabaseConnectionManager:
                     """
                     )
                     logger.debug(
-                        f"Index idx_news_search_fts (GIN) for combined text fields checked/created."
+                        f"Index idx_news_search_fts (GIN) for combined text fields using zhparsercfg checked/created."
                     )
 
                     logger.info(
