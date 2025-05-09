@@ -7,6 +7,7 @@ NewsService Module
 - Utilizes an LLM for link extraction and in-depth content summarization.
 """
 
+from datetime import date
 import logging
 from typing import List, Dict, Optional, Any, AsyncGenerator
 
@@ -84,6 +85,8 @@ class NewsService:
         page: int = 1,
         page_size: int = 20,
         search_term: Optional[str] = None,
+        fetch_date: Optional[date] = None,  # New parameter
+        sort_by: Optional[str] = None,  # New parameter
     ) -> List[Dict[str, Any]]:
         """Get news items for a specific user with filters."""
         # Use get_news_with_filters_as_dict which already handles user_id and returns dicts
@@ -95,6 +98,8 @@ class NewsService:
             page=page,
             page_size=page_size,
             search_term=search_term,
+            fetch_date=fetch_date,  # Pass new parameter
+            sort_by=sort_by,  # Pass new parameter
         )
 
     async def update_news(

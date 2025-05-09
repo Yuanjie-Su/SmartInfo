@@ -9,7 +9,7 @@ Provides data access operations for news articles using aiosqlite
 import logging
 from typing import List, Dict, Optional, Tuple, Any
 import asyncpg  # Add asyncpg
-from datetime import datetime, timezone  # Import for TIMESTAMPTZ
+from datetime import date, datetime, timezone  # Import for TIMESTAMPTZ
 
 from db.schema_constants import News
 
@@ -224,6 +224,10 @@ class NewsRepository(BaseRepository):
         page: int = 1,
         page_size: int = 20,
         search_term: Optional[str] = None,
+        fetch_date: Optional[
+            date
+        ] = None,  # New parameter for filtering by creation date
+        sort_by: Optional[str] = None,  # New parameter for sorting
     ) -> List[asyncpg.Record]:
         """Gets news items with various filters applied, paginated."""
         # Start with base query
@@ -231,7 +235,7 @@ class NewsRepository(BaseRepository):
             SELECT
                 {News.ID}, {News.TITLE}, {News.URL}, {News.SOURCE_NAME},
                 {News.CATEGORY_NAME}, {News.SOURCE_ID}, {News.CATEGORY_ID},
-                {News.SUMMARY}, {News.ANALYSIS}, {News.DATE}, {News.USER_ID}
+                {News.SUMMARY}, {News.ANALYSIS}, {News.DATE}, {News.CONTENT}, {News.USER_ID}, {News.CREATED_AT} -- Include CREATED_AT
             FROM {News.TABLE_NAME}
             WHERE {News.USER_ID} = $1
         """
@@ -275,15 +279,28 @@ class NewsRepository(BaseRepository):
             params.append(search_term)
             param_index += 1
 
+        # New condition for fetch_date
+        if fetch_date is not None:
+            conditions.append(
+                f"DATE({News.CREATED_AT}) = ${param_index}"
+            )  # Use DATE() function for timestamp column
+            params.append(fetch_date)
+            param_index += 1
+
         # Combine conditions
         if conditions:
             base_query += " AND " + " AND ".join(conditions)
 
+        # Add ORDER BY clause
+        order_clause = f"ORDER BY {News.ID} DESC"  # Default sort
+        if sort_by == "created_at_desc":
+            order_clause = f"ORDER BY {News.CREATED_AT} DESC, {News.ID} DESC"  # Sort by creation time descending
+
+        base_query += f" {order_clause}"
+
         # Add pagination
         offset = (page - 1) * page_size
-        base_query += (
-            f" ORDER BY {News.ID} DESC LIMIT ${param_index} OFFSET ${param_index + 1}"
-        )
+        base_query += f" LIMIT ${param_index} OFFSET ${param_index + 1}"
         params.extend([page_size, offset])
 
         try:
@@ -388,6 +405,8 @@ class NewsRepository(BaseRepository):
         page: int = 1,
         page_size: int = 20,
         search_term: Optional[str] = None,
+        fetch_date: Optional[date] = None,  # New parameter
+        sort_by: Optional[str] = None,  # New parameter
     ) -> List[Dict[str, Any]]:
         """Gets news items with various filters applied, paginated, returning dictionaries."""
         result_records = await self.get_news_with_filters(
@@ -398,6 +417,8 @@ class NewsRepository(BaseRepository):
             page=page,
             page_size=page_size,
             search_term=search_term,
+            fetch_date=fetch_date,  # Pass new parameter
+            sort_by=sort_by,  # Pass new parameter
         )
 
         # Convert to list of dictionaries

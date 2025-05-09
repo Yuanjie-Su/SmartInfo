@@ -671,8 +671,7 @@ def finalize_news_fetch_group(results, task_group_id: str, user_id: int):
         "event": "overall_batch_completed",
         "task_group_id": task_group_id,
         "status": overall_status,
-        "successful": total_successful_sources,
-        "failed": total_failed_sources,
+        # Removed successful, failed, and saved keys
     }
 
     # Publish to Redis using synchronous client

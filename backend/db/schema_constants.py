@@ -59,6 +59,7 @@ class News:
     CONTENT = "content"
     USER_ID = "user_id"
     TASK_GROUP_ID = "task_group_id"
+    CREATED_AT = "created_at"  # New column for creation timestamp
 
 
 class ApiConfig:

@@ -8,7 +8,7 @@ interface LoginCredentials {
 }
 
 // Define the expected shape of the login response (adjust based on backend)
-interface LoginResponse {
+export interface LoginResponse { // Exported for use in AuthContext
     access_token: string; // Changed from 'token' to 'access_token'
     token_type: string; // Added token_type as per backend response
     user: User; // Use the imported User type
@@ -19,15 +19,6 @@ interface SignupData {
     username: string;
     password: string;
     // other required fields
-}
-
-// Define the expected shape of the signup response (adjust based on backend)
-interface SignupResponse {
-    message: string; // e.g., "User created successfully"
-    user?: { // Optional: backend might return the created user
-        id: string;
-        username: string;
-    };
 }
 
 // Define the User interface for profile data
@@ -82,11 +73,11 @@ export const logoutUser = async (): Promise<void> => {
 /**
  * Calls the backend API to register a new user.
  * @param userData - The data for the new user.
- * @returns A promise that resolves with the signup response.
+ * @returns A promise that resolves with the registration response (which is now the same as login response).
  */
-export const registerUser = async (userData: SignupData): Promise<SignupResponse> => {
+export const registerUser = async (userData: SignupData): Promise<LoginResponse> => { // Changed return type to LoginResponse
     try {
-        const response = await api.post<SignupResponse>('/api/auth/register', userData);
+        const response = await api.post<LoginResponse>('/api/auth/register', userData); // Changed expected response type
         return response.data;
     } catch (error) {
         // Use the centralized error handler

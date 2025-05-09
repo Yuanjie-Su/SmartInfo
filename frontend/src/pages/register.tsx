@@ -31,13 +31,9 @@ const RegisterPage: React.FC = () => {
         try {
             await signup(values.username, values.password);
 
-            setSuccess('注册成功！即将为您跳转到登录页面...');
+            // The signup function in AuthContext now handles auto-login and redirection
+            // No need to set success message or redirect here
             form.resetFields();
-            
-            // Redirect to login page after a short delay
-            setTimeout(() => {
-                router.push('/login');
-            }, 2000);
             
         } catch (err: any) {
             console.error('Registration error:', err);
@@ -169,4 +165,4 @@ const RegisterPage: React.FC = () => {
     );
 };
 
-export default RegisterPage; 
+export default RegisterPage;

@@ -113,7 +113,7 @@ class FetchHistoryRepository(BaseRepository):
         query_str = f"""
             SELECT
                 fh.{FetchHistory.SOURCE_ID},
-                ns.{NewsSource.NAME},
+                ns.{NewsSource.NAME} AS source_name,
                 fh.{FetchHistory.RECORD_DATE},
                 fh.{FetchHistory.ITEMS_SAVED_TODAY},
                 fh.{FetchHistory.LAST_UPDATED_AT}
@@ -148,7 +148,7 @@ class FetchHistoryRepository(BaseRepository):
         query_str = f"""
             SELECT
                 fh.{FetchHistory.SOURCE_ID},
-                ns.{NewsSource.NAME},
+                ns.{NewsSource.NAME} AS source_name,
                 fh.{FetchHistory.RECORD_DATE},
                 fh.{FetchHistory.ITEMS_SAVED_TODAY},
                 fh.{FetchHistory.LAST_UPDATED_AT}

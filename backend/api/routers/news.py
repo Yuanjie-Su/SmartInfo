@@ -89,6 +89,13 @@ async def get_filtered_news_items(
     search_term: Optional[str] = Query(
         None, description="Search term for title/content (case-insensitive)"
     ),
+    fetch_date: Optional[date] = Query(
+        None,
+        description="Filter by the date news items were fetched/created (YYYY-MM-DD)",
+    ),  # New Query parameter
+    sort_by: Optional[str] = Query(
+        None, description="Sort order (e.g., 'created_at_desc')"
+    ),  # New Query parameter
 ):
     """
     Retrieve news items for the current user with various filtering options.
@@ -102,6 +109,8 @@ async def get_filtered_news_items(
             page=page,
             page_size=page_size,
             search_term=search_term,
+            fetch_date=fetch_date,  # Pass new parameter
+            sort_by=sort_by,  # Pass new parameter
         )
         # Service method returns dicts, FastAPI handles response model validation
         return news_items

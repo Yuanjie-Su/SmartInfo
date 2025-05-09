@@ -47,6 +47,7 @@ export interface NewsItem {
   date?: string;
   source_name?: string;
   category_name?: string;
+  created_at?: string; // New field for creation timestamp
 }
 
 export interface NewsItemCreate {
@@ -76,6 +77,8 @@ export interface NewsFilterParams {
   page?: number;
   page_size?: number;
   search_term?: string;
+  fetch_date?: string; // New filter parameter for fetch date (YYYY-MM-DD)
+  sort_by?: string; // New filter parameter for sort order (e.g., 'created_at_desc')
 }
 
 // Task Types for News Fetching
@@ -99,13 +102,7 @@ export interface FetchHistoryItem {
   last_updated_at: string; // ISO datetime string
 }
 
-// New interface for overall task status display
-export interface OverallStatusInfo {
-  status: 'SUCCESS' | 'PARTIAL_SUCCESS' | 'FAILURE';
-  successful: number; // Sources successfully processed in the group
-  failed: number;     // Sources failed in the group
-  saved: number;
-}
+// Removed OverallStatusInfo interface
 
 export interface UpdateAnalysisRequest {
   task_id: string;

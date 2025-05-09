@@ -44,7 +44,7 @@ import {
   DeleteOutlined,
   ClockCircleOutlined
 } from '@ant-design/icons';
-import { NewsItem, NewsCategory, NewsSource, NewsFilterParams, FetchTaskItem, OverallStatusInfo, FetchHistoryItem } from '@/utils/types';
+import { NewsItem, NewsCategory, NewsSource, NewsFilterParams, FetchTaskItem, FetchHistoryItem } from '@/utils/types'; // Removed OverallStatusInfo
 import * as newsService from '@/services/newsService';
 import { handleApiError, extractErrorMessage } from '@/utils/apiErrorHandler'; // Import extractErrorMessage
 import Link from 'next/link';
@@ -98,6 +98,8 @@ const NewsPage: React.FC = () => {
     category_id: undefined,
     source_id: undefined,
     search_term: '',
+    fetch_date: undefined, // Initialize new filter
+    sort_by: undefined, // Initialize new filter
   });
   const [total, setTotal] = useState(0);
 
@@ -110,7 +112,7 @@ const NewsPage: React.FC = () => {
 
   const [isTaskDrawerVisible, setIsTaskDrawerVisible] = useState<boolean>(false);
   const [tasksToMonitor, setTasksToMonitor] = useState<FetchTaskItem[]>([]);
-  const [overallTaskStatus, setOverallTaskStatus] = useState<OverallStatusInfo | null>(null);
+  // Removed overallTaskStatus state
 
   const [analysisModalVisible, setAnalysisModalVisible] = useState<boolean>(false);
   const [selectedNewsItemId, setSelectedNewsItemId] = useState<number | null>(null);
@@ -197,6 +199,11 @@ const NewsPage: React.FC = () => {
       if (key !== 'page') {
         updated.page = 1;
       }
+      // Clear fetch_date and sort_by if other filters change, unless it's source_id or category_id
+      if (key !== 'source_id' && key !== 'category_id' && key !== 'page' && key !== 'page_size' && key !== 'search_term') {
+         updated.fetch_date = undefined;
+         updated.sort_by = undefined;
+      }
       return updated;
     });
   };
@@ -262,12 +269,7 @@ const NewsPage: React.FC = () => {
 
               if (taskUpdate.event === "overall_batch_completed") {
                   console.log(`Overall batch group ${currentTaskGroupId} has finished with status: ${taskUpdate.status}`);
-                  setOverallTaskStatus({
-                      status: taskUpdate.status,
-                      successful: taskUpdate.successful,
-                      failed: taskUpdate.failed,
-                      saved: taskUpdate.saved,
-                  });
+                  // Removed setOverallTaskStatus
                   loadNews(filters);
                   fetchTodaysHistory(); // Refresh today's history after completion
                   setTimeout(() => {
@@ -432,7 +434,7 @@ const NewsPage: React.FC = () => {
       progress: 0,
     }));
 
-    setOverallTaskStatus(null);
+    // Removed setOverallTaskStatus(null)
     // Clear only non-pending/non-running tasks from monitor before adding new ones
     setTasksToMonitor(prevTasks => [
         ...prevTasks.filter(t => t.status !== 'Complete' && t.status !== 'Error' && t.status !== 'Skipped'),
@@ -545,6 +547,23 @@ const NewsPage: React.FC = () => {
     } else {
       setHistoricalData(null); // Clear if date is cleared
     }
+  };
+
+  // Handler for clicking the "Saved Items" badge
+  const handleTaskBadgeClick = (sourceId: number, fetchDate: string) => {
+    console.log(`Badge clicked for source ${sourceId} on date ${fetchDate}`);
+    setFilters(prevFilters => ({
+      ...prevFilters, // Retain essential non-conflicting filters like page_size
+      source_id: sourceId,
+      fetch_date: fetchDate,     // New: Filter by the specific fetch date
+      category_id: undefined,    // Clear other filters to focus on this source/date
+      search_term: '',
+      analyzed: undefined,
+      page: 1,                   // Always reset to page 1 for new filter context
+      sort_by: 'created_at_desc' // New: Sort by creation time
+    }));
+    setIsTaskDrawerVisible(false); // Close the drawer
+    // Optional: window.scrollTo(0, 0); // Scroll to top
   };
 
 
@@ -775,11 +794,11 @@ const NewsPage: React.FC = () => {
                   setTasksToMonitor(prev => prev.filter(t =>
                     t.status !== 'Complete' && t.status !== 'Error' && t.status !== 'Skipped'
                   ));
-                  setOverallTaskStatus(null); // Clear overall status when clearing tasks
+                  // Removed setOverallTaskStatus(null)
                 }}
                 disabled={!tasksToMonitor.some(t =>
                   t.status === 'Complete' || t.status === 'Error' || t.status === 'Skipped'
-                ) && !overallTaskStatus}
+                )} // Updated disabled condition
                 type="text"
                 icon={<DeleteOutlined />}
               />
@@ -818,28 +837,7 @@ const NewsPage: React.FC = () => {
           </div>
         }
       >
-        {overallTaskStatus && viewingDate === 'today' && ( // Only show overall status for today's view if it exists
-          <>
-            <div style={{
-              marginBottom: 16, padding: 12, borderRadius: 4,
-              backgroundColor: overallTaskStatus.status === 'SUCCESS' ? '#f6ffed' : overallTaskStatus.status === 'PARTIAL_SUCCESS' ? '#fffbe6' : '#fff2f0',
-              border: `1px solid ${overallTaskStatus.status === 'SUCCESS' ? '#b7eb8f' : overallTaskStatus.status === 'PARTIAL_SUCCESS' ? '#ffe58f' : '#ffa39e'}`
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
-                {overallTaskStatus.status === 'SUCCESS' && <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 18, marginRight: 8 }} />}
-                {overallTaskStatus.status === 'PARTIAL_SUCCESS' && <ExperimentOutlined style={{ color: '#faad14', fontSize: 18, marginRight: 8 }} />}
-                {overallTaskStatus.status === 'FAILURE' && <CloseCircleOutlined style={{ color: '#f5222d', fontSize: 18, marginRight: 8 }} />}
-                <Text strong>Last Fetch Group Status</Text>
-              </div>
-              <Space size="large">
-                <span><CheckCircleOutlined style={{ color: 'green', marginRight: 4 }} />S: {overallTaskStatus.successful}</span>
-                <span><CloseCircleOutlined style={{ color: 'red', marginRight: 4 }} />F: {overallTaskStatus.failed}</span>
-              </Space>
-              <div style={{marginTop: 4}}><Text type="secondary">Total items saved: {overallTaskStatus.saved}</Text></div>
-            </div>
-            <Divider style={{ margin: '0 0 16px 0' }} />
-          </>
-        )}
+        {/* Removed overallTaskStatus display block */}
 
         {viewingDate === 'history' && (
           <div style={{ marginBottom: 16 }}>
@@ -879,6 +877,21 @@ const NewsPage: React.FC = () => {
                     marginLeft: '8px' // Space between icon and badge area
                 };
 
+                const sourceId = getSourceId(item);
+                let determinedFetchDate: string;
+
+                if ('progress' in item && item.status !== 'Complete' && item.status !== 'Error' && item.status !== 'Skipped') {
+                    // For live/pending tasks, or tasks that just completed in this session
+                    determinedFetchDate = dayjs().format('YYYY-MM-DD');
+                } else if ('record_date' in item && item.record_date) { // For historical items
+                    determinedFetchDate = dayjs(item.record_date).format('YYYY-MM-DD');
+                } else {
+                    // Fallback for tasks that just completed and might not have record_date yet in displayedTasks
+                    // but are not "live" anymore. This assumes completion implies "today" for the click.
+                    determinedFetchDate = dayjs().format('YYYY-MM-DD');
+                }
+
+
                 if (isRunningOrPending) {
                 extraContent = (
                     <Space align="center">
@@ -904,7 +917,7 @@ const NewsPage: React.FC = () => {
                     <Tooltip title="Complete">
                         <CheckCircleOutlined style={{ ...iconStyle, color: '#52c41a' }} />
                     </Tooltip>
-                    <div style={badgeAreaStyle}>
+                    <div style={{...badgeAreaStyle, cursor: 'pointer'}} onClick={() => handleTaskBadgeClick(sourceId, determinedFetchDate)}>
                         {itemsSaved !== undefined && itemsSaved > 0 && (
                         <Badge count={`+${itemsSaved}`} style={{ backgroundColor: '#52c41a' }} size="small" />
                         )}

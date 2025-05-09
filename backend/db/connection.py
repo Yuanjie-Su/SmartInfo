@@ -224,6 +224,7 @@ class DatabaseConnectionManager:
                             {News.DATE} TEXT,
                             {News.CONTENT} TEXT,
                             {News.USER_ID} INTEGER NOT NULL REFERENCES {Users.TABLE_NAME}({Users.ID}) ON DELETE CASCADE,
+                            {News.CREATED_AT} TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP, -- New column
                             FOREIGN KEY ({News.SOURCE_ID}) REFERENCES {NewsSource.TABLE_NAME}({NewsSource.ID}) ON DELETE SET NULL,
                             FOREIGN KEY ({News.CATEGORY_ID}) REFERENCES {NewsCategory.TABLE_NAME}({NewsCategory.ID}) ON DELETE SET NULL,
                             UNIQUE ({News.URL}, {News.USER_ID})
@@ -262,6 +263,13 @@ class DatabaseConnectionManager:
                     """
                     )
                     logger.debug(f"Index idx_news_user_id checked/created.")
+                    # Optional but Recommended: Index for user_id and created_at for filtering/sorting
+                    await conn.execute(
+                        f"""
+                        CREATE INDEX IF NOT EXISTS idx_news_user_id_created_at ON {News.TABLE_NAME} ({News.USER_ID}, {News.CREATED_AT} DESC)
+                    """
+                    )
+                    logger.debug(f"Index idx_news_user_id_created_at checked/created.")
 
                     # API Config Table (PostgreSQL syntax)
                     await conn.execute(

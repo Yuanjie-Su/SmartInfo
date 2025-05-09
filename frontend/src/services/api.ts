@@ -47,6 +47,20 @@ api.interceptors.response.use(
     } else {
       console.error('API Error:', error.response?.data || error.message);
     }
+
+    // Check for 401 Unauthorized errors
+    if (error.response?.status === 401) {
+      console.warn('401 Unauthorized error detected.');
+      // Check if the request was NOT to the login endpoint
+      if (error.config && error.config.url !== '/api/auth/token') {
+        console.log('401 on a non-login endpoint, dispatching auth-error event.');
+        // Dispatch a custom event to trigger logout in AuthContext
+        window.dispatchEvent(new CustomEvent('auth-error', { detail: { type: 'token-expired' } }));
+      } else {
+        console.log('401 on login endpoint, not dispatching auth-error.');
+      }
+    }
+
     return Promise.reject(error);
   }
 );

@@ -38,22 +38,33 @@ class TokenWithUser(Token):
     user: User
 
 
-@router.post("/register", response_model=User, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/register", response_model=TokenWithUser, status_code=status.HTTP_201_CREATED
+)
 async def register_user(
     user_data: UserCreate,
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
 ):
     """
-    Register a new user.
+    Register a new user and return JWT access token and user details.
     """
-    user = await auth_service.register_user(user_data)
-    if not user:
+    new_user = await auth_service.register_user(user_data)
+    if not new_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Username already registered or registration failed",
         )
-    # Return the created user details (excluding password)
-    return user
+
+    # Create access token for the new user
+    access_token_data = {"sub": str(new_user.id)}
+    access_token = create_access_token(data=access_token_data)
+
+    # Return both the access token and the new user object
+    return TokenWithUser(
+        access_token=access_token,
+        token_type="bearer",
+        user=new_user,  # Ensure new_user is of type User (Pydantic model for response)
+    )
 
 
 @router.post("/token", response_model=TokenWithUser)

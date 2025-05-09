@@ -86,6 +86,54 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   }, [token]);
 
+  const logout = async () => {
+    setLoading(true);
+    console.log("Logging out user.");
+    try {
+      // Optional: Call backend logout endpoint if it exists/is needed
+      // await logoutUser();
+      console.log("Backend logout call skipped/successful (if implemented).");
+    } catch (error) {
+        console.error('Backend logout failed:', error);
+        // Decide if logout should proceed even if backend call fails
+        // message.error("Logout failed on server, but logging out locally.");
+    } finally {
+        // Always clear local state and storage regardless of backend call success
+        localStorage.removeItem('authToken');
+        setToken(null);
+        setUser(null);
+        setIsAuthenticated(false);
+        // Optionally clear Authorization header from default Axios instance
+        if (api.defaults.headers.common['Authorization']) {
+            delete api.defaults.headers.common['Authorization'];
+        }
+        console.log("Token removed, state reset.");
+        setLoading(false);
+        // Redirect to login page after logout
+        router.push('/login');
+    }
+  };
+
+  // Effect to listen for the custom auth-error event
+  useEffect(() => {
+    const handleAuthError = (event: CustomEvent) => {
+      console.log('Auth error event received:', event.detail);
+      if (event.detail?.type === 'token-expired') {
+        console.log('Token expired, logging out...');
+        logout(); // Call the logout function
+      }
+    };
+
+    // Add event listener
+    window.addEventListener('auth-error', handleAuthError as EventListener);
+
+    // Cleanup function to remove event listener
+    return () => {
+      console.log('Removing auth-error event listener.');
+      window.removeEventListener('auth-error', handleAuthError as EventListener);
+    };
+  }, [logout]); // Depend on logout function
+
   const login = async (username: string, password: string) => {
     setLoading(true);
     try {
@@ -117,50 +165,33 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
-  const logout = async () => {
-    setLoading(true);
-    console.log("Logging out user.");
-    try {
-      // Optional: Call backend logout endpoint if it exists/is needed
-      // await logoutUser();
-      console.log("Backend logout call skipped/successful (if implemented).");
-    } catch (error) {
-        console.error('Backend logout failed:', error);
-        // Decide if logout should proceed even if backend call fails
-        // message.error("Logout failed on server, but logging out locally.");
-    } finally {
-        // Always clear local state and storage regardless of backend call success
-        localStorage.removeItem('authToken');
-        setToken(null);
-        setUser(null);
-        setIsAuthenticated(false);
-        // Optionally clear Authorization header from default Axios instance
-        if (api.defaults.headers.common['Authorization']) {
-            delete api.defaults.headers.common['Authorization'];
-        }
-        console.log("Token removed, state reset.");
-        setLoading(false);
-        // Redirect to login page after logout
-        router.push('/login');
-    }
-  };
-
   const signup = async (username: string, password: string) => {
     setLoading(true);
     try {
       console.log(`Attempting to register user: ${username}`);
       
-      // Call the registration service function
-      await registerUser({ username, password });
+      // Call the registration service function, which now returns LoginResponse
+      const { access_token: receivedToken, user: loggedInUser } = await registerUser({ username, password });
       
-      console.log("Registration successful");
+      console.log("Registration successful, automatically logging in.");
       
-      // Registration successful, automatically login the user
-      // Or simply return and let the signup page redirect to login
-      return;
+      // Directly update authentication state after successful registration
+      localStorage.setItem('authToken', receivedToken);
+      setToken(receivedToken);
+      setUser(loggedInUser);
+      setIsAuthenticated(true);
+      console.log("Registration and auto-login successful, token stored.");
+
+      // Redirect to the main page after successful registration and login
+      router.push('/');
       
     } catch (error) {
       console.error('Registration failed:', error);
+      // Clear any potentially partially set state
+      localStorage.removeItem('authToken');
+      setToken(null);
+      setUser(null);
+      setIsAuthenticated(false);
       // Rethrow the error so the registration page can display it
       throw error;
     } finally {

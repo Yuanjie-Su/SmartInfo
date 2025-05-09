@@ -228,6 +228,9 @@ class NewsResponse(BaseModel):
     )
     source_name: Optional[str] = Field(None, description="Name of the news source")
     category_name: Optional[str] = Field(None, description="Name of the news category")
+    created_at: Optional[datetime] = Field(
+        None, description="Timestamp when the news item was created"
+    )  # New field
     model_config = ConfigDict(from_attributes=True)
 
 
