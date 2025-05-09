@@ -372,18 +372,25 @@ class DatabaseConnectionManager:
                     )
                     logger.debug(f"Index idx_fetch_history_date checked/created.")
 
-                    # Search indexes for content fields
-                    try:
-                        await conn.execute(
-                            f"""
-                            CREATE INDEX IF NOT EXISTS idx_news_content_search ON {News.TABLE_NAME} (({News.CONTENT})) WHERE {News.CONTENT} IS NOT NULL
-                        """
-                        )
-                        logger.debug(f"Index idx_news_content_search checked/created.")
-                    except asyncpg.PostgresError as e:
-                        logger.warning(
-                            f"Could not create full-text search index idx_news_content_search: {e}"
-                        )
+                    # Add a GIN index for Full-Text Search on title, summary, source_name, and category_name
+                    # We'll combine them into a single tsvector for searching.
+                    # COALESCE is used to handle NULL values gracefully by replacing them with an empty string.
+                    # 'simple' configuration is language-neutral. Consider 'english' or your primary language if applicable.
+                    await conn.execute(
+                        f"""
+                        CREATE INDEX IF NOT EXISTS idx_news_search_fts ON {News.TABLE_NAME} USING GIN (
+                            to_tsvector('simple',
+                                COALESCE({News.TITLE}, '') || ' ' ||
+                                COALESCE({News.SUMMARY}, '') || ' ' ||
+                                COALESCE({News.SOURCE_NAME}, '') || ' ' ||
+                                COALESCE({News.CATEGORY_NAME}, '')
+                            )
+                        );
+                    """
+                    )
+                    logger.debug(
+                        f"Index idx_news_search_fts (GIN) for combined text fields checked/created."
+                    )
 
                     logger.info(
                         "All database tables and indexes verified/created successfully."

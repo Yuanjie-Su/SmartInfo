@@ -223,46 +223,58 @@ async def _run_batch_processing(
             # Re-raise to mark the Celery task as FAILED
             raise Exception(f"No valid LLM API key found for user {user_id}")
 
-        # 5. Process sources concurrently
+        # 5. Process sources concurrently using asyncio.create_task and asyncio.as_completed
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_SOURCES)
         results = []  # To store results or exceptions from each task
+        tasks_to_run = []
 
         logger.info(
-            f"[PID:{pid}] Task {task.request.id} (Group: {task_group_id}): Starting sequential processing for {len(source_details_to_process)} sources."
+            f"[PID:{pid}] Task {task.request.id} (Group: {task_group_id}): Creating tasks for {len(source_details_to_process)} sources."
         )
 
         for source_details_item in source_details_to_process:
+            # Create a task for each source processing
+            coro = _process_single_source_concurrently(
+                semaphore=semaphore,
+                task=task,  # Pass task instance
+                source_details=source_details_item,
+                llm_pool=llm_pool,
+                news_repo=news_repo,
+                fetch_history_repo=fetch_history_repo,
+                user_id=user_id,
+                progress_callback=progress_callback,  # Pass the modified callback
+                task_group_id=task_group_id,
+            )
+            tasks_to_run.append(asyncio.create_task(coro))
+
+        logger.info(
+            f"[PID:{pid}] Task {task.request.id} (Group: {task_group_id}): Starting processing of {len(tasks_to_run)} source tasks."
+        )
+
+        for future in asyncio.as_completed(tasks_to_run):
             try:
-                # Directly await the processing of each source
-                result = await _process_single_source_concurrently(
-                    semaphore=semaphore,
-                    task=task,  # Pass task instance
-                    source_details=source_details_item,
-                    llm_pool=llm_pool,
-                    news_repo=news_repo,
-                    fetch_history_repo=fetch_history_repo,
-                    user_id=user_id,
-                    progress_callback=progress_callback,  # Pass the modified callback
-                    task_group_id=task_group_id,
-                )
+                result = await future
                 results.append(result)
             except Exception as e:
-                # Log and store the exception, mimicking gather(return_exceptions=True)
+                # Log and store the exception
+                # The actual source_id would be tricky to get here if the task failed early
+                # We rely on logging within _process_single_source_concurrently for specific source errors
                 logger.error(
                     f"[PID:{pid}] Task {task.request.id} (Group: {task_group_id}): "
-                    f"Error processing source {source_details_item.get('source_id', 'N/A')} in sequential loop: {e}",
+                    f"Error in awaited source processing task: {e}",
                     exc_info=True,
                 )
+                # Append a generic error placeholder; specific source error should have been reported by callback
                 results.append(
                     {
-                        "source_id": source_details_item["id"],
+                        "source_id": "unknown_due_to_task_error",  # Cannot reliably get source_id here
                         "status": "error",
                         "message": str(e),
                     }
                 )
 
         logger.info(
-            f"[PID:{pid}] Task {task.request.id} (Group: {task_group_id}): Concurrent processing finished."
+            f"[PID:{pid}] Task {task.request.id} (Group: {task_group_id}): All source processing tasks completed."
         )
 
         # Aggregate results (optional, for logging or final task state)
@@ -537,7 +549,7 @@ async def _get_user_llm_pool(
             api_key = ApiKey.model_validate(dict(key_data))
             logger.info(f"Using API key ID {api_key.id} for user {user_id}")
             return LLMClientPool(
-                pool_size=MAX_CONCURRENT_SOURCES,
+                pool_size=MAX_CONCURRENT_SOURCES,  # Match the semaphore limit
                 base_url=api_key.base_url,
                 api_key=api_key.api_key,
                 model=api_key.model,
