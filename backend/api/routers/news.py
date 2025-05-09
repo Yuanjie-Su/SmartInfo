@@ -27,7 +27,7 @@ from api.dependencies import (
 )  # Import user dependency
 
 # Import Celery primitives for chord
-from celery import chord
+from celery import chord, group
 
 # Import schemas from the main models package
 from models import (  # Import models directly

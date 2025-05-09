@@ -225,13 +225,19 @@ async def _run_batch_processing(
 
         # 5. Process sources concurrently
         semaphore = asyncio.Semaphore(MAX_CONCURRENT_SOURCES)
-        processing_tasks = []
-        for source_details in source_details_to_process:
-            processing_tasks.append(
-                _process_single_source_concurrently(
+        results = []  # To store results or exceptions from each task
+
+        logger.info(
+            f"[PID:{pid}] Task {task.request.id} (Group: {task_group_id}): Starting sequential processing for {len(source_details_to_process)} sources."
+        )
+
+        for source_details_item in source_details_to_process:
+            try:
+                # Directly await the processing of each source
+                result = await _process_single_source_concurrently(
                     semaphore=semaphore,
                     task=task,  # Pass task instance
-                    source_details=source_details,
+                    source_details=source_details_item,
                     llm_pool=llm_pool,
                     news_repo=news_repo,
                     fetch_history_repo=fetch_history_repo,
@@ -239,13 +245,22 @@ async def _run_batch_processing(
                     progress_callback=progress_callback,  # Pass the modified callback
                     task_group_id=task_group_id,
                 )
-            )
+                results.append(result)
+            except Exception as e:
+                # Log and store the exception, mimicking gather(return_exceptions=True)
+                logger.error(
+                    f"[PID:{pid}] Task {task.request.id} (Group: {task_group_id}): "
+                    f"Error processing source {source_details_item.get('source_id', 'N/A')} in sequential loop: {e}",
+                    exc_info=True,
+                )
+                results.append(
+                    {
+                        "source_id": source_details_item["id"],
+                        "status": "error",
+                        "message": str(e),
+                    }
+                )
 
-        logger.info(
-            f"[PID:{pid}] Task {task.request.id} (Group: {task_group_id}): Starting concurrent processing for {len(processing_tasks)} sources with concurrency {MAX_CONCURRENT_SOURCES}."
-        )
-        # Use return_exceptions=True to ensure all tasks are attempted even if some fail
-        results = await asyncio.gather(*processing_tasks, return_exceptions=True)
         logger.info(
             f"[PID:{pid}] Task {task.request.id} (Group: {task_group_id}): Concurrent processing finished."
         )
@@ -360,9 +375,9 @@ async def _process_single_source_concurrently(
     Calls the core workflow function and handles saving results.
     """
     pid = os.getpid()
-    source_id = source_details["source_id"]
+    source_id = source_details["id"]
     url = source_details["url"]
-    source_name = source_details["source_name"]
+    source_name = source_details["name"]
     category_id = source_details.get("category_id")
     category_name = source_details.get("category_name", "未知分类")
 
