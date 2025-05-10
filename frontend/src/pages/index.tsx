@@ -665,41 +665,39 @@ const NewsPage: React.FC = () => {
             loading={loading && news.length > 0} // Show list loading indicator if news already exists
             renderItem={(item) => (
               <List.Item>
-                <Card hoverable style={{ borderRadius: '4px', boxShadow: 'none', border: '1px solid #f0f0f0' }}>
+                <Card hoverable>
                   <Card.Meta
                     title={
-                      <Tooltip title={item.title}>
-                        <Text strong ellipsis style={{ fontSize: '16px', display: 'block', lineHeight: '1.4', maxHeight: '2.8em', overflow: 'hidden' }}>
+                      <Tooltip title={item.title} placement="topLeft">
+                        <Text strong style={{ fontSize: '16px', display: 'block', lineHeight: '1.4', maxHeight: '2.8em', overflow: 'hidden' }}>
                           {item.title}
                         </Text>
                       </Tooltip>
                     }
                     description={
-                      <Space direction="vertical" size={8} style={{ width: '100%' }}>
-                        <Space size={16} wrap>
-                          <Space size={4}><CalendarOutlined style={{ color: '#8c8c8c' }} /><Text type="secondary" style={{ fontSize: 12 }}>{formatDate(item.date)}</Text></Space>
-                          <Space size={4}><GlobalOutlined style={{ color: '#8c8c8c' }} /><Text type="secondary" style={{ fontSize: 12 }}>{item.source_name}</Text></Space>
-                          <Space size={4}><TagOutlined style={{ color: '#8c8c8c' }} /><Text type="secondary" style={{ fontSize: 12 }}>{item.category_name}</Text></Space>
+                      <Space direction="vertical" size={12} style={{ width: '100%' }}>
+                        <Space size={12} wrap>
+                          <Space size={4}><CalendarOutlined style={{ color: 'var(--text-secondary)' }} /><Text type="secondary" style={{ fontSize: 12 }}>{formatDate(item.date)}</Text></Space>
+                          <Space size={4}><GlobalOutlined style={{ color: 'var(--text-secondary)' }} /><Text type="secondary" style={{ fontSize: 12 }}>{item.source_name}</Text></Space>
+                          <Space size={4}><TagOutlined style={{ color: 'var(--text-secondary)' }} /><Text type="secondary" style={{ fontSize: 12 }}>{item.category_name}</Text></Space>
                           {item.url && (
-                            <Space size={4}>
                             <Tooltip title="View Original">
-                              <a href={item.url} target="_blank" rel="noopener noreferrer" style={{ color: 'inherit', display: 'inline-flex', alignItems: 'center' }}>
-                              <LinkOutlined style={{ color: '#1890ff' }} />
+                              <a href={item.url} target="_blank" rel="noopener noreferrer" style={{ color: 'var(--accent-color)', display: 'inline-flex', alignItems: 'center' }}>
+                                <LinkOutlined />
                               </a>
                             </Tooltip>
-                            </Space>
                           )}
                         </Space>
                         {item.summary && (
-                          <Tooltip title={item.summary}>
-                            <Paragraph ellipsis={{ rows: 3 }} style={{ marginBottom: '8px', color: '#595959', minHeight: '60px' /* Ensure consistent height */ }}>
+                          <Tooltip title={item.summary} placement="bottomLeft">
+                            <Paragraph ellipsis={{ rows: 3 }} style={{ marginBottom: 0, color: 'var(--text-secondary)', minHeight: '60px' }}>
                               {item.summary}
                             </Paragraph>
                           </Tooltip>
                         )}
-                        <div style={{ textAlign: 'right' }}>
-                          <Tooltip title="Analyze">
-                            <Button type="link" icon={<ExperimentOutlined />} onClick={() => openAnalysisModal(item.id)} />
+                        <div style={{ textAlign: 'right', paddingTop: 8 }}>
+                          <Tooltip title="Analyze News">
+                            <Button type="text" icon={<ExperimentOutlined style={{color: 'var(--accent-color)'}}/>} onClick={() => openAnalysisModal(item.id)} />
                           </Tooltip>
                         </div>
                       </Space>

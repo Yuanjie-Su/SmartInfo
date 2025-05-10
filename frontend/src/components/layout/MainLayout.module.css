@@ -1,0 +1,100 @@
+/* frontend/src/components/layout/MainLayout.module.css */
+.appSider .ant-menu {
+    background: transparent !important;
+    /* Ensure menu itself is transparent if Sider has bg */
+    border-right: none !important;
+}
+
+.appSider .ant-menu-item {
+    border-radius: var(--border-radius-base) !important;
+    /* Rounded menu items */
+    margin-bottom: 4px !important;
+    /* Space between menu items */
+    margin-left: 8px !important;
+    /* Indent items slightly */
+    margin-right: 8px !important;
+}
+
+.appSider .ant-menu-item .ant-menu-title-content {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+
+/* Style for selected menu item with left border */
+.appSider .ant-menu-item-selected {
+    font-weight: 500 !important;
+    /* Make selected item text bolder */
+    position: relative;
+}
+
+.appSider .ant-menu-item-selected::before {
+    content: '';
+    position: absolute;
+    left: -8px;
+    /* Adjust to align with Sider padding or item margin */
+    top: 25%;
+    /* Center vertically */
+    bottom: 25%;
+    width: 3px;
+    background-color: var(--accent-color);
+    border-radius: 0 2px 2px 0;
+    /* Optional: slightly rounded indicator */
+    transition: all 0.2s ease-in-out;
+}
+
+.chatGroupTitle {
+    display: block;
+    margin-bottom: 8px;
+    padding-left: 16px;
+    /* Align with menu item text */
+    font-size: 11px !important;
+    /* Smaller */
+    font-weight: 600 !important;
+    /* Bolder */
+    text-transform: uppercase;
+    color: var(--text-secondary) !important;
+    letter-spacing: 0.05em;
+}
+
+.siderBottomSection {
+    position: absolute;
+    bottom: 0;
+    width: 100%;
+    padding: 8px;
+    /* Reduced padding for bottom */
+    border-top: 1px solid var(--border-color);
+}
+
+.siderBottomSection .ant-menu-item {
+    margin-left: 0 !important;
+    margin-right: 0 !important;
+}
+
+.siderBottomSection .ant-menu-item-selected::before {
+    left: 0px;
+    /* Adjust for bottom menu */
+}
+
+
+.logoutButton {
+    width: 100%;
+    margin-top: 8px;
+    text-align: left;
+    color: var(--text-secondary) !important;
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    /* Default for non-collapsed */
+}
+
+.appSider[class*="ant-layout-sider-collapsed"] .logoutButton {
+    justify-content: center;
+    /* Center icon when collapsed */
+}
+
+.logoutButton:hover {
+    background-color: var(--tertiary-bg) !important;
+    color: var(--text-primary) !important;
+}

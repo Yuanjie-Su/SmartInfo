@@ -1,24 +1,23 @@
 import React, { useState, useEffect } from 'react';
-import { Layout, Menu, Button, Input, Space, Typography, Divider, Spin } from 'antd'; // Added Spin
+import { Layout, Menu, Button, Input, Space, Typography, Divider, Spin, Avatar, Tooltip } from 'antd';
 import {
-  FileTextOutlined,
+  ReadOutlined,
   MessageOutlined,
   SettingOutlined,
   PlusOutlined,
   SearchOutlined,
-  LoginOutlined,
   LogoutOutlined,
-  UserOutlined
+  AppstoreOutlined
 } from '@ant-design/icons';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
-import { useAuth } from '@/context/AuthContext'; // Import useAuth hook
+import { useAuth } from '@/context/AuthContext';
 import { Chat } from '@/utils/types';
 import * as chatService from '@/services/chatService';
+import styles from './MainLayout.module.css';
 
-const { Header, Sider, Content } = Layout;
-const { Text } = Typography;
-const { Search } = Input;
+const { Sider, Content } = Layout;
+const { Text, Title } = Typography;
 
 // Helper to format chat date for grouping
 const formatChatDate = (timestampInput: number | string | undefined | null): string => {
@@ -99,13 +98,27 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const [chats, setChats] = useState<Chat[]>([]);
   const [filteredChats, setFilteredChats] = useState<Chat[]>([]);
   const [selectedKey, setSelectedKey] = useState('news');
-  const { isAuthenticated, user, logout, loading: authLoading } = useAuth(); // Get auth state and functions
+  const { isAuthenticated, user, logout, loading: authLoading } = useAuth();
+
+  useEffect(() => {
+    const path = router.pathname;
+    if (path === '/' || path.startsWith('/news') || path.startsWith('/analyze')) {
+      setSelectedKey('news');
+    } else if (path === '/settings') {
+      setSelectedKey('settings');
+    } else if (path.startsWith('/chat/')) {
+      const chatId = router.query.id;
+      setSelectedKey(chatId ? `chat-${chatId}` : 'chat-list');
+    } else if (path === '/chat') {
+        setSelectedKey('chat-list'); // General chat page
+    }
+  }, [router.pathname, router.query.id]);
 
   // Load chat history on component mount
   useEffect(() => {
     const loadChats = async () => {
       // Only attempt to load chats if authenticated
-      if (isAuthenticated) { // <-- Add this check
+      if (isAuthenticated) { 
         try {
           const result = await chatService.getChats();
           setChats(result);
@@ -124,10 +137,10 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     };
     
     // Only run the effect when the initial auth check is complete
-    if (!authLoading) { // <-- Add this check
+    if (!authLoading) { 
       loadChats();
     }
-  }, [isAuthenticated, authLoading]); // Add dependencies
+  }, [isAuthenticated, authLoading]); 
   
   // Filter chats when search text changes
   useEffect(() => {
@@ -141,18 +154,6 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     );
     setFilteredChats(filtered);
   }, [searchText, chats]);
-  
-  // Update selected key based on route
-  useEffect(() => {
-    const path = router.pathname;
-    if (path === '/') {
-      setSelectedKey('news');
-    } else if (path === '/settings') {
-      setSelectedKey('settings');
-    } else if (path.startsWith('/chat')) {
-      setSelectedKey(`chat-${router.query.id}`);
-    }
-  }, [router.pathname, router.query.id]);
   
   // Create a new chat
   const handleNewChat = async () => {
@@ -171,152 +172,138 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   // Grouped chats for display
   const groupedChats = groupChatsByDate(filteredChats);
   
+  const mainMenuItems = [
+    {
+      key: 'news',
+      icon: <ReadOutlined />,
+      label: <Link href="/">News Feed</Link>,
+    },
+  ];
+
+  const bottomMenuItems = [
+    {
+      key: 'settings',
+      icon: <SettingOutlined />,
+      label: <Link href="/settings">Settings</Link>,
+    }
+  ];
+
   return (
     <Layout style={{ minHeight: '100vh' }}>
       <Sider
-        width={250}
+        width={260}
         collapsible
         collapsed={collapsed}
         onCollapse={setCollapsed}
-        style={{ 
-          overflowY: 'auto',
+        theme="light"
+        className={styles.appSider}
+        style={{
+          overflow: 'auto',
           height: '100vh',
           position: 'fixed',
           left: 0,
           top: 0,
-          bottom: 0
+          bottom: 0,
+          borderRight: `1px solid var(--border-color)`,
+          paddingTop: '16px',
         }}
       >
-        <div style={{ padding: '16px' }}>
-          <Menu
-            mode="inline"
-            selectedKeys={[selectedKey]}
-            style={{ borderRight: 0 }}
-            items={[
-              {
-                key: 'news',
-                icon: <FileTextOutlined />,
-                label: <Link href="/">News</Link>,
-              }
-            ]}
-          />
+        <div style={{ padding: `0 ${collapsed ? '0' : '24px'} 16px ${collapsed ? '0' : '24px'}`, textAlign: collapsed ? 'center' : 'left', height: '32px', marginBottom: '8px' }}>
+          {collapsed ? (
+            <Avatar style={{ backgroundColor: 'var(--accent-color)' }} size="default">S</Avatar>
+          ) : (
+            <Title level={4} style={{ margin: 0, color: 'var(--accent-color)', fontWeight: 600 }}>SmartInfo</Title>
+          )}
         </div>
-        
-        <Divider style={{ margin: '0 0 16px 0' }} />
-        
-        {/* Chat Section with Search and New Button */}
-        <div style={{ padding: '0 16px 16px' }}>
-          <Space style={{ marginBottom: '12px', width: '100%' }}>
-            <Button 
-              type="primary" 
-              icon={<PlusOutlined />} 
-              onClick={handleNewChat}
-            />
-            <Input 
-              placeholder="Search chats" 
-              prefix={<SearchOutlined />} 
-              onChange={e => setSearchText(e.target.value)}
-              style={{ flex: 1 }}
-            />
-          </Space>
-          
-          {/* Chat Groups */}
+
+        <Menu
+          mode="inline"
+          selectedKeys={[selectedKey]}
+          items={mainMenuItems}
+          className={styles.siderMainMenu}
+        />
+
+        <Divider style={{ margin: '16px 24px' }} />
+
+        <div style={{ padding: `0 ${collapsed ? '8px' : '16px'}` }}>
           {!collapsed && (
-            <div>
-              {Object.entries(groupedChats).map(([groupName, groupChats]) => 
-                groupChats.length > 0 && (
-                  <div key={groupName} style={{ marginBottom: '16px' }}>
-                    <Text type="secondary" style={{ display: 'block', marginBottom: '8px' }}>
-                      {groupName}
-                    </Text>
-                    <Menu
-                      mode="inline"
-                      selectedKeys={[selectedKey]}
-                      style={{ borderRight: 0 }}
-                      items={groupChats.map(chat => ({
-                        key: `chat-${chat.id}`,
-                        icon: <MessageOutlined />,
-                        label: (
-                          <Link href={`/chat/${chat.id}`}>
-                            <div style={{ 
-                              overflow: 'hidden', 
-                              textOverflow: 'ellipsis', 
-                              whiteSpace: 'nowrap' 
-                            }}>
-                              {chat.title}
-                            </div>
-                          </Link>
-                        )
-                      }))}
-                    />
-                  </div>
-                )
-              )}
-            </div>
+            <Space.Compact style={{ width: '100%', marginBottom: '16px' }}>
+              <Input
+                prefix={<SearchOutlined style={{ color: 'var(--text-secondary)'}} />}
+                placeholder="Search chats"
+                value={searchText}
+                onChange={e => setSearchText(e.target.value)}
+                allowClear
+              />
+              <Tooltip title="New Chat">
+                <Button
+                  icon={<PlusOutlined />}
+                  onClick={handleNewChat}
+                  aria-label="New Chat"
+                />
+              </Tooltip>
+            </Space.Compact>
           )}
+
+          {!collapsed && (authLoading ? (
+            <div style={{padding: '20px', textAlign: 'center'}}><Spin size="small" /></div>
+          ) : (
+            Object.entries(groupedChats).map(([groupName, groupChatsList]) =>
+              groupChatsList.length > 0 && (
+                <div key={groupName} style={{ marginBottom: '12px' }}>
+                  <Text className={styles.chatGroupTitle}>
+                    {groupName}
+                  </Text>
+                  <Menu
+                    mode="inline"
+                    selectedKeys={[selectedKey]}
+                    items={groupChatsList.map(chat => ({
+                      key: `chat-${chat.id}`,
+                      icon: <MessageOutlined />,
+                      label: (
+                        <Link href={`/chat/${chat.id}`}>
+                          <Text ellipsis={{ tooltip: chat.title }}>{chat.title}</Text>
+                        </Link>
+                      )
+                    }))}
+                    className={styles.siderChatMenu}
+                  />
+                </div>
+              )
+            )
+          ))}
         </div>
 
-        {/* User Status & Settings at the bottom */}
-        <div style={{ position: 'absolute', bottom: 0, width: '100%', padding: '16px' }}>
-          {/* User Status Section */}
-          {!collapsed && ( // Only show details when not collapsed
-            <div style={{ marginBottom: '16px', padding: '8px 0', borderTop: '1px solid rgba(255, 255, 255, 0.1)', borderBottom: '1px solid rgba(255, 255, 255, 0.1)' }}>
-              {authLoading ? (
-                <div style={{ textAlign: 'center' }}>
-                  <Spin size="small" />
-                </div>
-              ) : isAuthenticated && user ? (
-                <Space direction="vertical" style={{ width: '100%', padding: '0 8px' }}>
-                  <Space>
-                    <UserOutlined style={{ color: 'rgba(255, 255, 255, 0.65)' }} />
-                    <Text style={{ color: 'rgba(255, 255, 255, 0.85)' }} ellipsis>
-                      {user.username}
-                    </Text>
-                  </Space>
-                  <Button
-                    type="text"
-                    icon={<LogoutOutlined />}
-                    onClick={logout}
-                    style={{ color: 'rgba(255, 255, 255, 0.65)', width: '100%', textAlign: 'left', paddingLeft: '8px' }}
-                  >
-                    Logout
-                  </Button>
-                </Space>
-              ) : (
-                 <Link href="/login" passHref>
-                   <Button
-                     type="text"
-                     icon={<LoginOutlined />}
-                     style={{ color: 'rgba(255, 255, 255, 0.65)', width: '100%', textAlign: 'left', paddingLeft: '8px' }}
-                   >
-                     Login
-                   </Button>
-                 </Link>
-              )}
-            </div>
-          )}
-
-          {/* Settings Menu */}
+        <div className={styles.siderBottomSection}>
           <Menu
             mode="inline"
             selectedKeys={[selectedKey]}
-            style={{ borderRight: 0 }}
-            items={[
-              {
-                key: 'settings',
-                icon: <SettingOutlined />,
-                label: <Link href="/settings">Settings</Link>,
-              }
-            ]}
+            items={bottomMenuItems}
+            className={styles.siderBottomMenu}
           />
-          <div style={{ textAlign: 'center', marginTop: '8px' }}>
-            <Text type="secondary">v1.0.0</Text>
-          </div>
+          {!authLoading && isAuthenticated && (
+            <Tooltip title={collapsed ? "Logout" : ""}>
+              <Button
+                type="text"
+                icon={<LogoutOutlined />}
+                onClick={logout}
+                className={styles.logoutButton}
+                aria-label="Logout"
+              >
+                {!collapsed && 'Logout'}
+              </Button>
+            </Tooltip>
+          )}
+          {!collapsed && (
+            <div style={{ textAlign: 'center', marginTop: '8px', paddingBottom: '8px' }}>
+              <Text type="secondary" style={{ fontSize: '11px' }}>v1.0.0</Text>
+            </div>
+          )}
         </div>
       </Sider>
-      
-      <Layout style={{ marginLeft: collapsed ? 80 : 250, transition: 'margin-left 0.2s' }}>
-        <Content style={{ margin: '24px 16px', padding: 24, minHeight: 280 }}>
+
+      <Layout style={{ marginLeft: collapsed ? 80 : 260, transition: 'margin-left 0.2s' }}>
+        <Content style={{ padding: 24, margin: 0, minHeight: 'calc(100vh - 48px)' }}>
           {children}
         </Content>
       </Layout>

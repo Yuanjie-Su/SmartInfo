@@ -9,7 +9,8 @@ import {
   message, 
   Spin,
   Divider,
-  Space
+  Space,
+  Tooltip
 } from 'antd';
 import { 
   SendOutlined, 
@@ -160,49 +161,37 @@ const ChatPage: React.FC = () => {
           }}
         >
           <Card
-            style={{
-              maxWidth: '70%',
-              backgroundColor: isUser ? '#f0f2ff' : '#fff',
-              borderColor: isUser ? '#d7d9e6' : '#e0e0e0',
-            }}
-            bodyStyle={{ padding: '12px 16px' }}
+            className={isUser ? 'user-message-card' : 'assistant-message-card'}
+            style={{ maxWidth: '75%' }}
+            bodyStyle={{ padding: '10px 14px' }}
           >
-            <div style={{ display: 'flex', alignItems: 'flex-start' }}>
-              <Avatar 
-                icon={isUser ? <UserOutlined /> : <RobotOutlined />} 
-                style={{ marginRight: 8, backgroundColor: isUser ? '#1677ff' : '#52c41a' }}
-              />
+            <Space align="start" size={8}>
+              {!isUser && (
+                <Avatar icon={<RobotOutlined />} style={{ backgroundColor: '#788596' }} />
+              )}
               <div style={{ flex: 1 }}>
-                <div
-                  style={{
-                    whiteSpace: 'pre-wrap',
-                    wordBreak: 'break-word',
-                  }}
-                >
+                <Paragraph style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', marginBottom: 4 }}>
                   {msg.content}
-                </div>
-                <div style={{ 
-                  marginTop: 8, 
-                  display: 'flex', 
-                  justifyContent: 'space-between',
-                  alignItems: 'center'
-                }}>
-                  <Text type="secondary" style={{ fontSize: '0.8rem' }}>
-                    {msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString() : ''}
+                </Paragraph>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text type="secondary" style={{ fontSize: '11px' }}>
+                    {msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
                   </Text>
-                  
-                  <Space>
+                  <Tooltip title="Copy message">
                     <Button 
                       type="text" 
                       icon={<CopyOutlined />} 
                       size="small"
                       onClick={() => handleCopyMessage(msg.content)}
-                      title="Copy message"
+                      style={{color: 'var(--text-secondary)', padding: '0 4px'}}
                     />
-                  </Space>
+                  </Tooltip>
                 </div>
               </div>
-            </div>
+              {isUser && (
+                <Avatar icon={<UserOutlined />} style={{ backgroundColor: 'var(--accent-color)' }} />
+              )}
+            </Space>
           </Card>
         </div>
       );
