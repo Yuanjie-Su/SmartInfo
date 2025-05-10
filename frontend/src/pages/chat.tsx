@@ -8,7 +8,6 @@ import {
   Avatar,
   Spin,
   Empty, // Import Empty
-  Select,
   Typography,
   Space,
   Card,
@@ -20,10 +19,9 @@ import {
   UserOutlined,
   RobotOutlined,
   SendOutlined,
-  PlusOutlined,
   CopyOutlined
 } from '@ant-design/icons';
-import MainLayout from '@/components/layout/MainLayout';
+
 import * as chatService from '@/services/chatService';
 import { handleApiError, extractErrorMessage } from '@/utils/apiErrorHandler'; // Import extractErrorMessage
 import { Chat, Message, Question } from '@/utils/types';
@@ -32,9 +30,8 @@ import withAuth from '@/components/auth/withAuth'; // Import the HOC
 const { Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;
-const { Option } = Select;
 
-const ChatPage: React.FC = () => {
+const ChatPageInternal: React.FC = () => {
   // State
   const [chats, setChats] = useState<Chat[]>([]);
   const [selectedChatId, setSelectedChatId] = useState<number | null>(null);
@@ -105,19 +102,6 @@ const ChatPage: React.FC = () => {
       // No need for global message here
     } finally {
       setLoadingMessages(false);
-    }
-  };
-
-  // Create a new chat
-  const handleNewChat = async () => {
-    try {
-      const newChat = await chatService.createChat({ title: '新聊天' });
-      await fetchChats(); // Refresh chat list
-      setSelectedChatId(newChat.id);
-      setMessages([]);
-      setInputMessage('');
-    } catch (error) {
-      handleApiError(error, '创建新聊天失败');
     }
   };
 
@@ -216,198 +200,142 @@ const ChatPage: React.FC = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  // Go to detailed chat page
-  const handleGoToChat = (chatId: number) => {
-    router.push(`/chat/${chatId}`);
-  };
-
   return (
-    <MainLayout>
-      <Layout style={{ padding: '24px', height: 'calc(100vh - 64px)' }}>
-        <Content style={{
-          background: '#fff',
-          padding: 24,
-          margin: 0,
-          borderRadius: 8,
-          height: '100%',
-          display: 'flex',
-          flexDirection: 'column'
-        }}>
-          {/* Chat Selection Header */}
-          <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-            <Space>
-              <Select
-                style={{ width: 300 }}
-                placeholder="选择聊天会话"
-                loading={loadingChats}
-                value={selectedChatId}
-                onChange={setSelectedChatId}
-                dropdownRender={menu => (
-                  <>
-                    {menu}
-                    <div style={{ padding: '8px', display: 'flex', justifyContent: 'space-between' }}>
-                      <Button
-                        type="primary"
-                        icon={<PlusOutlined />}
-                        onClick={handleNewChat}
-                      >
-                        新聊天
-                      </Button>
-                    </div>
-                  </>
-                )}
-              >
-                {chats.map((chat) => (
-                  <Option key={chat.id} value={chat.id}>
-                    {chat.title}
-                  </Option>
-                ))}
-              </Select>
-              <Button
-                type="primary"
-                icon={<PlusOutlined />}
-                onClick={handleNewChat}
-              >
-                新聊天
-              </Button>
-            </Space>
-
-            {selectedChatId && (
-              <Button
-                type="link"
-                onClick={() => handleGoToChat(selectedChatId)}
-              >
-                查看详情
-              </Button>
-            )}
-          </div>
-
-          {/* Messages Display */}
-          {error ? ( // Check for any error
-            error.type === 'notFound' ? ( // Specific Not Found UI
-              <Empty description={error.message || "Chat or messages not found."} style={{ margin: '60px 0' }} image={Empty.PRESENTED_IMAGE_SIMPLE} />
-            ) : error.type === 'forbidden' ? ( // Specific Forbidden UI
-              <Alert
-                message="Access Denied"
-                description={error.message || "You do not have permission to view this chat."}
-                type="error"
-                showIcon
-                style={{ marginBottom: 16 }}
-              />
-            ) : ( // Generic Error Alert
-              <Alert
-                message="Error"
-                description={error.message || "An unexpected error occurred."}
-                type="error"
-                showIcon
-                style={{ marginBottom: 16 }}
-              />
-            )
+    // This div becomes the direct child of MainLayout's Content area
+    // It should fill the height and manage its children with flexbox
+    <div style={{
+      height: '100%', // Fill the parent Content area from MainLayout
+      display: 'flex',
+      flexDirection: 'column',
+      // The background, padding, and borderRadius are now applied here
+      background: '#fff',
+      padding: 24,
+      borderRadius: 8,
+    }}>
+      {/* Messages Display - this was previously inside the AntD Content */}
+      {error ? ( 
+        error.type === 'notFound' ? (
+          <Empty description={error.message || "Chat or messages not found."} style={{ margin: '60px 0' }} image={Empty.PRESENTED_IMAGE_SIMPLE} />
+        ) : error.type === 'forbidden' ? (
+          <Alert
+            message="Access Denied"
+            description={error.message || "You do not have permission to view this chat."}
+            type="error"
+            showIcon
+            style={{ marginBottom: 16 }}
+          />
+        ) : (
+          <Alert
+            message="Error"
+            description={error.message || "An unexpected error occurred."}
+            type="error"
+            showIcon
+            style={{ marginBottom: 16 }}
+          />
+        )
+      ) : (
+        <div
+          style={{
+            flexGrow: 1,
+            overflowY: 'auto',
+            padding: '0 16px',
+            marginBottom: 16,
+            border: '1px solid #f0f0f0',
+            borderRadius: 4
+          }}
+          ref={messageListRef}
+        >
+          {loadingMessages ? (
+            <div style={{ display: 'flex', justifyContent: 'center', padding: '40px 0' }}>
+              <Spin size="large" />
+            </div>
+          ) : messages.length === 0 ? (
+            <Empty
+              description="没有消息"
+              style={{ margin: '60px 0' }}
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+            />
           ) : (
-            <div
-              style={{
-                flexGrow: 1,
-                overflowY: 'auto',
-                padding: '0 16px',
-                marginBottom: 16,
-                border: '1px solid #f0f0f0',
-                borderRadius: 4
-              }}
-              ref={messageListRef}
-            >
-              {loadingMessages ? (
-                <div style={{ display: 'flex', justifyContent: 'center', padding: '40px 0' }}>
-                  <Spin size="large" />
-                </div>
-              ) : messages.length === 0 ? (
-                <Empty
-                  description="没有消息"
-                  style={{ margin: '60px 0' }}
-                  image={Empty.PRESENTED_IMAGE_SIMPLE}
-                />
-              ) : (
-                <div style={{ padding: '16px 0' }}>
-                  {messages.map((msg) => {
-                    const isUser = msg.sender === 'user';
-                    return (
-                      <div
-                        key={msg.id}
-                        style={{
-                          display: 'flex',
-                          justifyContent: isUser ? 'flex-end' : 'flex-start',
-                          marginBottom: 16,
-                        }}
-                      >
-                        <Card
-                          className={isUser ? 'user-message-card' : 'assistant-message-card'}
-                          style={{ maxWidth: '75%' }}
-                          bodyStyle={{ padding: '10px 14px' }}
-                        >
-                          <Space align="start" size={8}>
-                            {!isUser && (
-                              <Avatar icon={<RobotOutlined />} style={{ backgroundColor: '#788596' }} />
-                            )}
-                            <div style={{ flex: 1 }}>
-                              <Paragraph style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', marginBottom: 4 }}>
-                                {msg.content}
-                              </Paragraph>
-                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                <Text type="secondary" style={{ fontSize: '11px' }}>
-                                  {msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
-                                </Text>
-                                <Tooltip title="Copy message">
-                                  <Button
-                                    type="text"
-                                    icon={<CopyOutlined />}
-                                    size="small"
-                                    onClick={() => handleCopyMessage(msg.content)}
-                                    style={{color: 'var(--text-secondary)', padding: '0 4px'}}
-                                  />
-                                </Tooltip>
-                              </div>
-                            </div>
-                            {isUser && (
-                              <Avatar icon={<UserOutlined />} style={{ backgroundColor: 'var(--accent-color)' }} />
-                            )}
-                          </Space>
-                        </Card>
-                      </div>
-                    );
-                  })}
-                  <div ref={messagesEndRef} />
-                </div>
-              )}
+            <div style={{ padding: '16px 0' }}>
+              {messages.map((msg) => {
+                const isUser = msg.sender === 'user';
+                return (
+                  <div
+                    key={msg.id}
+                    style={{
+                      display: 'flex',
+                      justifyContent: isUser ? 'flex-end' : 'flex-start',
+                      marginBottom: 16,
+                    }}
+                  >
+                    <Card
+                      className={isUser ? 'user-message-card' : 'assistant-message-card'}
+                      style={{ maxWidth: '75%' }}
+                      bodyStyle={{ padding: '10px 14px' }}
+                    >
+                      <Space align="start" size={8}>
+                        {!isUser && (
+                          <Avatar icon={<RobotOutlined />} style={{ backgroundColor: '#788596' }} />
+                        )}
+                        <div style={{ flex: 1 }}>
+                          <Paragraph style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', marginBottom: 4 }}>
+                            {msg.content}
+                          </Paragraph>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <Text type="secondary" style={{ fontSize: '11px' }}>
+                              {msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
+                            </Text>
+                            <Tooltip title="Copy message">
+                              <Button
+                                type="text"
+                                icon={<CopyOutlined />}
+                                size="small"
+                                onClick={() => handleCopyMessage(msg.content)}
+                                style={{color: 'var(--text-secondary)', padding: '0 4px'}}
+                              />
+                            </Tooltip>
+                          </div>
+                        </div>
+                        {isUser && (
+                          <Avatar icon={<UserOutlined />} style={{ backgroundColor: 'var(--accent-color)' }} />
+                        )}
+                      </Space>
+                    </Card>
+                  </div>
+                );
+              })}
+              <div ref={messagesEndRef} />
             </div>
           )}
+        </div>
+      )}
 
-
-          {/* Message Input */}
-          <div style={{ display: 'flex', alignItems: 'flex-end' }}>
-            <TextArea
-              value={inputMessage}
-              onChange={handleInputChange}
-              onKeyDown={handleKeyDown}
-              placeholder="输入消息..."
-              autoSize={{ minRows: 2, maxRows: 6 }}
-              style={{ flex: 1, marginRight: 8 }}
-              disabled={sending}
-            />
-            <Button
-              type="primary"
-              icon={<SendOutlined />}
-              onClick={handleSendMessage}
-              loading={sending}
-              disabled={!inputMessage.trim()}
-              style={{ height: 'auto', padding: '8px 16px' }}
-            >
-              发送
-            </Button>
-          </div>
-        </Content>
-      </Layout>
-    </MainLayout>
+      {/* Message Input - this was previously inside the AntD Content */}
+      <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+        <TextArea
+          value={inputMessage}
+          onChange={handleInputChange}
+          onKeyDown={handleKeyDown}
+          placeholder="输入消息..."
+          autoSize={{ minRows: 2, maxRows: 6 }}
+          style={{ flex: 1, marginRight: 8 }}
+          disabled={sending}
+        />
+        <Button
+          type="primary"
+          icon={<SendOutlined />}
+          onClick={handleSendMessage}
+          loading={sending}
+          disabled={!inputMessage.trim()}
+          style={{ height: 'auto', padding: '8px 16px' }}
+        >
+          发送
+        </Button>
+      </div>
+    </div>
   );
 };
 
-// Wrap the component with the HOC for authentication
-export default withAuth(ChatPage);
+// Wrap the internal component with the HOC for authentication
+const ChatPage = withAuth(ChatPageInternal);
+export default ChatPage;

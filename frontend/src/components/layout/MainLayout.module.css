@@ -1,4 +1,29 @@
 /* frontend/src/components/layout/MainLayout.module.css */
+
+.siderChatMenu .ant-menu-item .ant-space {
+  /* Ensure Space takes full width for proper alignment */
+  width: 100%;
+}
+
+.chatDeleteButton {
+  visibility: hidden; /* Hide by default */
+  opacity: 0.6;
+  transition: opacity 0.2s ease-in-out;
+}
+
+.siderChatMenu .ant-menu-item:hover .chatDeleteButton {
+  visibility: visible; /* Show on menu item hover */
+}
+
+.chatDeleteButton:hover {
+  opacity: 1;
+  color: var(--ant-error-color) !important; /* Use Ant Design's error color on hover */
+}
+
+/* Adjustments for selected item's delete button visibility */
+.siderChatMenu .ant-menu-item-selected .chatDeleteButton {
+  visibility: visible; /* Ensure delete button is visible on selected item too */
+}
 .appSider .ant-menu {
     background: transparent !important;
     /* Ensure menu itself is transparent if Sider has bg */
@@ -13,6 +38,8 @@
     margin-left: 8px !important;
     /* Indent items slightly */
     margin-right: 8px !important;
+    display: flex !important; /* Added for vertical centering */
+    align-items: center !important; /* Added for vertical centering */
 }
 
 .appSider .ant-menu-item .ant-menu-title-content {

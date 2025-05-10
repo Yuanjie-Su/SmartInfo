@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Layout, Menu, Button, Input, Space, Typography, Divider, Spin, Avatar, Tooltip } from 'antd';
+import React, { useState, useEffect, useRef } from 'react';
+import { Layout, Menu, Button, Input, Space, Typography, Divider, Spin, Avatar, Tooltip, Dropdown, Modal, Form as AntForm, message } from 'antd';
 import {
   ReadOutlined,
   MessageOutlined,
@@ -7,13 +7,16 @@ import {
   PlusOutlined,
   SearchOutlined,
   LogoutOutlined,
-  AppstoreOutlined
+  AppstoreOutlined,
+  EllipsisOutlined // Added EllipsisOutlined
 } from '@ant-design/icons';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
 import { useAuth } from '@/context/AuthContext';
 import { Chat } from '@/utils/types';
 import * as chatService from '@/services/chatService';
+import { extractErrorMessage } from '@/utils/apiErrorHandler'; // For error handling
+import axios from 'axios'; // For checking API error type
 import styles from './MainLayout.module.css';
 
 const { Sider, Content } = Layout;
@@ -92,6 +95,10 @@ interface MainLayoutProps {
 }
 
 const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
+  const [hoveredChatId, setHoveredChatId] = useState<number | null>(null);
+  const [isRenameModalVisible, setIsRenameModalVisible] = useState(false);
+  const [renamingChatDetails, setRenamingChatDetails] = useState<{ id: number; currentTitle: string } | null>(null);
+  const [renameForm] = AntForm.useForm(); // Form instance for rename modal
   const router = useRouter();
   const [collapsed, setCollapsed] = useState(false);
   const [searchText, setSearchText] = useState('');
@@ -140,7 +147,24 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     if (!authLoading) { 
       loadChats();
     }
-  }, [isAuthenticated, authLoading]); 
+  }, [isAuthenticated, authLoading]);
+
+  const loadChats = async () => {
+    if (isAuthenticated) { 
+      try {
+        const result = await chatService.getChats();
+        setChats(result);
+        setFilteredChats(result); // Also update filteredChats initially
+      } catch (error) {
+        console.error('Failed to load chats:', error);
+        setChats([]);
+        setFilteredChats([]);
+      }
+    } else {
+       setChats([]);
+       setFilteredChats([]);
+    }
+  };
   
   // Filter chats when search text changes
   useEffect(() => {
@@ -158,14 +182,12 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   // Create a new chat
   const handleNewChat = async () => {
     try {
-      const newChat = await chatService.createChat({ title: 'New Chat' });
-      router.push(`/chat/${newChat.id}`);
-      // Refresh chat list
-      const updatedChats = await chatService.getChats();
-      setChats(updatedChats);
-      setFilteredChats(updatedChats);
+      const newChat = await chatService.createChat({ title: 'New Chat' }); // Ensure your createChat service is robust
+      await loadChats(); // Refresh chat list
+      router.push(`/chat/${newChat.id}`); // Navigate after list is updated
     } catch (error) {
       console.error('Failed to create new chat:', error);
+      message.error(extractErrorMessage(error).message || 'Failed to create new chat.');
     }
   };
   
@@ -187,6 +209,69 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
       label: <Link href="/settings">Settings</Link>,
     }
   ];
+
+  const showRenameModal = (chatId: number, currentTitle: string) => {
+    setRenamingChatDetails({ id: chatId, currentTitle });
+    renameForm.setFieldsValue({ newTitle: currentTitle });
+    setIsRenameModalVisible(true);
+  };
+
+  const handleRenameOk = async () => {
+    if (!renamingChatDetails) return;
+    try {
+      const values = await renameForm.validateFields();
+      await chatService.updateChat(renamingChatDetails.id, { title: values.newTitle });
+      message.success('Chat renamed successfully');
+      await loadChats();
+      setIsRenameModalVisible(false);
+      renameForm.resetFields();
+      // If the renamed chat is the currently selected one, update the page title or other UI elements if necessary
+      if (selectedKey === `chat-${renamingChatDetails.id}`) {
+        // Potentially update document.title or a local state for the page title if MainLayout controls it
+      }
+    } catch (errorInfo) {
+      if (axios.isAxiosError(errorInfo)) {
+        message.error(extractErrorMessage(errorInfo).message || 'Failed to rename chat.');
+      } else {
+        console.log('Rename form validation failed:', errorInfo);
+      }
+    }
+  };
+
+  const handleRenameCancel = () => {
+    setIsRenameModalVisible(false);
+    renameForm.resetFields();
+  };
+
+  const handleDeleteChat = (chatId: number) => {
+    Modal.confirm({
+      title: 'Delete Chat',
+      content: 'Are you sure you want to delete this chat session and all its messages?',
+      okText: 'Delete',
+      okType: 'danger',
+      cancelText: 'Cancel',
+      onOk: async () => {
+        try {
+          await chatService.deleteChat(chatId);
+          message.success('Chat deleted successfully');
+          await loadChats();
+          if (router.query.id && parseInt(router.query.id as string) === chatId) {
+            router.push('/chat');
+          } else if (selectedKey === `chat-${chatId}`) {
+            // If the deleted chat was selected in the sidebar, navigate to the general chat page or select another chat
+            const newChats = chats.filter(c => c.id !== chatId);
+            if (newChats.length > 0) {
+              // router.push(`/chat/${newChats[0].id}`); // Optionally select the first available chat
+            } else {
+              router.push('/chat'); // Or go to the generic chat page if no chats are left
+            }
+          }
+        } catch (error) {
+          message.error(extractErrorMessage(error).message || 'Failed to delete chat');
+        }
+      },
+    });
+  };
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
@@ -252,20 +337,81 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
               groupChatsList.length > 0 && (
                 <div key={groupName} style={{ marginBottom: '12px' }}>
                   <Text className={styles.chatGroupTitle}>
-                    {groupName}
+                  {groupName}
                   </Text>
                   <Menu
                     mode="inline"
                     selectedKeys={[selectedKey]}
-                    items={groupChatsList.map(chat => ({
-                      key: `chat-${chat.id}`,
-                      icon: <MessageOutlined />,
-                      label: (
-                        <Link href={`/chat/${chat.id}`}>
-                          <Text ellipsis={{ tooltip: chat.title }}>{chat.title}</Text>
-                        </Link>
-                      )
-                    }))}
+                    // onClick={(e) => router.push(`/chat/${e.key.replace('chat-', '')}`)} // Main navigation can be handled by Menu's onClick or Link's onClick
+                    items={groupChatsList.map(chat => {
+                      const menuKey = `chat-${chat.id}`;
+                      return {
+                        key: menuKey,
+                        label: (
+                          <div
+                            onMouseEnter={() => setHoveredChatId(chat.id)}
+                            onMouseLeave={() => setHoveredChatId(null)}
+                            style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}
+                          >
+                            <Link href={`/chat/${chat.id}`} passHref legacyBehavior>
+                              <a style={{ flexGrow: 1, overflow: 'hidden', textDecoration: 'none', color: 'inherit' }}
+                                 onClick={(e) => {
+                                   // Prevent Link navigation if the click is on the actions button area
+                                   if ((e.target as HTMLElement).closest('.chat-item-actions-trigger')) {
+                                     e.preventDefault();
+                                   }
+                                 }}
+                              >
+                                <Text ellipsis={{ tooltip: chat.title }} style={{ display: 'block', lineHeight: '22px' }}>
+                                  {chat.title}
+                                </Text>
+                              </a>
+                            </Link>
+                            {hoveredChatId === chat.id && !collapsed && (
+                              <Dropdown
+                                menu={{
+                                  items: [
+                                    {
+                                      key: 'rename',
+                                      label: 'Rename',
+                                      onClick: (info) => {
+                                        info.domEvent.stopPropagation();
+                                        info.domEvent.preventDefault();
+                                        showRenameModal(chat.id, chat.title);
+                                      }
+                                    },
+                                    {
+                                      key: 'delete',
+                                      label: 'Delete',
+                                      danger: true,
+                                      onClick: (info) => {
+                                        info.domEvent.stopPropagation();
+                                        info.domEvent.preventDefault();
+                                        handleDeleteChat(chat.id);
+                                      }
+                                    },
+                                  ]
+                                }}
+                                trigger={['click']} // Changed to click trigger
+                                placement="bottomRight"
+                              >
+                                <Button
+                                  className="chat-item-actions-trigger" // Class to identify the button
+                                  type="text"
+                                  icon={<EllipsisOutlined />}
+                                  size="small"
+                                  style={{ flexShrink: 0, marginLeft: '8px' }}
+                                  onClick={(e) => { // This button's click will open the Dropdown
+                                    e.stopPropagation(); // Prevent Menu.Item's own onClick (if any for navigation)
+                                    e.preventDefault(); // Prevent any default browser action
+                                  }}
+                                />
+                              </Dropdown>
+                            )}
+                          </div>
+                        ),
+                      };
+                    })}
                     className={styles.siderChatMenu}
                   />
                 </div>
@@ -307,6 +453,24 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
           {children}
         </Content>
       </Layout>
+
+      <Modal
+        title="Rename Chat"
+        open={isRenameModalVisible}
+        onOk={handleRenameOk}
+        onCancel={handleRenameCancel}
+        // confirmLoading={/* Add loading state for rename operation if needed */}
+      >
+        <AntForm form={renameForm} layout="vertical" name="rename_chat_form">
+          <AntForm.Item
+            name="newTitle"
+            label="New Chat Title"
+            rules={[{ required: true, message: 'Please enter the new title.' }]}
+          >
+            <Input />
+          </AntForm.Item>
+        </AntForm>
+      </Modal>
     </Layout>
   );
 };
