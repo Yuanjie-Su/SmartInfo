@@ -16,6 +16,8 @@ interface AuthContextType {
   login: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>; // Make logout async
   signup: (username: string, password: string) => Promise<void>; // Implementation of signup function
+  refreshChatList: () => void; // Function to trigger chat list refresh
+  setRefreshChatListCallback: (callback: (() => void) | null) => void; // New
 }
 
 // Create the context with a default value
@@ -28,6 +30,7 @@ interface AuthProviderProps {
 
 // Create the AuthProvider component
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
+  const [refreshChatListCallback, setRefreshChatListCallbackInternal] = useState<(() => void) | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
@@ -169,12 +172,12 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     setLoading(true);
     try {
       console.log(`Attempting to register user: ${username}`);
-      
+
       // Call the registration service function, which now returns LoginResponse
       const { access_token: receivedToken, user: loggedInUser } = await registerUser({ username, password });
-      
+
       console.log("Registration successful, automatically logging in.");
-      
+
       // Directly update authentication state after successful registration
       localStorage.setItem('authToken', receivedToken);
       setToken(receivedToken);
@@ -184,7 +187,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
       // Redirect to the main page after successful registration and login
       router.push('/');
-      
+
     } catch (error) {
       console.error('Registration failed:', error);
       // Clear any potentially partially set state
@@ -199,6 +202,21 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
+  // Placeholder function - MainLayout will provide the actual implementation
+  const refreshChatList = () => {
+    if (refreshChatListCallback) {
+      console.log("AuthContext: refreshChatList called, invoking callback.");
+      refreshChatListCallback();
+    } else {
+      console.warn('AuthContext: refreshChatList called, but no callback is set from MainLayout.');
+    }
+  };
+
+  const setRefreshChatListCallback = (callback: (() => void) | null) => {
+    setRefreshChatListCallbackInternal(() => callback);
+  };
+
+
   const contextValue: AuthContextType = {
     isAuthenticated,
     user,
@@ -207,6 +225,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     login,
     logout,
     signup,
+    refreshChatList,
+    setRefreshChatListCallback, // Provide the setter
   };
 
   // Render children only after initial loading is complete

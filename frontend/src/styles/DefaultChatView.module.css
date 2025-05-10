@@ -1,0 +1,78 @@
+.defaultChatViewContainer {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    /* Adjust based on parent container */
+    padding: 24px;
+    /* Add some padding */
+    text-align: center;
+    /* Center text content */
+}
+
+.greetingArea {
+    margin-bottom: 24px;
+    /* Vertical Spacing 1 */
+}
+
+.greetingTitle {
+    font-size: 2.5em;
+    /* Adjust as needed */
+    font-weight: 600;
+    background: linear-gradient(to right, #4285F4, #9B72CB, #D96570, #F2A600);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    color: transparent;
+    margin-bottom: 8px;
+    /* Space before sub-greeting */
+}
+
+.subGreeting {
+    font-size: 1em;
+    /* Adjust as needed */
+    color: #8C8C8C;
+    /* Medium Gray */
+}
+
+.suggestionsArea {
+    margin-bottom: 32px;
+    /* Vertical Spacing 2 */
+    width: 100%;
+    /* Allow suggestions to take full width if needed */
+    max-width: 700px;
+    /* Align with input bar max-width */
+}
+
+.suggestionCard {
+    background-color: #F9F9F9;
+    border: 1px solid #E8E8E8;
+    border-radius: 8px;
+    height: 45px;
+    /* Adjust as needed */
+    padding: 0 16px;
+    /* Adjust padding */
+    box-shadow: 0 2px 0 rgba(0, 0, 0, 0.02);
+    /* Add other styles for text, hover */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #262626;
+    /* Main Text Color */
+    white-space: nowrap;
+    /* Prevent text wrapping */
+}
+
+.suggestionCard:hover {
+    border-color: #1677FF;
+    /* Ant Design Primary Blue for hover */
+    background-color: #FFFFFF;
+    color: #1677FF;
+    /* Change text color on hover */
+}
+
+.chatInputArea {
+    width: 100%;
+    /* Allow input bar to take full width */
+}

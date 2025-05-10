@@ -1,23 +1,17 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/router';
 import { 
   Typography, 
   Input, 
   Button, 
   Card, 
-  Avatar, 
   message, 
   Spin,
-  Divider,
-  Space,
   Tooltip
 } from 'antd';
 import { 
   SendOutlined, 
-  UserOutlined, 
-  RobotOutlined,
-  CopyOutlined,
-  EditOutlined
+  CopyOutlined
 } from '@ant-design/icons';
 import { Chat, Message, MessageCreate } from '@/utils/types';
 import * as chatService from '@/services/chatService';
@@ -34,26 +28,17 @@ const ChatPage: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [isSendingInitial, setIsSendingInitial] = useState<boolean>(false); // New state for initial message sending
   const [newMessage, setNewMessage] = useState('');
   const [error, setError] = useState<{ type: string, message: string, status?: number } | null>(null); // Updated error state type
   
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textAreaRef = useRef<any>(null);
-  
-  // Load chat data when id changes
-  useEffect(() => {
-    if (id) {
-      loadChat(parseInt(id as string));
-    }
-  }, [id]);
-  
-  // Scroll to bottom when messages change
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
-  
-  const loadChat = async (chatId: number) => {
+  const initialMessageSentRef = useRef<boolean>(false); // Add this line
+
+  // Define loadChat with useCallback before it's used in useEffect
+  const loadChat = useCallback(async (chatId: number) => {
     try {
       setLoading(true);
       setError(null); // Reset error state
@@ -82,56 +67,136 @@ const ChatPage: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []); // Empty dependency array as loadChat doesn't depend on component state that changes frequently here.
+  
+  // Load chat data when id changes or router is ready
+  useEffect(() => {
+    if (router.isReady && id) {
+      const chatIdNum = parseInt(id as string); // Ensure numeric ID
+      // Removed duplicate declaration of chatIdNum
+      if (!isNaN(chatIdNum)) { // Ensure id is a valid number
+        loadChat(chatIdNum);
+      } else {
+        setError({ type: 'notFound', message: `Invalid chat ID: ${id}`, status: 400 });
+        setLoading(false);
+      }
+    }
+  }, [id, router.isReady, loadChat]); // Added loadChat to dependency array
+  
+  // Scroll to bottom when messages change or initial message sending finishes
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, isSendingInitial]); // Depend on messages and isSendingInitial
   
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
   
+  // Effect to handle initial message from query parameter
+  useEffect(() => {
+    // Ensure router is ready, an id is present, an initialMessage exists in query, AND it hasn't been sent yet
+    if (router.isReady && id && router.query.initialMessage && !initialMessageSentRef.current) {
+      const initialMessageContent = router.query.initialMessage as string; // router.query.initialMessage is guaranteed by the check above
+      const currentChatId = id as string; // id is guaranteed by the check above
+      const chatIdNum = parseInt(currentChatId);
+
+      if (!isNaN(chatIdNum)) {
+        console.log(`Processing initial message for chat ${currentChatId}: "${initialMessageContent}" (Ref Guard)`);
+        initialMessageSentRef.current = true; // Set the ref flag immediately and synchronously
+        setIsSendingInitial(true); // Start initial sending loading state
+
+        const sendInitialMessageAsync = async () => {
+          try {
+            // Create the user message in the backend
+            await chatService.createMessage({
+              chat_id: chatIdNum,
+              sender: 'user',
+              content: initialMessageContent
+            });
+            console.log("Initial user message created.");
+
+            // Send the question to the LLM
+            await chatService.askQuestion({
+              chat_id: chatIdNum,
+              content: initialMessageContent,
+            });
+            console.log("Initial question sent to LLM.");
+
+            // Refresh the chat messages to include the user's message and AI's response
+            await loadChat(chatIdNum);
+            console.log("Chat messages refreshed after initial message.");
+
+          } catch (error) {
+            console.error('Failed to send initial message or get response:', error);
+            message.error(extractErrorMessage(error).message || 'Failed to send initial message.');
+          } finally {
+            // Remove the initialMessage query parameter only if it was the one we just processed
+            // This check is important if the effect re-runs after router.replace already cleared it
+            if (router.query.initialMessage === initialMessageContent) {
+                router.replace(`/chat/${currentChatId}`, undefined, { shallow: true });
+            }
+            setIsSendingInitial(false); // End initial sending loading state
+            console.log("Initial message processing finished.");
+          }
+        };
+        sendInitialMessageAsync();
+      } else {
+        setError({ type: 'notFound', message: `Invalid chat ID for initial message: ${currentChatId}`, status: 400 });
+        setIsSendingInitial(false);
+        initialMessageSentRef.current = true; // Mark as processed to avoid retries
+        if (router.query.initialMessage) { // Clear query if it was there
+            router.replace(`/chat/${currentChatId}`, undefined, { shallow: true });
+        }
+      }
+    }
+  }, [
+    router.isReady,
+    router.query.initialMessage, // Depend explicitly on the query parameter
+    id,                          // Depend on the chat ID from the path
+    loadChat                     // loadChat is memoized
+    // Note: Do not add initialMessageSentRef.current to the dependency array.
+  ]);
+
+
   const handleSendMessage = async () => {
-    if (!newMessage.trim() || !chat) return;
-    
+    // Disable sending if initial message is still being processed
+    if (!newMessage.trim() || !chat || sending || isSendingInitial) return;
+
     const userMessageData: MessageCreate = {
       chat_id: chat.id,
       sender: 'user',
       content: newMessage
     };
-    
+
     try {
       setSending(true);
-      
-      // Create user message
-      const userMessage = await chatService.createMessage(userMessageData);
-      setMessages(prev => [...prev, userMessage]);
+
+      // Clear input field immediately
+      const messageContent = newMessage;
       setNewMessage('');
-      
+
       // Focus back on the textarea
       if (textAreaRef.current) {
         textAreaRef.current.focus();
       }
-      
+
+      // Create user message in backend
+      await chatService.createMessage(userMessageData);
+
       // Now ask the question and get answer
-      const response = await chatService.askQuestion({
+      await chatService.askQuestion({
         chat_id: chat.id,
-        content: newMessage,
+        content: messageContent, // Use the stored content
       });
-      
-      // If no message_id in response, create new assistant message
-      if (!response.message_id) {
-        const assistantMessageData: MessageCreate = {
-          chat_id: chat.id,
-          sender: 'assistant',
-          content: response.content
-        };
-        const assistantMessage = await chatService.createMessage(assistantMessageData);
-        setMessages(prev => [...prev, assistantMessage]);
-      } else {
-        // Otherwise, update messages to include the new message
-        loadChat(chat.id);
-      }
+
+      // Refresh messages from server to ensure consistency and include AI response
+      await loadChat(chat.id);
+
     } catch (error) {
       console.error('Failed to send message:', error);
-      message.error('Failed to send message');
+      message.error(extractErrorMessage(error).message || 'Failed to send message');
+      // If sending fails, you might want to restore the message content
+      // setNewMessage(messageContent); // Optional: restore message on error
     } finally {
       setSending(false);
     }
@@ -157,41 +222,30 @@ const ChatPage: React.FC = () => {
           style={{
             display: 'flex',
             justifyContent: isUser ? 'flex-end' : 'flex-start',
-            marginBottom: 16,
+            marginBottom: 12,
           }}
         >
           <Card
             className={isUser ? 'user-message-card' : 'assistant-message-card'}
-            style={{ maxWidth: '75%' }}
+            style={{ maxWidth: '80%' }}
             bodyStyle={{ padding: '10px 14px' }}
           >
-            <Space align="start" size={8}>
-              {!isUser && (
-                <Avatar icon={<RobotOutlined />} style={{ backgroundColor: '#788596' }} />
-              )}
-              <div style={{ flex: 1 }}>
-                <Paragraph style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', marginBottom: 4 }}>
-                  {msg.content}
-                </Paragraph>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Text type="secondary" style={{ fontSize: '11px' }}>
-                    {msg.timestamp ? new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : ''}
-                  </Text>
-                  <Tooltip title="Copy message">
-                    <Button 
-                      type="text" 
-                      icon={<CopyOutlined />} 
-                      size="small"
-                      onClick={() => handleCopyMessage(msg.content)}
-                      style={{color: 'var(--text-secondary)', padding: '0 4px'}}
-                    />
-                  </Tooltip>
-                </div>
+            <div style={{ flex: 1 }}>
+              <Paragraph style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', marginBottom: 0 }}>
+                {msg.content}
+              </Paragraph>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
+                <Tooltip title="Copy message">
+                  <Button 
+                    type="text" 
+                    icon={<CopyOutlined />} 
+                    size="small"
+                    onClick={() => handleCopyMessage(msg.content)}
+                    style={{color: 'var(--text-secondary)', padding: '0 4px'}}
+                  />
+                </Tooltip>
               </div>
-              {isUser && (
-                <Avatar icon={<UserOutlined />} style={{ backgroundColor: 'var(--accent-color)' }} />
-              )}
-            </Space>
+            </div>
           </Card>
         </div>
       );
@@ -216,7 +270,7 @@ const ChatPage: React.FC = () => {
             <Paragraph>{error.message || "The requested chat could not be found or access is denied."}</Paragraph>
           </>
         ) : error.type === 'forbidden' ? (
-           <>
+            <>
             <Title level={3}>Access Denied</Title>
             <Paragraph>{error.message || "You do not have permission to view this chat."}</Paragraph>
           </>
@@ -235,9 +289,9 @@ const ChatPage: React.FC = () => {
 
   // If not loading and no error, check if chat data exists
   if (!chat) {
-     // This case should ideally be covered by the error state now,
-     // but keep as a fallback if error state wasn't set correctly.
-     return (
+      // This case should ideally be covered by the error state now,
+      // but keep as a fallback if error state wasn't set correctly.
+      return (
         <div style={{ textAlign: 'center', marginTop: 50 }}>
           <Title level={3}>Chat Not Found</Title>
           <Paragraph>The requested chat could not be found or has been deleted.</Paragraph>
@@ -250,14 +304,8 @@ const ChatPage: React.FC = () => {
 
   // If not loading, no error, and chat exists, render the chat content
   return (
-    <div style={{ height: 'calc(100vh - 150px)', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ marginBottom: 16 }}>
-        <Title level={3}>{chat.title}</Title>
-      </div>
-      
-      <Divider style={{ margin: '0 0 16px 0' }} />
-      
-      <div style={{ flex: 1, overflowY: 'auto', padding: '0 4px' }}>
+    <div style={{ height: 'calc(100vh - 110px)', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '16px 4px' }}>
         {messages.length === 0 ? (
           <div style={{ textAlign: 'center', marginTop: 40 }}>
             <Title level={4}>Start a conversation</Title>
@@ -269,32 +317,33 @@ const ChatPage: React.FC = () => {
         <div ref={messagesEndRef} />
       </div>
       
-      <div style={{ padding: '16px 0' }}>
-        <div style={{ display: 'flex' }}>
+      <div style={{ padding: '16px 0', borderTop: '1px solid var(--border-color)' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-end' }}>
           <TextArea
             ref={textAreaRef}
             value={newMessage}
             onChange={(e) => setNewMessage(e.target.value)}
             placeholder="Type your message here..."
             autoSize={{ minRows: 2, maxRows: 6 }}
-            disabled={sending}
+            disabled={sending || isSendingInitial} // Disable if sending or processing initial message
             onPressEnter={(e) => {
               if (!e.shiftKey) {
                 e.preventDefault();
                 handleSendMessage();
               }
             }}
-            style={{ flex: 1, borderRadius: '4px 0 0 4px' }}
+            style={{ flex: 1, marginRight: 8, borderRadius: '4px' }}
           />
           <Button
             type="primary"
             icon={<SendOutlined />}
             onClick={handleSendMessage}
-            loading={sending}
-            style={{ height: 'auto', borderRadius: '0 4px 4px 0' }}
+            loading={sending || isSendingInitial} // Show loading if sending or processing initial message
+            disabled={!newMessage.trim() || sending || isSendingInitial} // Disable if empty, sending, or processing initial message
+            style={{ height: 'auto', minHeight: '32px', borderRadius: '4px' }}
           />
         </div>
-        <Text type="secondary" style={{ fontSize: '12px', marginTop: 4 }}>
+        <Text type="secondary" style={{ fontSize: '12px', marginTop: 4, display: 'block', textAlign: 'center' }}>
           Press Enter to send, Shift+Enter for new line
         </Text>
       </div>

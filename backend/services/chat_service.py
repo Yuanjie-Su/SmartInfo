@@ -215,7 +215,7 @@ class ChatService:
                 chat_data=chat_create_data, user_id=user_id
             )
             chat_id = new_chat.id
-            chat_title = new_chat.title
+            # chat_title = new_chat.title # chat_title is not used
 
         # Add user's question as a message
         if chat_id is None:  # Should not happen if logic above is correct
@@ -223,10 +223,11 @@ class ChatService:
                 "Failed to obtain a valid chat_id before creating message."
             )
 
-        user_message_create = MessageCreate(
-            chat_id=chat_id, sender="user", content=content
-        )
-        await self.create_message(user_message_create)
+        # User's message is now created by the frontend before calling /ask
+        # user_message_create = MessageCreate(
+        #     chat_id=chat_id, sender="user", content=content
+        # )
+        # await self.create_message(user_message_create)
 
         # Get user-specific LLM client
         client = await self._get_user_llm_client(user_id)

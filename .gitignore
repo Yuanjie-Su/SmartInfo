@@ -70,5 +70,6 @@ pytest.ini
 test*.py
 test_*.py
 tests/
+__tests__/
 clear_redis_key.py
 mcptestconfig.json

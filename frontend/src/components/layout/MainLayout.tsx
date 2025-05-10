@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Layout, Menu, Button, Input, Space, Typography, Divider, Spin, Avatar, Tooltip, Dropdown, Modal, Form as AntForm, message } from 'antd';
 import {
   ReadOutlined,
@@ -105,7 +105,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
   const [chats, setChats] = useState<Chat[]>([]);
   const [filteredChats, setFilteredChats] = useState<Chat[]>([]);
   const [selectedKey, setSelectedKey] = useState('news');
-  const { isAuthenticated, user, logout, loading: authLoading } = useAuth();
+  const { isAuthenticated, user, logout, loading: authLoading, setRefreshChatListCallback } = useAuth(); // Get setRefreshChatListCallback
 
   useEffect(() => {
     const path = router.pathname;
@@ -121,36 +121,9 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     }
   }, [router.pathname, router.query.id]);
 
-  // Load chat history on component mount
-  useEffect(() => {
-    const loadChats = async () => {
-      // Only attempt to load chats if authenticated
-      if (isAuthenticated) { 
-        try {
-          const result = await chatService.getChats();
-          setChats(result);
-          setFilteredChats(result);
-        } catch (error) {
-          console.error('Failed to load chats:', error);
-          // Handle error appropriately, maybe clear chats
-          setChats([]);
-          setFilteredChats([]);
-        }
-      } else {
-         // Clear chat list if not authenticated
-         setChats([]);
-         setFilteredChats([]);
-      }
-    };
-    
-    // Only run the effect when the initial auth check is complete
-    if (!authLoading) { 
-      loadChats();
-    }
-  }, [isAuthenticated, authLoading]);
-
-  const loadChats = async () => {
-    if (isAuthenticated) { 
+   // Define a single, memoized loadChats function
+  const loadChats = useCallback(async () => {
+    if (isAuthenticated) {
       try {
         const result = await chatService.getChats();
         setChats(result);
@@ -161,10 +134,30 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
         setFilteredChats([]);
       }
     } else {
-       setChats([]);
-       setFilteredChats([]);
+      setChats([]);
+      setFilteredChats([]);
     }
-  };
+  }, [isAuthenticated]); // Correctly memoized, depends on isAuthenticated
+
+  // Load chat history on component mount and set up refresh callback
+  useEffect(() => {
+    // Only run the effect when the initial auth check is complete
+    if (!authLoading) {  
+      loadChats(); // Call the memoized function for initial load
+    }
+
+    // Set the callback for refreshing chat list
+    if (setRefreshChatListCallback) {
+      setRefreshChatListCallback(loadChats); // Pass the memoized function
+    }
+
+    // Cleanup callback on unmount
+    return () => {
+      if (setRefreshChatListCallback) {
+        setRefreshChatListCallback(null);
+      }
+    };
+  }, [authLoading, loadChats, setRefreshChatListCallback]);
   
   // Filter chats when search text changes
   useEffect(() => {
@@ -179,15 +172,17 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
     setFilteredChats(filtered);
   }, [searchText, chats]);
   
-  // Create a new chat
-  const handleNewChat = async () => {
-    try {
-      const newChat = await chatService.createChat({ title: 'New Chat' }); // Ensure your createChat service is robust
-      await loadChats(); // Refresh chat list
-      router.push(`/chat/${newChat.id}`); // Navigate after list is updated
-    } catch (error) {
-      console.error('Failed to create new chat:', error);
-      message.error(extractErrorMessage(error).message || 'Failed to create new chat.');
+  // Handle new chat button click
+  const handleNewChat = () => {
+    // Check if already on the default chat page
+    if (router.pathname === '/chat') {
+      console.log('Already on default chat page.');
+      // Do nothing, user can just start typing
+    } else {
+      console.log('Navigating to default chat page /chat');
+      // Navigate to the default chat page
+      router.push('/chat');
+      // The useEffect that watches router.pathname will handle updating selectedKey
     }
   };
   

@@ -77,8 +77,8 @@ a:hover {
 .user-message-card .ant-card-body {
   background-color: var(--accent-color-light) !important;
   border-color: color-mix(in srgb, var(--accent-color) 30%, transparent) !important;
-  border-radius: var(--border-radius-lg) var(--border-radius-lg) 0 var(--border-radius-lg) !important;
-  /* User bubble shape */
+  border-radius: 18px 18px 4px 18px !important;
+  /* User bubble shape without avatar */
 }
 
 .user-message-card .ant-card-body .ant-typography {
@@ -90,8 +90,8 @@ a:hover {
   background-color: var(--primary-bg) !important;
   /* White */
   border-color: var(--border-color) !important;
-  border-radius: var(--border-radius-lg) var(--border-radius-lg) var(--border-radius-lg) 0 !important;
-  /* Assistant bubble shape */
+  border-radius: 18px 18px 18px 4px !important;
+  /* Assistant bubble shape without avatar */
 }
 
 /* Ensure card itself has no extra padding if body is styled */

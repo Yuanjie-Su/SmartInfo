@@ -1,0 +1,38 @@
+.chatInputContainer {
+    display: flex;
+    align-items: center;
+    padding: 8px 8px 8px 16px;
+    /* Adjust padding */
+    background-color: #F9F9F9;
+    border: 1px solid #E8E8E8;
+    border-radius: 28px;
+    /* For a more pill-like shape */
+    width: 100%;
+    /* Or a max-width like 700px */
+    max-width: 700px;
+    /* Example max-width */
+    margin: 0 auto;
+    /* Center if max-width is used */
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+
+.chatInputTextArea {
+    flex-grow: 1;
+    border: none !important;
+    box-shadow: none !important;
+    background-color: transparent !important;
+    padding-right: 8px;
+    /* Space before send button */
+    resize: none;
+    /* Prevent manual resizing */
+}
+
+.chatInputTextArea:focus {
+    border: none !important;
+    box-shadow: none !important;
+}
+
+.sendButton {
+    /* Add any specific styles for the send button if needed,
+     but Ant Design primary button with circle shape is mostly sufficient */
+}
