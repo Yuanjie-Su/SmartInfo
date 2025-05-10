@@ -1,16 +1,16 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter } from 'next/router';
-import { 
-  Typography, 
-  Input, 
-  Button, 
-  Card, 
-  message, 
+import {
+  Typography,
+  Input,
+  Button,
+  Card,
+  message,
   Spin,
   Tooltip
 } from 'antd';
-import { 
-  SendOutlined, 
+import {
+  SendOutlined,
   CopyOutlined
 } from '@ant-design/icons';
 import { Chat, Message, MessageCreate } from '@/utils/types';
@@ -31,7 +31,7 @@ const ChatPage: React.FC = () => {
   const [isSendingInitial, setIsSendingInitial] = useState<boolean>(false); // New state for initial message sending
   const [newMessage, setNewMessage] = useState('');
   const [error, setError] = useState<{ type: string, message: string, status?: number } | null>(null); // Updated error state type
-  
+
   // Refs
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textAreaRef = useRef<any>(null);
@@ -68,7 +68,7 @@ const ChatPage: React.FC = () => {
       setLoading(false);
     }
   }, []); // Empty dependency array as loadChat doesn't depend on component state that changes frequently here.
-  
+
   // Load chat data when id changes or router is ready
   useEffect(() => {
     if (router.isReady && id) {
@@ -82,16 +82,16 @@ const ChatPage: React.FC = () => {
       }
     }
   }, [id, router.isReady, loadChat]); // Added loadChat to dependency array
-  
+
   // Scroll to bottom when messages change or initial message sending finishes
   useEffect(() => {
     scrollToBottom();
   }, [messages, isSendingInitial]); // Depend on messages and isSendingInitial
-  
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
-  
+
   // Effect to handle initial message from query parameter
   useEffect(() => {
     // Ensure router is ready, an id is present, an initialMessage exists in query, AND it hasn't been sent yet
@@ -201,7 +201,7 @@ const ChatPage: React.FC = () => {
       setSending(false);
     }
   };
-  
+
   const handleCopyMessage = (content: string) => {
     if (navigator.clipboard && window.isSecureContext) {
       navigator.clipboard.writeText(content)
@@ -211,11 +211,11 @@ const ChatPage: React.FC = () => {
       message.error('Clipboard functionality is not available in this browser or context');
     }
   };
-  
+
   const renderMessages = () => {
     return messages.map((msg) => {
       const isUser = msg.sender === 'user';
-      
+
       return (
         <div
           key={msg.id}
@@ -236,9 +236,9 @@ const ChatPage: React.FC = () => {
               </Paragraph>
               <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
                 <Tooltip title="Copy message">
-                  <Button 
-                    type="text" 
-                    icon={<CopyOutlined />} 
+                  <Button
+                    type="text"
+                    icon={<CopyOutlined />}
                     size="small"
                     onClick={() => handleCopyMessage(msg.content)}
                     style={{color: 'var(--text-secondary)', padding: '0 4px'}}
@@ -251,7 +251,7 @@ const ChatPage: React.FC = () => {
       );
     });
   };
-  
+
   if (loading) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '50vh' }}>
@@ -316,7 +316,7 @@ const ChatPage: React.FC = () => {
         )}
         <div ref={messagesEndRef} />
       </div>
-      
+
       <div style={{ padding: '16px 0', borderTop: '1px solid var(--border-color)' }}>
         <div style={{ display: 'flex', alignItems: 'flex-end' }}>
           <TextArea

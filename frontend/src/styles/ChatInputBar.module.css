@@ -1,10 +1,12 @@
+/* @frontend/src/styles/ChatInputBar.module.css */
 .chatInputContainer {
     display: flex;
     align-items: center;
     padding: 8px 8px 8px 16px;
     /* Adjust padding */
-    background-color: #F9F9F9;
-    border: 1px solid #E8E8E8;
+    background-color: var(--input-bg);
+    /* e.g., #FFFFFF or --secondary-bg */
+    border: 1px solid var(--input-border-color);
     border-radius: 28px;
     /* For a more pill-like shape */
     width: 100%;
@@ -25,14 +27,21 @@
     /* Space before send button */
     resize: none;
     /* Prevent manual resizing */
+    color: var(--text-primary) !important;
 }
 
-.chatInputTextArea:focus {
-    border: none !important;
-    box-shadow: none !important;
+.chatInputTextArea::placeholder {
+    color: var(--input-placeholder-color) !important;
 }
 
 .sendButton {
     /* Add any specific styles for the send button if needed,
      but Ant Design primary button with circle shape is mostly sufficient */
+    background-color: var(--accent-color) !important;
+    border-color: var(--accent-color) !important;
+}
+
+.sendButton .anticon {
+    color: var(--primary-bg);
+    /* White icon on accent button */
 }

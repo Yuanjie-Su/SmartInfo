@@ -275,7 +275,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
         collapsible
         collapsed={collapsed}
         onCollapse={setCollapsed}
-        theme="light"
+        // theme="light"
         className={styles.appSider}
         style={{
           overflow: 'auto',
@@ -290,9 +290,11 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
       >
         <div style={{ padding: `0 ${collapsed ? '0' : '24px'} 16px ${collapsed ? '0' : '24px'}`, textAlign: collapsed ? 'center' : 'left', height: '32px', marginBottom: '8px' }}>
           {collapsed ? (
-            <Avatar style={{ backgroundColor: 'var(--accent-color)' }} size="default">S</Avatar>
+            <Avatar className={styles.siderLogoAvatar} /* ... */ >S</Avatar>
           ) : (
-            <Title level={4} style={{ margin: 0, color: 'var(--accent-color)', fontWeight: 600 }}>SmartInfo</Title>
+            <Title level={4} className={styles.gradientLogoText} style={{ margin: 0 }}>
+              SmartInfo
+            </Title>
           )}
         </div>
 

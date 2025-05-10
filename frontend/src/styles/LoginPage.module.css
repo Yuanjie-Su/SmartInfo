@@ -4,16 +4,19 @@
     justify-content: center;
     align-items: center;
     min-height: 100vh;
-    background-color: #f0f2f5;
-    /* Light grey background */
+    background-color: var(--secondary-bg) !important;
+    /* Light grey page background */
 }
 
 .loginCard {
     width: 400px;
     /* Adjust width as needed */
     padding: 20px;
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-    /* Subtle shadow */
+    background-color: var(--primary-bg) !important;
+    /* White card */
+    border: 1px solid var(--border-color) !important;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    /* Softer shadow */
 }
 
 /* Add any other specific styles if needed */

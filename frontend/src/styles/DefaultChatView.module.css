@@ -1,3 +1,4 @@
+/* @frontend/src/styles/DefaultChatView.module.css */
 .defaultChatViewContainer {
     display: flex;
     flex-direction: column;
@@ -18,22 +19,20 @@
 
 .greetingTitle {
     font-size: 2.5em;
-    /* Adjust as needed */
+    /* Or your original font size */
     font-weight: 600;
+    /* Your desired gradient */
     background: linear-gradient(to right, #4285F4, #9B72CB, #D96570, #F2A600);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
     color: transparent;
     margin-bottom: 8px;
-    /* Space before sub-greeting */
 }
 
 .subGreeting {
-    font-size: 1em;
-    /* Adjust as needed */
-    color: #8C8C8C;
-    /* Medium Gray */
+    color: var(--text-secondary) !important;
+    /* Use light theme's secondary text color */
 }
 
 .suggestionsArea {
@@ -46,8 +45,9 @@
 }
 
 .suggestionCard {
-    background-color: #F9F9F9;
-    border: 1px solid #E8E8E8;
+    background-color: var(--secondary-bg) !important;
+    border: 1px solid var(--border-color) !important;
+    color: var(--text-primary) !important;
     border-radius: 8px;
     height: 45px;
     /* Adjust as needed */
@@ -58,18 +58,14 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #262626;
-    /* Main Text Color */
     white-space: nowrap;
     /* Prevent text wrapping */
 }
 
 .suggestionCard:hover {
-    border-color: #1677FF;
-    /* Ant Design Primary Blue for hover */
-    background-color: #FFFFFF;
-    color: #1677FF;
-    /* Change text color on hover */
+    border-color: var(--accent-color) !important;
+    background-color: var(--accent-color-light) !important;
+    color: var(--accent-color) !important;
 }
 
 .chatInputArea {

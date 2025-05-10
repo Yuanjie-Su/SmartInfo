@@ -55,24 +55,24 @@ export default function App({ Component, pageProps, router }: AppProps & { route
         <ConfigProvider
             theme={{
                 token: {
-                    colorPrimary: '#3B82F6', // Accent Color
-                    colorInfo: '#3B82F6',
+                    colorPrimary: 'var(--accent-color)', // #007BFF
+                    colorInfo: 'var(--accent-color)',
                     colorSuccess: '#10B981',
                     colorWarning: '#F59E0B',
                     colorError: '#EF4444',
 
-                    colorText: '#212529',
-                    colorTextSecondary: '#6C757D',
-                    colorTextTertiary: '#ADB5BD', // For placeholders, disabled text
+                    colorText: 'var(--text-primary)',
+                    colorTextSecondary: 'var(--text-secondary)',
+                    colorTextTertiary: 'var(--text-tertiary)', // For placeholders, disabled text
                     colorTextQuaternary: '#CED4DA', // Even lighter disabled text
 
-                    colorBgContainer: '#FFFFFF',    // Cards, Modals, Input backgrounds
-                    colorBgLayout: '#F8F9FA',      // Overall Layout background (Sider, Header)
-                    colorBgElevated: '#FFFFFF',    // Popovers, Dropdowns (usually white)
+                    colorBgContainer: 'var(--primary-bg)',    // Cards, Modals, Input backgrounds
+                    colorBgLayout: 'var(--secondary-bg)',      // Overall Layout background (Sider, Header)
+                    colorBgElevated: 'var(--primary-bg)',    // Popovers, Dropdowns (usually white)
                     colorBgSpotlight: '#4A5568',  // Tooltip background (darker for contrast)
 
-                    colorBorder: '#DEE2E6',        // Default borders
-                    colorBorderSecondary: '#E9ECEF',// Lighter borders (dividers)
+                    colorBorder: 'var(--border-color)',        // Default borders
+                    colorBorderSecondary: 'var(--border-color-secondary)',// Lighter borders (dividers)
 
                     borderRadius: 6,
                     borderRadiusLG: 8, // Cards, Modals
@@ -88,22 +88,20 @@ export default function App({ Component, pageProps, router }: AppProps & { route
 
                     // Shadows
                     boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.03), 0 1px 6px -1px rgba(0, 0, 0, 0.02), 0 2px 4px 0 rgba(0, 0, 0, 0.02)', // Subtle base shadow
-                    boxShadowCard: '0 2px 8px rgba(0, 0, 0, 0.06)', // For cards
-                    boxShadowSecondary: '0 6px 16px 0 rgba(0, 0, 0, 0.08), 0 3px 6px -4px rgba(0, 0, 0, 0.12), 0 9px 28px 8px rgba(0, 0, 0, 0.05)', // Popups
                 },
                 components: {
                     Layout: {
-                        siderBg: '#F8F9FA', // Sider background
-                        bodyBg: '#F8F9FA',   // Main content area background (Layout > Content)
-                        headerBg: '#FFFFFF', // If a header is used
+                        siderBg: 'var(--secondary-bg)', // Sider background
+                        bodyBg: 'var(--primary-bg)',   // Main content area background (Layout > Content)
+                        headerBg: 'var(--primary-bg)', // If a header is used
                     },
                     Menu: {
                         itemBg: 'transparent', // Sider menu item background
-                        itemHoverBg: '#F1F3F5', // var(--tertiary-bg)
-                        itemSelectedBg: '#EFF6FF', // var(--accent-color-light)
-                        itemSelectedColor: '#3B82F6', // var(--accent-color)
-                        itemColor: '#4A5568', // Slightly darker than colorTextSecondary for better readability in Sider
-                        itemHoverColor: '#212529', // var(--text-primary)
+                        itemHoverBg: 'var(--tertiary-bg)', // var(--tertiary-bg)
+                        itemSelectedBg: 'var(--accent-color-light)', // var(--accent-color-light)
+                        itemSelectedColor: 'var(--accent-color)', // var(--accent-color)
+                        itemColor: 'var(--text-secondary)', // Slightly darker than colorTextSecondary for better readability in Sider
+                        itemHoverColor: 'var(--text-primary)', // var(--text-primary)
                         activeBarBorderWidth: 0, // Remove if not using horizontal menu
                         // Add a way to style the left border for selected items if possible via tokens
                         // Otherwise, CSS override is needed.
@@ -111,14 +109,20 @@ export default function App({ Component, pageProps, router }: AppProps & { route
                     Card: {
                         actionsBg: '#FDFDFD',
                         paddingLG: 20, // Content padding inside card
-                        extraColor: '#6C757D', // Color for "extra" content in card header
+                        extraColor: 'var(--text-secondary)', // Color for "extra" content in card header
                     },
                     Button: {
                         // Primary button text color is usually white, handled by AntD
-                        defaultGhostColor: '#212529', // Text color for ghost buttons
-                        defaultGhostBorderColor: '#DEE2E6',
+                        defaultBg: 'var(--primary-bg)',
+                        defaultColor: 'var(--text-primary)',
+                        defaultBorderColor: 'var(--border-color)',
+                        defaultGhostColor: 'var(--text-primary)', // Text color for ghost buttons
+                        defaultGhostBorderColor: 'var(--border-color)',
                     },
                     Input: {
+                        colorBgContainer: 'var(--input-bg)',
+                        colorBorder: 'var(--input-border-color)',
+                        colorTextPlaceholder: 'var(--input-placeholder-color)',
                         // controlHeight: 36, // Set globally
                     },
                     Select: {
