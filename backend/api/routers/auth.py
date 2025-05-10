@@ -9,6 +9,7 @@ Handles user registration, login (token generation), and user info endpoints.
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from typing import Annotated
+from models.schemas.user import PasswordChangeRequest, UsernameChangeRequest
 from pydantic import BaseModel
 
 from models import (
@@ -101,3 +102,48 @@ async def read_users_me(
     # The dependency get_current_active_user already validates the token
     # and returns the user object.
     return current_user
+
+
+@router.put("/users/me/password", status_code=status.HTTP_200_OK)
+async def change_current_user_password(
+    password_data: PasswordChangeRequest,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+):
+    success = await auth_service.change_password(
+        user_id=current_user.id,
+        current_password_str=password_data.current_password,
+        new_password_str=password_data.new_password,
+    )
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Failed to change password. Incorrect current password or invalid new password.",
+        )
+    return {"message": "Password updated successfully"}
+
+
+@router.put("/users/me/username", response_model=User)
+async def change_current_user_username(
+    username_data: UsernameChangeRequest,
+    current_user: Annotated[User, Depends(get_current_active_user)],
+    auth_service: Annotated[AuthService, Depends(get_auth_service)],
+):
+    try:
+        updated_user = await auth_service.change_username(
+            user_id=current_user.id,
+            new_username=username_data.new_username,
+            current_password_str=username_data.current_password,
+        )
+        if not updated_user:
+            # This case might be if password was wrong, or some other unexpected issue
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Failed to change username. Incorrect password or other error.",
+            )
+        return updated_user
+    except ValueError as ve:  # Catch "Username already taken"
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(ve),
+        )

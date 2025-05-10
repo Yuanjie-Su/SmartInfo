@@ -37,3 +37,13 @@ class User(UserBase):
 # Additional properties stored in DB (includes sensitive fields)
 class UserInDB(UserInDBBase):
     model_config = ConfigDict(from_attributes=True)
+
+
+class PasswordChangeRequest(BaseModel):
+    current_password: str = Field(..., min_length=6)
+    new_password: str = Field(..., min_length=6)
+
+
+class UsernameChangeRequest(BaseModel):
+    new_username: str = Field(..., min_length=3)
+    current_password: str = Field(..., min_length=6)

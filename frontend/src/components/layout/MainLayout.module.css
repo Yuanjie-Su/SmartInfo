@@ -125,7 +125,8 @@
     /* Adjust for bottom menu */
 }
 
-
+/* Remove or comment out these styles: */
+/*
 .logoutButton {
     width: 100%;
     margin-top: 8px;
@@ -135,17 +136,16 @@
     align-items: center;
     justify-content: flex-start;
     /* Default for non-collapsed */
-}
-
+/*
 .appSider[class*="ant-layout-sider-collapsed"] .logoutButton {
     justify-content: center;
     /* Center icon when collapsed */
-}
-
+/*
 .logoutButton:hover {
     background-color: var(--tertiary-bg) !important;
     color: var(--text-primary) !important;
 }
+*/
 
 .gradientLogoText {
     font-weight: 600;

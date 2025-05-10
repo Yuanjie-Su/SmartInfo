@@ -99,3 +99,24 @@ export const fetchUserProfile = async (): Promise<User> => {
         throw handleApiError(error, 'Failed to fetch user profile');
     }
 }
+
+// Define request types (should match backend Pydantic models)
+export interface PasswordChangeRequest {
+    current_password: string;
+    new_password: string;
+}
+
+export interface UsernameChangeRequest {
+    new_username: string;
+    current_password: string;
+}
+
+export const changePassword = async (data: PasswordChangeRequest): Promise<{ message: string }> => {
+    const response = await api.put<{ message: string }>('/api/auth/users/me/password', data);
+    return response.data;
+};
+
+export const changeUsername = async (data: UsernameChangeRequest): Promise<User> => { // Expect User object back
+    const response = await api.put<User>('/api/auth/users/me/username', data);
+    return response.data;
+};

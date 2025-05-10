@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Typography, 
-  Tabs, 
-  Form, 
-  Input, 
-  Button, 
-  Table, 
-  Space, 
+import {
+  Typography,
+  Tabs,
+  Form,
+  Input,
+  Button,
+  Table,
+  Space,
   Popconfirm,
   Modal,
   message,
@@ -17,25 +17,31 @@ import {
   Spin,
   Alert,
   InputNumber,
-  Tag
+  Tag,
+  Paragraph // Add Paragraph
 } from 'antd';
-import { 
-  EditOutlined, 
-  DeleteOutlined, 
+import {
+  EditOutlined,
+  DeleteOutlined,
   PlusOutlined,
   ReloadOutlined,
   KeyOutlined,
   ApiOutlined,
   SettingOutlined,
-  SaveOutlined
+  SaveOutlined,
+  UserOutlined, // For Account tab
+  LockOutlined, // For password fields
+  LogoutOutlined, // For Logout button
 } from '@ant-design/icons';
 import type { TableProps } from 'antd/lib/table';
 import { ApiKey, NewsCategory, NewsSource } from '@/utils/types';
 import * as settingsService from '@/services/settingsService';
 import * as newsService from '@/services/newsService';
+import * as authService from '@/services/authService'; // Import authService
 import MainLayout from '../components/layout/MainLayout';
 import { handleApiError, extractErrorMessage } from '../utils/apiErrorHandler'; // Import extractErrorMessage
 import withAuth from '@/components/auth/withAuth'; // Import the HOC
+import { useAuth } from '../context/AuthContext'; // Import useAuth
 
 const { Title, Text, Paragraph } = Typography;
 const { TabPane } = Tabs;
@@ -52,6 +58,7 @@ interface ApiKeyFormValues {
 }
 
 const Settings: React.FC = () => {
+  const { user, logout, loading: authLoading, updateUserProfile } = useAuth(); // Add updateUserProfile
   // State
   const [settings, setSettings] = useState<Record<string, any>>({});
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
@@ -62,23 +69,33 @@ const Settings: React.FC = () => {
   const [settingsLoading, setSettingsLoading] = useState(true);
   const [apiKeysLoading, setApiKeysLoading] = useState(true);
   const [error, setError] = useState<{ type: string, message: string, status?: number } | null>(null); // Updated error state type
-  
+
   // API Key modal state
   const [isApiKeyModalVisible, setIsApiKeyModalVisible] = useState(false);
   const [apiKeyForm] = Form.useForm<ApiKeyFormValues>();
   const [editingApiKeyId, setEditingApiKeyId] = useState<number | null>(null);
   const [editingApiKey, setEditingApiKey] = useState<ApiKey | null>(null);
-  
+
   // Source modal state
   const [isSourceModalVisible, setIsSourceModalVisible] = useState(false);
   const [sourceForm] = Form.useForm<{ name: string; url: string; category_id: number }>();
   const [editingSourceId, setEditingSourceId] = useState<number | null>(null);
   const [newCategoryName, setNewCategoryName] = useState<string>('');
   const [isAddCategoryModalVisible, setIsAddCategoryModalVisible] = useState(false);
-  
+
   // Settings form
   const [settingsForm] = Form.useForm();
-  
+
+  // Password change modal state
+  const [isPasswordModalVisible, setIsPasswordModalVisible] = useState(false);
+  const [passwordChangeLoading, setPasswordChangeLoading] = useState(false);
+  const [passwordForm] = Form.useForm();
+
+  // Username change modal state
+  const [isUsernameModalVisible, setIsUsernameModalVisible] = useState(false);
+  const [usernameChangeLoading, setUsernameChangeLoading] = useState(false);
+  const [usernameForm] = Form.useForm();
+
   // Load initial data
   useEffect(() => {
     loadAllData();
@@ -504,6 +521,75 @@ const Settings: React.FC = () => {
     },
   ];
   
+  const handlePasswordModalOk = async () => {
+    try {
+      const values = await passwordForm.validateFields();
+      await handleChangePassword(values);
+    } catch (formError) {
+      console.log('Password form validation failed:', formError);
+      // AntD form will show errors on fields
+    }
+  };
+
+  const handlePasswordModalCancel = () => {
+    setIsPasswordModalVisible(false);
+    passwordForm.resetFields();
+  };
+
+  const handleUsernameModalOk = async () => {
+    try {
+      const values = await usernameForm.validateFields();
+      await handleChangeUsername(values);
+    } catch (formError) {
+      console.log('Username form validation failed:', formError);
+    }
+  };
+
+  const handleUsernameModalCancel = () => {
+    setIsUsernameModalVisible(false);
+    usernameForm.resetFields();
+  };
+
+  const handleChangeUsername = async (values: any) => {
+    setUsernameChangeLoading(true);
+    try {
+      const updatedUser = await authService.changeUsername({
+        new_username: values.newUsername,
+        current_password: values.currentPassword,
+      });
+      message.success('Username successfully changed!');
+      // Access updateUserProfile from the useAuth hook
+      const { updateUserProfile } = useAuth();
+      if (typeof updateUserProfile === 'function') {
+          updateUserProfile(updatedUser); // Update AuthContext
+      }
+      setIsUsernameModalVisible(false);
+      usernameForm.resetFields();
+    } catch (apiError: any) {
+      message.error(extractErrorMessage(apiError).message || 'Failed to change username.');
+    } finally {
+      setUsernameChangeLoading(false);
+    }
+  };
+
+  // Update handleChangePassword to use the service
+  const handleChangePassword = async (values: any) => {
+    setPasswordChangeLoading(true);
+    try {
+      await authService.changePassword({
+        current_password: values.currentPassword,
+        new_password: values.newPassword,
+      });
+      message.success('Password successfully changed!');
+      setIsPasswordModalVisible(false);
+      passwordForm.resetFields();
+    } catch (apiError: any) {
+      message.error(extractErrorMessage(apiError).message || 'Failed to change password.');
+    } finally {
+      setPasswordChangeLoading(false);
+    }
+  };
+
   return (
     <MainLayout>
       <div style={{ padding: '24px' }}>
@@ -656,183 +742,320 @@ const Settings: React.FC = () => {
               loading={loading}
             />
           </TabPane>
+
+          <TabPane
+            tab={<><UserOutlined /> Account</>}
+            key="account"
+          >
+            <Card title="Account Information" style={{ marginBottom: 24 }}>
+              <Spin spinning={authLoading}>
+                <Form layout="vertical">
+                  <Form.Item label="Username">
+                    <Space>
+                      <Input value={user?.username || 'Loading...'} readOnly prefix={<UserOutlined />} style={{ flexGrow: 1 }} />
+                      <Button onClick={() => setIsUsernameModalVisible(true)} icon={<EditOutlined />}>
+                        Change
+                      </Button>
+                    </Space>
+                  </Form.Item>
+                </Form>
+              </Spin>
+            </Card>
+
+            <Card title="Security" style={{ marginBottom: 24 }}>
+              <Button
+                onClick={() => setIsPasswordModalVisible(true)}
+                icon={<LockOutlined />}
+              >
+                Change Password
+              </Button>
+              <Paragraph type="secondary" style={{ marginTop: '12px' }}>
+                It's a good idea to use a strong password that you're not using elsewhere.
+              </Paragraph>
+            </Card>
+
+            <Card title="Session Management">
+              <Button
+                type="primary"
+                danger
+                icon={<LogoutOutlined />}
+                onClick={async () => {
+                  message.loading('Logging out...', 0.5);
+                  await logout();
+                  // Redirection is handled by AuthContext
+                }}
+                loading={authLoading}
+              >
+                Logout
+              </Button>
+              <Paragraph type="secondary" style={{ marginTop: '12px' }}>
+                This will end your current session on this device.
+              </Paragraph>
+            </Card>
+          </TabPane>
         </Tabs>
-      </div>
-      
-      {/* API Key Modal */}
-      <Modal
-        title={editingApiKey ? '编辑API密钥' : '添加API密钥'}
-        open={isApiKeyModalVisible}
-        onOk={handleApiKeySave}
-        onCancel={() => setIsApiKeyModalVisible(false)}
-        okText={editingApiKey ? '更新' : '创建'}
-        cancelText="取消"
-      >
-        <Form 
-          form={apiKeyForm} 
-          layout="vertical"
-          initialValues={{ context: 16000, max_output_tokens: 4000 }}
+
+        {/* Username Change Modal (add this alongside the password change modal) */}
+        <Modal
+          title="Change Username"
+          open={isUsernameModalVisible}
+          onOk={handleUsernameModalOk}
+          onCancel={handleUsernameModalCancel}
+          confirmLoading={usernameChangeLoading}
+          okText="Update Username"
+          destroyOnClose
         >
-          <Form.Item
-            name="model"
-            label="模型名称"
-            rules={[{ required: true, message: '请输入模型名称' }]}
+          <Form form={usernameForm} layout="vertical" name="change_username_form_modal">
+            <Form.Item
+              name="newUsername"
+              label="New Username"
+              rules={[
+                { required: true, message: 'Please input your new username!' },
+                { min: 3, message: 'Username must be at least 3 characters.' },
+              ]}
+            >
+              <Input prefix={<UserOutlined />} placeholder="New Username" />
+            </Form.Item>
+            <Form.Item
+              name="currentPassword"
+              label="Current Password (for verification)"
+              rules={[{ required: true, message: 'Please input your current password!' }]}
+            >
+              <Input.Password prefix={<LockOutlined />} placeholder="Current Password" />
+            </Form.Item>
+          </Form>
+        </Modal>
+
+        {/* API Key Modal */}
+        <Modal
+          title={editingApiKey ? '编辑API密钥' : '添加API密钥'}
+          open={isApiKeyModalVisible}
+          onOk={handleApiKeySave}
+          onCancel={() => setIsApiKeyModalVisible(false)}
+          okText={editingApiKey ? '更新' : '创建'}
+          cancelText="取消"
+        >
+          <Form
+            form={apiKeyForm}
+            layout="vertical"
+            initialValues={{ context: 16000, max_output_tokens: 4000 }}
           >
-            <Input placeholder="例如: deepseek-chat" />
-          </Form.Item>
-          
-          <Form.Item
-            name="base_url"
-            label="API基础URL"
-            rules={[{ required: true, message: '请输入API基础URL' }]}
+            <Form.Item
+              name="model"
+              label="模型名称"
+              rules={[{ required: true, message: '请输入模型名称' }]}
+            >
+              <Input placeholder="例如: deepseek-chat" />
+            </Form.Item>
+
+            <Form.Item
+              name="base_url"
+              label="API基础URL"
+              rules={[{ required: true, message: '请输入API基础URL' }]}
+            >
+              <Input placeholder="例如: https://api.deepseek.com" />
+            </Form.Item>
+
+            <Form.Item
+              name="api_key"
+              label="API密钥"
+              rules={[{ required: true, message: '请输入API密钥' }]}
+            >
+              <Input.Password placeholder="输入API密钥" />
+            </Form.Item>
+
+            <Form.Item
+              name="context"
+              label="上下文长度"
+              rules={[
+                { required: true, message: '请输入上下文长度' },
+                { type: 'number', min: 1, message: '上下文长度必须为正整数' }
+              ]}
+            >
+              <InputNumber style={{ width: '100%' }} placeholder="例如: 16000" />
+            </Form.Item>
+
+            <Form.Item
+              name="max_output_tokens"
+              label="最大输出Token"
+              rules={[
+                { required: true, message: '请输入最大输出Token' },
+                { type: 'number', min: 1, message: '最大输出Token必须为正整数' },
+                ({ getFieldValue }) => ({
+                  validator(_, value) {
+                    if (!value || getFieldValue('context') > value) { // Changed > to >=
+                      return Promise.resolve();
+                    }
+                    return Promise.reject(new Error('上下文长度必须大于或等于最大输出Token')); // Updated error message
+                  },
+                }),
+              ]}
+            >
+              <InputNumber style={{ width: '100%' }} placeholder="例如: 4000" />
+            </Form.Item>
+
+            <Form.Item
+              name="description"
+              label="说明"
+            >
+              <Input.TextArea placeholder="可选说明" />
+            </Form.Item>
+          </Form>
+        </Modal>
+
+        {/* Password Change Modal (outside Tabs, but within the main return) */}
+        <Modal
+          title="Change Password"
+          open={isPasswordModalVisible}
+          onOk={handlePasswordModalOk}
+          onCancel={handlePasswordModalCancel}
+          confirmLoading={passwordChangeLoading}
+          okText="Update Password"
+          destroyOnClose // Resets form fields when modal is closed
+        >
+          <Form
+            form={passwordForm}
+            layout="vertical"
+            name="change_password_form_in_modal"
           >
-            <Input placeholder="例如: https://api.deepseek.com" />
-          </Form.Item>
-          
-          <Form.Item
-            name="api_key"
-            label="API密钥"
-            rules={[{ required: true, message: '请输入API密钥' }]}
-          >
-            <Input.Password placeholder="输入API密钥" />
-          </Form.Item>
-          
-          <Form.Item
-            name="context"
-            label="上下文长度"
-            rules={[
-              { required: true, message: '请输入上下文长度' },
-              { type: 'number', min: 1, message: '上下文长度必须为正整数' }
-            ]}
-          >
-            <InputNumber style={{ width: '100%' }} placeholder="例如: 16000" />
-          </Form.Item>
-          
-          <Form.Item
-            name="max_output_tokens"
-            label="最大输出Token"
-            rules={[
-              { required: true, message: '请输入最大输出Token' },
-              { type: 'number', min: 1, message: '最大输出Token必须为正整数' },
-              ({ getFieldValue }) => ({
-                validator(_, value) {
-                  if (!value || getFieldValue('context') > value) { // Changed > to >=
-                    return Promise.resolve();
-                  }
-                  return Promise.reject(new Error('上下文长度必须大于或等于最大输出Token')); // Updated error message
-                },
-              }),
-            ]}
-          >
-            <InputNumber style={{ width: '100%' }} placeholder="例如: 4000" />
-          </Form.Item>
-          
-          <Form.Item
-            name="description"
-            label="说明"
-          >
-            <Input.TextArea placeholder="可选说明" />
-          </Form.Item>
-        </Form>
-      </Modal>
-      
-      {/* Source Modal */}
-      <Modal
-        title={editingSourceId ? '编辑来源' : '添加来源'}
-        open={isSourceModalVisible}
-        onOk={handleSourceSave}
-        onCancel={() => setIsSourceModalVisible(false)}
-        okText={editingSourceId ? '更新' : '创建'}
-        cancelText="取消"
-        width={600}
-      >
-        <Form form={sourceForm} layout="vertical">
-          <Form.Item
-            name="name"
-            label="来源名称"
-            rules={[{ required: true, message: '请输入来源名称' }]}
-          >
-            <Input />
-          </Form.Item>
-          
-          <Form.Item
-            name="url"
-            label="URL"
-            rules={[
-              { required: true, message: '请输入URL' },
-              { type: 'url', message: '请输入有效的URL' }
-            ]}
-          >
-            <Input />
-          </Form.Item>
-          
-          <Form.Item
-            name="category_id"
-            label={
-              <Space>
-                <span>类别</span>
-                <Button 
-                  type="link" 
-                  icon={<PlusOutlined />} 
-                  onClick={handleAddCategoryClick}
-                  size="small"
-                >
-                  添加类别
-                </Button>
-              </Space>
-            }
-            rules={[{ required: true, message: '请选择类别' }]}
-          >
-            <Select>
-              {categories.map(category => (
-                <Option key={category.id} value={category.id}>{category.name}</Option>
-              ))}
-            </Select>
-          </Form.Item>
-          
-          <div style={{ marginBottom: 16 }}>
-            <div style={{ marginBottom: 8 }}>已有类别:</div>
-            <div>
-              {categories.map(category => (
-                <Tag 
-                  key={category.id} 
-                  closable 
-                  onClose={(e) => {
-                    e.preventDefault();
-                    handleDeleteCategoryTag(category.id);
-                  }}
-                  style={{ marginBottom: 8 }}
-                >
-                  {category.name}
-                </Tag>
-              ))}
+            <Form.Item
+              name="currentPassword"
+              label="Current Password"
+              rules={[{ required: true, message: 'Please input your current password!' }]}
+            >
+              <Input.Password prefix={<LockOutlined />} placeholder="Current Password" />
+            </Form.Item>
+            <Form.Item
+              name="newPassword"
+              label="New Password"
+              rules={[
+                { required: true, message: 'Please input your new password!' },
+                { min: 6, message: 'Password must be at least 6 characters.' },
+              ]}
+              hasFeedback
+            >
+              <Input.Password prefix={<LockOutlined />} placeholder="New Password" />
+            </Form.Item>
+            <Form.Item
+              name="confirmNewPassword"
+              label="Confirm New Password"
+              dependencies={['newPassword']}
+              hasFeedback
+              rules={[
+                { required: true, message: 'Please confirm your new password!' },
+                ({ getFieldValue }) => ({
+                  validator(_, value) {
+                    if (!value || getFieldValue('newPassword') === value) {
+                      return Promise.resolve();
+                    }
+                    return Promise.reject(new Error('The new passwords do not match!'));
+                  },
+                }),
+              ]}
+            >
+              <Input.Password prefix={<LockOutlined />} placeholder="Confirm New Password" />
+            </Form.Item>
+          </Form>
+        </Modal>
+
+        {/* Source Modal */}
+        <Modal
+          title={editingSourceId ? '编辑来源' : '添加来源'}
+          open={isSourceModalVisible}
+          onOk={handleSourceSave}
+          onCancel={() => setIsSourceModalVisible(false)}
+          okText={editingSourceId ? '更新' : '创建'}
+          cancelText="取消"
+          width={600}
+        >
+          <Form form={sourceForm} layout="vertical">
+            <Form.Item
+              name="name"
+              label="来源名称"
+              rules={[{ required: true, message: '请输入来源名称' }]}
+            >
+              <Input />
+            </Form.Item>
+
+            <Form.Item
+              name="url"
+              label="URL"
+              rules={[
+                { required: true, message: '请输入URL' },
+                { type: 'url', message: '请输入有效的URL' }
+              ]}
+            >
+              <Input />
+            </Form.Item>
+
+            <Form.Item
+              name="category_id"
+              label={
+                <Space>
+                  <span>类别</span>
+                  <Button
+                    type="link"
+                    icon={<PlusOutlined />}
+                    onClick={handleAddCategoryClick}
+                    size="small"
+                  >
+                    添加类别
+                  </Button>
+                </Space>
+              }
+              rules={[{ required: true, message: '请选择类别' }]}
+            >
+              <Select>
+                {categories.map(category => (
+                  <Option key={category.id} value={category.id}>{category.name}</Option>
+                ))}
+              </Select>
+            </Form.Item>
+
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ marginBottom: 8 }}>已有类别:</div>
+              <div>
+                {categories.map(category => (
+                  <Tag
+                    key={category.id}
+                    closable
+                    onClose={(e) => {
+                      e.preventDefault();
+                      handleDeleteCategoryTag(category.id);
+                    }}
+                    style={{ marginBottom: 8 }}
+                  >
+                    {category.name}
+                  </Tag>
+                ))}
+              </div>
             </div>
-          </div>
-        </Form>
-      </Modal>
-      
-      {/* Add Category Modal */}
-      <Modal
-        title="添加新类别"
-        open={isAddCategoryModalVisible}
-        onOk={handleCreateCategory}
-        onCancel={() => setIsAddCategoryModalVisible(false)}
-        okText="创建"
-        cancelText="取消"
-      >
-        <Form layout="vertical">
-          <Form.Item
-            label="类别名称"
-            rules={[{ required: true, message: '请输入类别名称' }]}
-          >
-            <Input 
-              value={newCategoryName} 
-              onChange={(e) => setNewCategoryName(e.target.value)} 
-              placeholder="输入新类别名称"
-            />
-          </Form.Item>
-        </Form>
-      </Modal>
+          </Form>
+        </Modal>
+
+        {/* Add Category Modal */}
+        <Modal
+          title="添加新类别"
+          open={isAddCategoryModalVisible}
+          onOk={handleCreateCategory}
+          onCancel={() => setIsAddCategoryModalVisible(false)}
+          okText="创建"
+          cancelText="取消"
+        >
+          <Form layout="vertical">
+            <Form.Item
+              label="类别名称"
+              rules={[{ required: true, message: '请输入类别名称' }]}
+            >
+              <Input
+                value={newCategoryName}
+                onChange={(e) => setNewCategoryName(e.target.value)}
+                placeholder="输入新类别名称"
+              />
+            </Form.Item>
+          </Form>
+        </Modal>
+      </div>
     </MainLayout>
   );
 };

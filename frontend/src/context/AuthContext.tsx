@@ -18,6 +18,7 @@ interface AuthContextType {
   signup: (username: string, password: string) => Promise<void>; // Implementation of signup function
   refreshChatList: () => void; // Function to trigger chat list refresh
   setRefreshChatListCallback: (callback: (() => void) | null) => void; // New
+  updateUserProfile: (updatedUser: User) => void; // New function
 }
 
 // Create the context with a default value
@@ -212,6 +213,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     }
   };
 
+  const updateUserProfile = (updatedUser: User) => {
+    setUser(updatedUser);
+    // Optionally, you might want to update localStorage if you store the whole user object there,
+    // but typically only the token is stored.
+    console.log("AuthContext: User profile updated.", updatedUser);
+  };
+
   const setRefreshChatListCallback = (callback: (() => void) | null) => {
     setRefreshChatListCallbackInternal(() => callback);
   };
@@ -227,6 +235,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     signup,
     refreshChatList,
     setRefreshChatListCallback, // Provide the setter
+    updateUserProfile, // Add to context
   };
 
   // Render children only after initial loading is complete

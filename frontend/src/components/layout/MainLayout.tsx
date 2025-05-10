@@ -424,19 +424,7 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
             items={bottomMenuItems}
             className={styles.siderBottomMenu}
           />
-          {!authLoading && isAuthenticated && (
-            <Tooltip title={collapsed ? "Logout" : ""}>
-              <Button
-                type="text"
-                icon={<LogoutOutlined />}
-                onClick={logout}
-                className={styles.logoutButton}
-                aria-label="Logout"
-              >
-                {!collapsed && 'Logout'}
-              </Button>
-            </Tooltip>
-          )}
+          {/* The entire block for the Logout button that was here is removed. */}
           {!collapsed && (
             <div style={{ textAlign: 'center', marginTop: '8px', paddingBottom: '8px' }}>
               <Text type="secondary" style={{ fontSize: '11px' }}>v1.0.0</Text>

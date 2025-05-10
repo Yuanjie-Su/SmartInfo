@@ -91,3 +91,42 @@ class UserRepository(BaseRepository):
         except Exception as e:
             logger.error(f"Error getting user by id: {e}")
             return None
+
+    async def update_username(self, user_id: int, new_username: str) -> bool:
+        query = f"""
+            UPDATE {Users.TABLE_NAME}
+            SET {Users.USERNAME} = $1
+            WHERE {Users.ID} = $2
+        """
+        try:
+            status = await self._execute(query, (new_username, user_id))
+            updated = status is not None and status.startswith("UPDATE 1")
+            if updated:
+                logger.info(
+                    f"Username updated for user ID {user_id} to '{new_username}'."
+                )
+            return updated
+        except asyncpg.UniqueViolationError:
+            logger.warning(
+                f"Attempt to update to an already existing username: '{new_username}'"
+            )
+            return False  # Or raise a specific exception
+        except Exception as e:
+            logger.error(f"Error updating username for user ID {user_id}: {e}")
+            return False
+
+    async def update_password(self, user_id: int, new_hashed_password: str) -> bool:
+        query = f"""
+            UPDATE {Users.TABLE_NAME}
+            SET {Users.HASHED_PASSWORD} = $1
+            WHERE {Users.ID} = $2
+        """
+        try:
+            status = await self._execute(query, (new_hashed_password, user_id))
+            updated = status is not None and status.startswith("UPDATE 1")
+            if updated:
+                logger.info(f"Password updated for user ID {user_id}.")
+            return updated
+        except Exception as e:
+            logger.error(f"Error updating password for user ID {user_id}: {e}")
+            return False
